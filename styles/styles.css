@@ -1,0 +1,830 @@
+/* Metabob Vessel Plugin Styles */
+
+/* ============================================
+   Goal Dispatch View (sidebar)
+   ============================================ */
+
+.metabob-goal-dispatch-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 12px;
+  box-sizing: border-box;
+  gap: 0;
+}
+
+.goal-dispatch-input-section {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.goal-dispatch-textarea-wrapper {
+  position: relative;
+}
+
+.goal-dispatch-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 80px;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-family: var(--font-text);
+  font-size: 13px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  color: var(--text-normal);
+  transition: border-color 0.15s ease;
+  line-height: 1.5;
+}
+
+.goal-dispatch-textarea:focus {
+  outline: none;
+  border-color: var(--interactive-accent);
+  box-shadow: 0 0 0 2px rgba(var(--interactive-accent-rgb), 0.15);
+}
+
+.goal-dispatch-textarea::placeholder {
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+.goal-dispatch-btn-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.goal-dispatch-btn {
+  flex: 1;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 6px 14px;
+  border-radius: 5px;
+}
+
+.goal-dispatch-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.goal-dispatch-clear-btn {
+  cursor: pointer;
+  padding: 6px 12px;
+  border-radius: 5px;
+  font-size: 12px;
+  border: 1px solid var(--background-modifier-border);
+  background: transparent;
+  color: var(--text-muted);
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.goal-dispatch-clear-btn:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+  border-color: var(--text-muted);
+}
+
+.goal-dispatch-divider {
+  margin: 10px 0;
+  border: none;
+  border-top: 1px solid var(--background-modifier-border);
+  flex-shrink: 0;
+}
+
+.goal-dispatch-output-section {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.goal-dispatch-output {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 10px;
+  background: var(--background-primary-alt);
+  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+  font-family: var(--font-monospace);
+  font-size: 11.5px;
+  line-height: 1.65;
+  scroll-behavior: smooth;
+}
+
+.goal-dispatch-line {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 1px 2px;
+  border-radius: 3px;
+}
+
+.goal-dispatch-line:hover {
+  background: var(--background-modifier-hover);
+}
+
+/* Type-specific line colouring */
+.goal-dispatch-line.gd-success { color: var(--color-green); }
+.goal-dispatch-line.gd-failure { color: var(--color-red); }
+.goal-dispatch-line.gd-task    { color: var(--interactive-accent); }
+.goal-dispatch-line.gd-tool    { color: var(--text-muted); font-size: 10.5px; }
+.goal-dispatch-line.gd-impulse { color: var(--text-faint); font-size: 10.5px; }
+.goal-dispatch-line.gd-sub     { color: var(--color-yellow); }
+.goal-dispatch-line.gd-error   { color: var(--color-red); font-weight: 600; }
+.goal-dispatch-line.gd-ready   { color: var(--text-faint); font-style: italic; }
+.goal-dispatch-line.gd-divider { color: var(--text-faint); letter-spacing: 0.05em; opacity: 0.4; }
+.goal-dispatch-line.gd-concept      { color: #10b981; font-weight: 500; }
+.goal-dispatch-line.gd-concept-link { color: #6ee7b7; font-size: 10.5px; opacity: 0.85; }
+.goal-dispatch-line.gd-suppressed   { color: var(--text-faint); font-size: 10.5px; font-style: italic; opacity: 0.7; }
+
+/* The answer block — full multi-paragraph rendering of the goalAnswer concept. */
+.goal-dispatch-line.gd-answer-block {
+  align-items: flex-start;
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-left: 3px solid #10b981;
+  background: var(--background-secondary);
+  border-radius: 4px;
+}
+.gd-answer-body { display: flex; flex-direction: column; gap: 4px; }
+.gd-answer-header { color: #10b981; font-weight: 600; font-size: 11.5px; }
+.gd-answer-text {
+  color: var(--text-normal);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.gd-answer-attribution { color: var(--text-faint); font-size: 10px; font-style: italic; }
+
+.goal-dispatch-ts {
+  color: var(--text-faint);
+  flex-shrink: 0;
+  font-size: 10px;
+  user-select: none;
+  min-width: 60px;
+}
+
+.goal-dispatch-msg {
+  color: inherit;
+  word-break: break-word;
+  flex: 1;
+}
+
+/* Kbd hint below textarea */
+.goal-dispatch-hint {
+  font-size: 10px;
+  color: var(--text-faint);
+  text-align: right;
+  margin-top: -4px;
+  padding-right: 2px;
+}
+
+/* Vessel badge in the panel header area */
+.goal-dispatch-vessel-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.goal-dispatch-vessel-badge .gd-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-green);
+  flex-shrink: 0;
+}
+
+.goal-dispatch-vessel-badge .gd-dot.offline {
+  background: var(--color-red);
+}
+
+
+
+/* Status bar indicator */
+.metabob-status-bar-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.metabob-status-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.metabob-status-indicator.connected {
+  background-color: var(--color-green);
+}
+
+.metabob-status-indicator.disconnected {
+  background-color: var(--color-red);
+}
+
+.metabob-status-indicator.syncing {
+  background-color: var(--color-yellow);
+  animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* Modal styles */
+.metabob-modal {
+  padding: 20px;
+}
+
+.metabob-modal .setting-item {
+  border-top: none;
+  padding-top: 10px;
+}
+
+/* Connection status in settings */
+.metabob-connection-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 4px;
+  background-color: var(--background-secondary);
+}
+
+.metabob-connection-status.connected {
+  border-left: 3px solid var(--color-green);
+}
+
+.metabob-connection-status.disconnected {
+  border-left: 3px solid var(--color-red);
+}
+
+/* Sync indicator */
+.metabob-sync-notice {
+  position: fixed;
+  bottom: 40px;
+  right: 20px;
+  background-color: var(--background-modifier-message);
+  padding: 8px 16px;
+  border-radius: 4px;
+  font-size: 12px;
+  z-index: 1000;
+  animation: fadeInOut 2s ease-in-out;
+}
+
+@keyframes fadeInOut {
+  0%, 100% {
+    opacity: 0;
+  }
+  10%, 90% {
+    opacity: 1;
+  }
+}
+
+/* Canvas vessel markers */
+.metabob-canvas-node-marker {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background-color: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+/* ============================================
+   Status Bar Styles
+   ============================================ */
+
+.metabob-status-bar {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+}
+
+.metabob-status-bar .status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.metabob-status-bar .status-dot.connected {
+  background-color: var(--color-green);
+}
+
+.metabob-status-bar .status-dot.disconnected {
+  background-color: var(--color-red);
+}
+
+.metabob-status-bar .status-dot.syncing {
+  background-color: var(--color-yellow);
+  animation: pulse 1s infinite;
+}
+
+.metabob-status-bar .status-dot.error {
+  background-color: var(--color-red);
+  animation: pulse 0.5s infinite;
+}
+
+.metabob-status-bar .status-dot.success {
+  background-color: var(--color-green);
+}
+
+.metabob-status-bar.syncing {
+  color: var(--text-muted);
+}
+
+.metabob-status-bar.error {
+  color: var(--color-red);
+}
+
+.metabob-status-bar.success {
+  color: var(--color-green);
+}
+
+/* ============================================
+   Status Modal Styles
+   ============================================ */
+
+.metabob-status-modal {
+  padding: 16px;
+  max-width: 500px;
+}
+
+.metabob-status-modal .status-section {
+  margin-bottom: 20px;
+}
+
+.metabob-status-modal .status-section h3 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-normal);
+  border-bottom: 1px solid var(--background-modifier-border);
+  padding-bottom: 8px;
+}
+
+.metabob-status-modal .status-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+}
+
+.metabob-status-modal .status-label {
+  color: var(--text-muted);
+}
+
+.metabob-status-modal .status-value {
+  font-family: var(--font-monospace);
+}
+
+.metabob-status-modal .status-indicator {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.metabob-status-modal .status-indicator.connected {
+  background-color: var(--background-modifier-success);
+  color: var(--color-green);
+}
+
+.metabob-status-modal .status-indicator.disconnected {
+  background-color: var(--background-modifier-error);
+  color: var(--color-red);
+}
+
+.metabob-status-modal .status-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.metabob-status-modal .status-actions button {
+  flex: 1;
+}
+
+.metabob-status-modal .syncing-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  background-color: var(--background-secondary);
+  border-radius: 4px;
+  margin-top: 8px;
+}
+
+.metabob-status-modal .syncing-indicator .spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--background-modifier-border);
+  border-top-color: var(--interactive-accent);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+.metabob-status-modal .collapsible .collapsible-header {
+  cursor: pointer;
+}
+
+.metabob-status-modal .collapsible .collapsible-header::after {
+  content: ' ▸';
+}
+
+.metabob-status-modal .collapsible.expanded .collapsible-header::after {
+  content: ' ▾';
+}
+
+.metabob-status-modal .collapsible .collapsible-content {
+  display: none;
+  padding-top: 8px;
+}
+
+.metabob-status-modal .collapsible.expanded .collapsible-content {
+  display: block;
+}
+
+/* ============================================
+   Search Modal Styles
+   ============================================ */
+
+.metabob-search-modal {
+  padding: 16px;
+  max-width: 600px;
+}
+
+.metabob-search-modal .search-controls {
+  margin-bottom: 16px;
+}
+
+.metabob-search-modal .search-results {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.metabob-search-modal .loading-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  color: var(--text-muted);
+}
+
+.metabob-search-modal .loading-indicator .spinner {
+  width: 24px;
+  height: 24px;
+  border: 3px solid var(--background-modifier-border);
+  border-top-color: var(--interactive-accent);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-right: 12px;
+}
+
+.metabob-search-modal .empty-results {
+  text-align: center;
+  padding: 32px;
+  color: var(--text-muted);
+}
+
+.metabob-search-modal .empty-results .hint-text {
+  font-size: 12px;
+  margin-top: 8px;
+}
+
+.metabob-search-modal .results-count {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.metabob-search-modal .results-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.metabob-search-modal .search-result-item {
+  padding: 12px;
+  background-color: var(--background-secondary);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.metabob-search-modal .search-result-item:hover,
+.metabob-search-modal .search-result-item.hovered {
+  background-color: var(--background-modifier-hover);
+}
+
+.metabob-search-modal .result-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.metabob-search-modal .status-icon {
+  font-size: 14px;
+}
+
+.metabob-search-modal .status-icon.success {
+  color: var(--color-green);
+}
+
+.metabob-search-modal .status-icon.failure {
+  color: var(--color-red);
+}
+
+.metabob-search-modal .activity-name {
+  flex: 1;
+}
+
+.metabob-search-modal .result-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.metabob-search-modal .error-preview {
+  font-size: 12px;
+  color: var(--color-red);
+  margin-top: 8px;
+  padding: 8px;
+  background-color: var(--background-modifier-error);
+  border-radius: 4px;
+}
+
+.metabob-search-modal .error-text {
+  color: var(--color-red);
+}
+
+/* ============================================
+   Templates Browser Modal Styles
+   ============================================ */
+
+.metabob-templates-modal {
+  padding: 16px;
+  max-width: 700px;
+}
+
+.metabob-templates-modal .templates-controls {
+  margin-bottom: 16px;
+}
+
+.metabob-templates-modal .templates-list {
+  max-height: 500px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.metabob-templates-modal .template-item {
+  padding: 12px;
+  background-color: var(--background-secondary);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.metabob-templates-modal .template-item:hover,
+.metabob-templates-modal .template-item.hovered {
+  background-color: var(--background-modifier-hover);
+}
+
+.metabob-templates-modal .template-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.metabob-templates-modal .template-name {
+  font-size: 14px;
+}
+
+.metabob-templates-modal .category-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+
+.metabob-templates-modal .category-badge.category-feature {
+  background-color: var(--color-green);
+  color: white;
+}
+
+.metabob-templates-modal .category-badge.category-bugfix {
+  background-color: var(--color-red);
+  color: white;
+}
+
+.metabob-templates-modal .category-badge.category-refactor {
+  background-color: var(--color-yellow);
+  color: black;
+}
+
+.metabob-templates-modal .category-badge.category-tool {
+  background-color: var(--color-blue);
+  color: white;
+}
+
+.metabob-templates-modal .category-badge.category-infrastructure {
+  background-color: var(--color-purple);
+  color: white;
+}
+
+.metabob-templates-modal .category-badge.category-meta {
+  background-color: var(--text-muted);
+  color: white;
+}
+
+.metabob-templates-modal .type-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background-color: var(--background-modifier-border);
+}
+
+.metabob-templates-modal .template-desc {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 8px 0;
+  line-height: 1.4;
+}
+
+.metabob-templates-modal .template-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.metabob-templates-modal .metric-badge {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background-color: var(--background-primary);
+  color: var(--text-muted);
+}
+
+.metabob-templates-modal .metric-badge.success-rate.high {
+  background-color: var(--background-modifier-success);
+  color: var(--color-green);
+}
+
+.metabob-templates-modal .metric-badge.success-rate.medium {
+  background-color: var(--background-modifier-message);
+  color: var(--color-yellow);
+}
+
+.metabob-templates-modal .metric-badge.success-rate.low {
+  background-color: var(--background-modifier-error);
+  color: var(--color-red);
+}
+
+.metabob-templates-modal .template-shapes {
+  display: flex;
+  gap: 12px;
+  margin-top: 8px;
+  font-size: 11px;
+}
+
+.metabob-templates-modal .shapes-text {
+  font-family: var(--font-monospace);
+  color: var(--text-faint);
+}
+
+.metabob-templates-modal .template-tasks {
+  margin-top: 8px;
+}
+
+.metabob-templates-modal .tasks-count {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* ============================================
+   Execution ID Modal Styles
+   ============================================ */
+
+.metabob-execution-id-modal {
+  padding: 16px;
+  max-width: 450px;
+}
+
+.metabob-execution-id-modal .modal-description {
+  color: var(--text-muted);
+  margin-bottom: 16px;
+  font-size: 13px;
+}
+
+.metabob-execution-id-modal .example-section {
+  margin-top: 16px;
+  padding: 12px;
+  background-color: var(--background-secondary);
+  border-radius: 4px;
+}
+
+.metabob-execution-id-modal .example-header {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.metabob-execution-id-modal .example-list {
+  font-size: 11px;
+  font-family: var(--font-monospace);
+  color: var(--text-faint);
+  margin: 0;
+  padding-left: 20px;
+}
+
+.metabob-execution-id-modal .example-list li {
+  margin: 4px 0;
+}
+
+/* ============================================
+   Global Spinner Animation
+   ============================================ */
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--background-modifier-border);
+  border-top-color: var(--interactive-accent);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+/* ============================================
+   Concept Note Signal Styles
+   ============================================ */
+
+/* Weight bar inline code — monospace pill with a subtle background tint */
+.mv-weight-bar,
+.markdown-rendered code.mv-weight-bar {
+  font-family: var(--font-monospace);
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(var(--interactive-accent-rgb), 0.08);
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
+
+/* Signal confidence callout content colour overrides */
+.mv-signal-cold {
+  color: var(--text-faint);
+}
+
+.mv-signal-low {
+  color: var(--color-red);
+}
+
+.mv-signal-mid {
+  color: var(--color-yellow);
+}
+
+.mv-signal-high {
+  color: var(--color-green);
+}
+
+/* Smooth status bar transitions */
+.metabob-status-bar,
+.metabob-status-indicator,
+.metabob-status-bar .status-dot {
+  transition: color 0.2s ease, background-color 0.2s ease, opacity 0.2s ease;
+}
+
