@@ -238,7 +238,7 @@ export class VesselClient {
           throw new Error(`Registration failed: ${response.status} ${response.statusText} - ${errorText}`);
         }
 
-        const result: RegistrationResponse = await response.json();
+        const result = (await response.json()) as RegistrationResponse;
 
         this.registered = true;
         this.expiresAt = result.expires_at ? new Date(result.expires_at) : null;
@@ -394,7 +394,7 @@ export class VesselClient {
       );
 
       if (response.ok) {
-        const result: RegistrationResponse = await response.json();
+        const result = (await response.json()) as RegistrationResponse;
         this.expiresAt = result.expires_at ? new Date(result.expires_at) : null;
         this.lastError = undefined;
         this.logger('debug', 'Heartbeat sent', { expiresAt: result.expires_at });

@@ -63,6 +63,15 @@ export interface ActivityTemplate {
   execution_count?: number;
   avg_duration_ms?: number;
   avg_cost_usd?: number;
+  // Nested learning-state block (Thompson posteriors) as returned by activity-api.
+  metrics?: {
+    total_executions?: number;
+    successful_executions?: number;
+    failed_executions?: number;
+    success_rate?: number;
+    thompson_alpha?: number;
+    thompson_beta?: number;
+  };
 }
 
 /**

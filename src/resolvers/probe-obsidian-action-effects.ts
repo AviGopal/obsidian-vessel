@@ -35,6 +35,8 @@ import {
 } from './observation-types';
 import { classifyPermission, resolveGrant } from './command-permissions';
 import { sha256Hex } from './observation-hash';
+// Re-export for tests that exercise the resolver's reversibility classifier directly.
+export { classifyReversibility } from './observation-types';
 
 const HARD_MAX_COMMANDS = 10;
 const HARD_MAX_TIMEOUT_MS = 30_000;
