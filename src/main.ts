@@ -469,6 +469,31 @@ export default class ObsidianVesselPlugin extends Plugin {
           shapes: this.settings.shapes,
         },
         resolvers,
+        // System-managed resolvers: shapes this vault doesn't own are forwarded to the
+        // substrate (activity-api) so the plugin is a window into the whole fleet, not
+        // just its built-in shapes. Inert when no activityApiUrl is configured.
+        substrateProxy: this.settings.activityApiUrl
+          ? async (pointer) => {
+              try {
+                const base = this.settings.activityApiUrl.replace(/\/+$/, '');
+                const resp = await fetch(`${base}/v2/impulses/resolve`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    ...(this.settings.apiKey ? { Authorization: `ApiKey ${this.settings.apiKey}` } : {}),
+                  },
+                  body: JSON.stringify({ impulse: { pointer } }),
+                });
+                if (!resp.ok) return null;
+                const j = (await resp.json()) as { content?: unknown; body?: unknown; metadata?: unknown };
+                const content = j?.content ?? j?.body ?? null;
+                if (content == null) return null;
+                return { success: true, content, metadata: j?.metadata };
+              } catch {
+                return null;
+              }
+            }
+          : undefined,
       });
 
       await this.httpServer.start();

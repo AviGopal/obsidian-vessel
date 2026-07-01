@@ -37,6 +37,8 @@ export interface HTTPServerConfig {
   resolvers?: Map<string, ImpulseResolver>;
   /** Logger function */
   logger?: (message: string, level?: 'info' | 'warn' | 'error' | 'debug') => void;
+  /** System-managed fallback: forward shapes this vault doesn't own to the substrate. */
+  substrateProxy?: RouteContext['substrateProxy'];
 }
 
 /** Route handler type */
@@ -67,9 +69,10 @@ const defaultLogger = (message: string, level: string = 'info') => {
  */
 export class HTTPServer {
   private server: Server | null = null;
-  private config: Required<Omit<HTTPServerConfig, 'cors' | 'resolvers'>> & {
+  private config: Required<Omit<HTTPServerConfig, 'cors' | 'resolvers' | 'substrateProxy'>> & {
     cors: CorsOptions;
     resolvers: Map<string, ImpulseResolver>;
+    substrateProxy?: RouteContext['substrateProxy'];
   };
   private routes: Map<string, RouteHandler> = new Map();
   private isShuttingDown = false;
@@ -83,6 +86,7 @@ export class HTTPServer {
       manifest: config.manifest,
       resolvers: config.resolvers ?? new Map(),
       logger: config.logger ?? defaultLogger,
+      substrateProxy: config.substrateProxy,
     };
 
     this.setupRoutes();
@@ -96,6 +100,7 @@ export class HTTPServer {
       manifest: this.config.manifest,
       resolvers: this.config.resolvers,
       log: this.config.logger,
+      substrateProxy: this.config.substrateProxy,
     };
 
     this.routes.set('GET /health', (req, res) => handleHealth(req, res, context));

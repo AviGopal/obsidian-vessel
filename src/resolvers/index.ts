@@ -54,17 +54,34 @@ export function listResolverTypes(): string[] {
 }
 
 /**
+ * Substrate-proxy fallback: when no LOCAL resolver owns a shape, forward the pointer to
+ * the substrate so the plugin can resolve ANY substrate shape (system-managed resolvers) —
+ * a window into the whole fleet, not just the vault's built-in shapes. Wired by main.ts
+ * from the configured substrate endpoint + key; unset (null) → unknown shapes throw as before.
+ */
+type SubstrateProxy = (pointer: ImpulsePointer) => Promise<ResolverResult | null>;
+let substrateProxy: SubstrateProxy | null = null;
+export function setSubstrateProxy(fn: SubstrateProxy | null): void {
+  substrateProxy = fn;
+}
+
+/**
  * Resolve an impulse pointer to its content
  *
  * @param pointer - The impulse pointer to resolve
  * @param app - The Obsidian App instance
  * @returns Resolved content with optional metadata
- * @throws Error if no resolver is registered for the pointer type
+ * @throws Error if no resolver is registered AND no substrate proxy resolves it
  */
 export async function resolve(pointer: ImpulsePointer, app: App): Promise<ResolverResult> {
   const resolver = resolvers.get(pointer.type);
 
   if (!resolver) {
+    // System-managed fallback: let the substrate resolve shapes this vault doesn't own.
+    if (substrateProxy) {
+      const proxied = await substrateProxy(pointer);
+      if (proxied) return proxied;
+    }
     throw new Error(`No resolver for impulse type: ${pointer.type}`);
   }
 

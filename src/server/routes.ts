@@ -60,6 +60,14 @@ export interface RouteContext {
   resolvers: Map<string, ImpulseResolver>;
   /** Logger function */
   log: (message: string, level?: 'info' | 'warn' | 'error' | 'debug') => void;
+  /**
+   * System-managed fallback: forward shapes this vault doesn't own to the substrate, so
+   * the plugin can resolve ANY substrate shape (system-managed resolvers). Returns null
+   * when the substrate can't resolve it either (caller then 400s as before).
+   */
+  substrateProxy?: (
+    pointer: { type: string; [k: string]: unknown }
+  ) => Promise<{ success: boolean; content?: unknown; metadata?: unknown; error?: string } | null>;
 }
 
 /**
@@ -200,6 +208,17 @@ export async function handleResolve(
     const resolver = context.resolvers.get(body.type);
 
     if (!resolver) {
+      // System-managed fallback: forward shapes this vault doesn't own to the substrate.
+      if (context.substrateProxy) {
+        const proxied = await context.substrateProxy({
+          type: body.type,
+          ...(body.pointer as Record<string, unknown>),
+        });
+        if (proxied && proxied.success) {
+          sendJson(res, { success: true, content: proxied.content, metadata: proxied.metadata });
+          return;
+        }
+      }
       context.log(`No resolver found for impulse type: ${body.type}`, 'warn');
       sendError(res, `Unsupported impulse type: ${body.type}`, 400);
       return;
