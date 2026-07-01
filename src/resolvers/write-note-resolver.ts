@@ -13,6 +13,7 @@
  * wholesale. Idempotent: existing file is modified in place, not duplicated.
  */
 
+import { registerSolicitation } from './observe-obsidian-events';
 import type { App, TFile } from 'obsidian';
 import type { ImpulsePointer, ResolverResult } from './types';
 import { registerResolver } from './index';

@@ -54,6 +54,7 @@ export interface ObsidianEvent {
   sync_root_relative_path?: string;
   /** Obsidian command id when kind === "command-executed". */
   command_id?: string;
+  solicitation_id?: string; // id of the substrate output (goal note / write_note) this human event responds to
   bridge_eligibility: 'deny';
 }
 
@@ -99,6 +100,7 @@ export interface ObsidianEpisode {
   episode_id: string;
   event_ids: string[];
   sorted_unique_class_signature: string[];
+  solicitation_ids?: string[];
   window_start: string;
   window_end: string;
   sync_root_scope: string;

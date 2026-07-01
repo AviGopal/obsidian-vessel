@@ -71,6 +71,7 @@ export function groupEvents(
       episode_id: makeId('epi'),
       event_ids: bucket.map((e) => e.event_id),
       sorted_unique_class_signature: signature,
+      solicitation_ids: [...new Set(bucket.map((e) => (e as { solicitation_id?: string }).solicitation_id).filter((s): s is string => !!s))],
       window_start: bucket[0].timestamp,
       window_end: bucket[bucket.length - 1].timestamp,
       sync_root_scope: scope,

@@ -6,6 +6,7 @@
  * with YAML frontmatter tracking status, plus a running log of events.
  */
 
+import { registerSolicitation } from '../resolvers/observe-obsidian-events';
 import type { App, TFile } from 'obsidian';
 
 const GOALS_FOLDER = 'Goals';

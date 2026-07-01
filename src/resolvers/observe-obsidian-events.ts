@@ -66,6 +66,34 @@ function isSubstrateWritePath(path: string | undefined): boolean {
   return ctx.substrateWritePrefixes.some((pfx) => path === pfx || path.startsWith(pfx));
 }
 
+const solicitationRegistry = new Map<string, { solicitationId: string; registeredAt: number }>();
+const SOLICITATION_SUPPRESS_MS = 10_000;
+const SOLICITATION_CAP = 500;
+
+export function registerSolicitation(path: string, solicitationId: string): void {
+  if (!path || !solicitationId) return;
+  if (solicitationRegistry.size >= SOLICITATION_CAP) {
+    const oldest = solicitationRegistry.keys().next().value;
+    if (oldest !== undefined) solicitationRegistry.delete(oldest);
+  }
+  solicitationRegistry.set(path, { solicitationId, registeredAt: Date.now() });
+}
+
+export function solicitationFor(path: string | undefined): string | null {
+  if (!path) return null;
+  for (const [p, rec] of solicitationRegistry) {
+    if (path === p || path.startsWith(p)) return rec.solicitationId;
+  }
+  return null;
+}
+
+function shouldDropVaultEvent(path: string | undefined): boolean {
+  if (!path) return false;
+  const reg = [...solicitationRegistry.entries()].find(([p]) => path === p || path.startsWith(p));
+  if (reg) return Date.now() - reg[1].registeredAt < SOLICITATION_SUPPRESS_MS;
+  return isSubstrateWritePath(path);
+}
+
 /**
  * Wire the resolver. main.ts calls this with the shared event log so
  * both the workspace subscriptions and the query path read/write the
@@ -103,6 +131,8 @@ export function buildObsidianEvent(args: {
     bridge_eligibility: 'deny',
   };
   if (sync_root_relative_path) event.sync_root_relative_path = sync_root_relative_path;
+  const sol = solicitationFor(args.path);
+  if (sol) event.solicitation_id = sol;
   if (args.kind === 'command-executed' && args.commandId) {
     event.command_id = args.commandId;
   }
@@ -148,15 +178,15 @@ export function startObserveObsidianEvents(): () => void {
   // operator-interaction signal is never evicted from the log by the concept-sync
   // file-create flood. Workspace events (leaf/editor/layout) are always operator.
   const onCreate = (file: TAbstractFile) => {
-    if (isSubstrateWritePath(file.path)) return;
+    if (shouldDropVaultEvent(file.path)) return;
     push(buildObsidianEvent({ kind: 'file-create', rawPayload: { path: file.path }, path: file.path }));
   };
   const onModify = (file: TAbstractFile) => {
-    if (isSubstrateWritePath(file.path)) return;
+    if (shouldDropVaultEvent(file.path)) return;
     push(buildObsidianEvent({ kind: 'file-modify', rawPayload: { path: file.path }, path: file.path }));
   };
   const onDelete = (file: TAbstractFile) => {
-    if (isSubstrateWritePath(file.path)) return;
+    if (shouldDropVaultEvent(file.path)) return;
     push(buildObsidianEvent({ kind: 'file-delete', rawPayload: { path: file.path }, path: file.path }));
   };
   const onRename = (file: TAbstractFile, oldPath: string) => {
