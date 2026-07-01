@@ -68,6 +68,7 @@ async function resolveWriteNote(
     } else {
       await app.vault.create(path, content);
     }
+    registerSolicitation(path, path);
     return {
       content: JSON.stringify({ wrote: true, path, bytes: content.length }),
       metadata: { shape: 'obsidian:write_note', summary: `wrote ${content.length}b to ${path}`, producedBy: 'obsidian-vessel' },

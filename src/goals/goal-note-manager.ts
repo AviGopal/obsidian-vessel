@@ -56,6 +56,7 @@ export class GoalNoteManager {
 
       const path = `${GOALS_FOLDER}/${executionId}.md`;
       const file = await this.app.vault.create(path, content);
+      registerSolicitation(path, executionId);
       return file;
     } catch (error) {
       console.error('[GoalNoteManager] Failed to create goal note:', error);
