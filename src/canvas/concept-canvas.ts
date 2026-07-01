@@ -12,7 +12,7 @@
 
 import type { App, TFile } from 'obsidian';
 import type { CanvasData, CanvasNode, CanvasEdge } from '../types/canvas';
-import type { MetabobVesselSettings } from '../settings';
+import type { ObsidianVesselSettings } from '../settings';
 import type {
   ConceptDbClient,
   ConceptRecord,
@@ -53,7 +53,7 @@ export class ConceptCanvasBuilder {
 
   constructor(
     private app: App,
-    private settings: MetabobVesselSettings,
+    private settings: ObsidianVesselSettings,
   ) {
     this.canvasManager = new CanvasManager(app, settings);
   }
@@ -107,7 +107,7 @@ export class ConceptCanvasBuilder {
     const name = `concept-${shortConceptId(center.id)}`;
     await this.canvasManager.createOrUpdateCanvas(name, canvas);
 
-    const folder = this.settings.canvasFolder || 'Metabob/Canvases';
+    const folder = this.settings.canvasFolder || 'Obsidian/Canvases';
     return `${folder}/${name}.canvas`;
   }
 

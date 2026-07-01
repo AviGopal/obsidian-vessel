@@ -2,7 +2,7 @@
  * Obsidian Vessel HTTP Integration Harness
  *
  * Drives the vessel's HTTP endpoints directly, testing each resolver shape.
- * Requires Obsidian to be running with the metabob-vessel plugin active.
+ * Requires Obsidian to be running with the obsidian-vessel plugin active.
  *
  * Usage:
  *   bun test/integration/http-harness.ts [--port 27183]
@@ -227,7 +227,7 @@ async function main() {
     await get('/health');
   } catch {
     console.error(`\nFailed to connect to vessel at ${BASE}.`);
-    console.error('Is Obsidian running with the metabob-vessel plugin enabled?');
+    console.error('Is Obsidian running with the obsidian-vessel plugin enabled?');
     process.exit(1);
   }
 

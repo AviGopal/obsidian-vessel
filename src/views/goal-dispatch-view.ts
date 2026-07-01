@@ -19,11 +19,11 @@
  */
 
 import { ItemView, WorkspaceLeaf, TFile, Notice, MarkdownView } from 'obsidian';
-import type MetabobVesselPlugin from '../main';
+import type ObsidianVesselPlugin from '../main';
 import { GoalHostClient, type VaultContext } from '../goals/goal-host-client';
 import { GoalNoteManager } from '../goals/goal-note-manager';
 
-export const VIEW_TYPE_GOAL_DISPATCH = 'metabob-goal-dispatch';
+export const VIEW_TYPE_GOAL_DISPATCH = 'obsidian-goal-dispatch';
 
 // ---------------------------------------------------------------------------
 // Execution context tracking
@@ -95,7 +95,7 @@ function isHiddenTemplate(name: string | undefined): boolean {
 }
 
 export class GoalDispatchView extends ItemView {
-  private plugin: MetabobVesselPlugin;
+  private plugin: ObsidianVesselPlugin;
 
   // DOM elements
   private textarea: HTMLTextAreaElement | null = null;
@@ -129,7 +129,7 @@ export class GoalDispatchView extends ItemView {
   private suppressedCount = 0;
   private suppressedSummaryLine: HTMLElement | null = null;
 
-  constructor(leaf: WorkspaceLeaf, plugin: MetabobVesselPlugin) {
+  constructor(leaf: WorkspaceLeaf, plugin: ObsidianVesselPlugin) {
     super(leaf);
     this.plugin = plugin;
     this.goalNoteManager = new GoalNoteManager(plugin.app);
@@ -165,7 +165,7 @@ export class GoalDispatchView extends ItemView {
   private buildUI(): void {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.addClass('metabob-goal-dispatch-view');
+    contentEl.addClass('obsidian-goal-dispatch-view');
 
     // Input section
     const inputSection = contentEl.createDiv('goal-dispatch-input-section');
@@ -329,7 +329,7 @@ export class GoalDispatchView extends ItemView {
     const { goalHostEndpoint, apiKey } = this.plugin.settings;
 
     if (!apiKey) {
-      new Notice('Metabob: API key not configured. Set it in plugin settings.');
+      new Notice('Obsidian: API key not configured. Set it in plugin settings.');
       return;
     }
 

@@ -6,7 +6,7 @@ import {
   CanvasTextNode,
   CanvasGroupNode
 } from '../types/canvas';
-import { MetabobVesselSettings } from '../settings';
+import { ObsidianVesselSettings } from '../settings';
 
 type CanvasColor = '1' | '2' | '3' | '4' | '5' | '6' | string;
 
@@ -43,7 +43,7 @@ export class StatusCanvasBuilder {
 
   constructor(
     private app: App,
-    private settings: MetabobVesselSettings
+    private settings: ObsidianVesselSettings
   ) {
     this.canvasManager = new CanvasManager(app, settings);
   }
@@ -163,7 +163,7 @@ export class StatusCanvasBuilder {
       width: 400,
       height: 200,
       color: isHealthy ? CONNECTION_STATUS.connected : CONNECTION_STATUS.degraded,
-      text: `# Metabob Vessel
+      text: `# Obsidian Vessel
 
 ## Status: ${statusText}
 
@@ -295,7 +295,7 @@ ${status.realtimeConnected ? 'Live updates enabled' : 'Polling fallback'}`
       y: 0,
       width: 900,
       height: 100,
-      label: 'Metabob Vessel Dashboard',
+      label: 'Obsidian Vessel Dashboard',
       color: status.vesselConnected ? '4' : '1'
     };
   }

@@ -15,7 +15,7 @@ export type {
   ExecutionTrace,
   ActivityAPIClient,
   ExecutionFormatter,
-  MetabobVesselSettings,
+  ObsidianVesselSettings,
 } from './historical-sync';
 
 // Real-time sync

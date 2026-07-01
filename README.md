@@ -1,10 +1,44 @@
 # obsidian-vessel
 
-Obsidian plugin that registers as a vessel in the metabob substrate.
+Obsidian plugin that registers as a vessel in the substrate.
 Exposes vault content (notes, search, canvas, backlinks, frontmatter,
 daily notes, graph queries) as impulse resolvers on a local HTTP server
 and registers with discovery-vessel so other vessels can route shape
 queries here.
+
+## Installation (manual)
+
+The plugin ships three files — `manifest.json`, `main.js`, `styles.css` — that go in
+a folder whose name **must equal the plugin id** (`obsidian-vessel`):
+
+```
+<YourVault>/.obsidian/plugins/obsidian-vessel/{manifest.json, main.js, styles.css}
+```
+
+1. Settings → Community plugins → **Turn on community plugins** (disables Restricted Mode).
+2. Copy the three files into `<YourVault>/.obsidian/plugins/obsidian-vessel/`.
+3. Enable **Obsidian Vessel** in the community-plugins list (loads live, no restart).
+
+Build from source with `bun install && bun run build` (produces `main.js`).
+
+## Configuration
+
+Set these in the plugin's settings tab (persisted to the plugin's `data.json`). For a
+local substrate:
+
+| Setting | Local-substrate value |
+|---|---|
+| Activity API URL | `http://localhost:18080` |
+| Discovery endpoint | `http://localhost:18100` |
+| Goal-host endpoint | `http://localhost:18210` |
+| Concept-DB endpoint | `http://localhost:18260` |
+| API key | from `make -C scripts/substrate seed-live` |
+| Server port | `27182` |
+| Advertised host | `host.docker.internal` (same machine) — or a routable IP / the libp2p sidecar for remote |
+
+**Remote / behind NAT:** run the `@avigopal/libp2p-federation-transport` **sidecar** next
+to the plugin (pointed at `LOCAL_RESOLVE_URL=http://127.0.0.1:27182/resolve`). The plugin
+stays a plain HTTP server; the sidecar makes it discovery-reachable over the relay.
 
 ## Concept-db frontend
 
@@ -36,5 +70,5 @@ Settings live under "Concept-DB Frontend" in the plugin settings tab.
 Default endpoint is `http://127.0.0.1:18260` (local substrate). Both
 sync and writeback are opt-in.
 
-Design notes and the staged rollout plan are tracked in
-[`openspec/changes/2026-05-30-obsidian-vessel-concept-db-frontend/`](../../openspec/changes/2026-05-30-obsidian-vessel-concept-db-frontend/).
+Design notes and the staged rollout plan are tracked in the substrate super-repo
+(`openspec/changes/2026-05-30-obsidian-vessel-concept-db-frontend/`).

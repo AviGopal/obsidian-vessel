@@ -18,7 +18,7 @@
  * Reconnection: exponential backoff 1s → 30s.
  */
 
-import type { MetabobVesselSettings } from '../settings';
+import type { ObsidianVesselSettings } from '../settings';
 import type { ConceptDbClient } from '../concept-db-client';
 import type { ConceptSyncService } from './concept-sync';
 
@@ -44,7 +44,7 @@ export class ConceptBusListener {
   private stopped = false;
 
   constructor(
-    private settings: MetabobVesselSettings,
+    private settings: ObsidianVesselSettings,
     private sync: ConceptSyncService,
     private client: ConceptDbClient,
   ) {}

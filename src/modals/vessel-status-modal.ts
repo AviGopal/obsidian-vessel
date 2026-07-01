@@ -1,17 +1,17 @@
 /**
  * Vessel Status Modal
  *
- * Displays the current connection and sync status of the Metabob vessel.
+ * Displays the current connection and sync status of the Obsidian vessel.
  */
 
 import { App, Modal } from 'obsidian';
-import type MetabobVesselPlugin from '../main';
+import type ObsidianVesselPlugin from '../main';
 
 export class VesselStatusModal extends Modal {
-  private plugin: MetabobVesselPlugin;
+  private plugin: ObsidianVesselPlugin;
   private refreshInterval: number | null = null;
 
-  constructor(app: App, plugin: MetabobVesselPlugin) {
+  constructor(app: App, plugin: ObsidianVesselPlugin) {
     super(app);
     this.plugin = plugin;
   }
@@ -29,9 +29,9 @@ export class VesselStatusModal extends Modal {
   private renderContent() {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.addClass('metabob-status-modal');
+    contentEl.addClass('obsidian-status-modal');
 
-    contentEl.createEl('h2', { text: 'Metabob Vessel Status' });
+    contentEl.createEl('h2', { text: 'Obsidian Vessel Status' });
 
     const status = this.plugin.getStatus();
 
@@ -68,7 +68,7 @@ export class VesselStatusModal extends Modal {
     const syncBtn = actionsSection.createEl('button', { text: 'Force Sync' });
     syncBtn.addClass('mod-cta');
     syncBtn.onclick = () => {
-      this.app.commands.executeCommandById('metabob-force-sync');
+      this.app.commands.executeCommandById('obsidian-force-sync');
       this.close();
     };
 
@@ -89,7 +89,7 @@ export class VesselStatusModal extends Modal {
     const settingsBtn = actionsSection.createEl('button', { text: 'Settings' });
     settingsBtn.onclick = () => {
       this.close();
-      this.app.commands.executeCommandById('metabob-open-settings');
+      this.app.commands.executeCommandById('obsidian-open-settings');
     };
 
     // Health details (expandable)

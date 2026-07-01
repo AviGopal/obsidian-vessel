@@ -14,7 +14,7 @@
  */
 
 import type { App } from 'obsidian';
-import type { MetabobVesselSettings } from '../settings';
+import type { ObsidianVesselSettings } from '../settings';
 import type { ActivityAPIClient } from '../api-client';
 import type { ActivityTemplate } from '../types';
 
@@ -127,7 +127,7 @@ export class ActivityFamilySyncService {
 
   constructor(
     private readonly app: App,
-    private readonly settings: MetabobVesselSettings,
+    private readonly settings: ObsidianVesselSettings,
     private readonly apiClient: ActivityAPIClient,
   ) {}
 

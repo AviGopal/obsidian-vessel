@@ -1,11 +1,11 @@
 /**
- * Plugin Settings for Metabob Vessel
+ * Plugin Settings for Obsidian Vessel
  *
  * Settings interface and defaults for the Obsidian vessel plugin.
  * These control connection, sync behavior, note formatting, and canvas generation.
  */
 
-export interface MetabobVesselSettings {
+export interface ObsidianVesselSettings {
   // ==========================================================================
   // Connection Settings
   // ==========================================================================
@@ -210,11 +210,11 @@ export function generateVesselId(): string {
 }
 
 /**
- * Default settings for the Metabob Vessel plugin.
+ * Default settings for the Obsidian Vessel plugin.
  */
-export const DEFAULT_SETTINGS: MetabobVesselSettings = {
+export const DEFAULT_SETTINGS: ObsidianVesselSettings = {
   // Connection
-  activityApiUrl: 'http://activity.metabob.local',
+  activityApiUrl: 'http://localhost:18080',
   apiKey: '',
   orgId: '',
 
@@ -226,9 +226,9 @@ export const DEFAULT_SETTINGS: MetabobVesselSettings = {
   shapes: ['obsidian:note', 'obsidian:search', 'obsidian:canvas', 'obsidian:backlinks', 'obsidian:frontmatter', 'obsidian:daily_note', 'obsidian:graph_query', 'obsidian:concept_view', 'obsidian:concept_writeback', 'obsidian:event_observed', 'obsidian:interaction_episode', 'obsidian:action_effect_model', 'obsidian:command_catalog', 'obsidian:execute_command', 'obsidian:workspace_state', 'obsidian:open_note', 'obsidian:write_note'],
 
   // Sync preferences
-  executionNotesFolder: 'Metabob/Executions',
-  activityTemplatesFolder: 'Metabob/Templates',
-  canvasFolder: 'Metabob/Canvases',
+  executionNotesFolder: 'Obsidian/Executions',
+  activityTemplatesFolder: 'Obsidian/Templates',
+  canvasFolder: 'Obsidian/Canvases',
   syncOnStart: true,
   historicalSyncLimit: 100,
   syncIntervalMinutes: 5,
@@ -287,7 +287,7 @@ export const DEFAULT_SETTINGS: MetabobVesselSettings = {
 /**
  * Validate settings and return any errors.
  */
-export function validateSettings(settings: MetabobVesselSettings): string[] {
+export function validateSettings(settings: ObsidianVesselSettings): string[] {
   const errors: string[] = [];
 
   // Validate URL format
@@ -335,8 +335,8 @@ export function validateSettings(settings: MetabobVesselSettings): string[] {
  * Merge partial settings with defaults.
  */
 export function mergeSettings(
-  partial: Partial<MetabobVesselSettings>
-): MetabobVesselSettings {
+  partial: Partial<ObsidianVesselSettings>
+): ObsidianVesselSettings {
   return {
     ...DEFAULT_SETTINGS,
     ...partial,

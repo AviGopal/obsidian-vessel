@@ -1,5 +1,5 @@
 /**
- * Modal exports for Metabob Vessel Plugin
+ * Modal exports for Obsidian Vessel Plugin
  */
 
 export { VesselStatusModal } from './vessel-status-modal';

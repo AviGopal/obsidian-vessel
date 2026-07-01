@@ -9,7 +9,7 @@
 import { App, TFile } from 'obsidian';
 import type { Plugin } from 'obsidian';
 import { SyncStateManager } from './sync-state';
-import { HistoricalSyncService, type ActivityAPIClient, type ExecutionFormatter, type ExecutionTrace, type MetabobVesselSettings } from './historical-sync';
+import { HistoricalSyncService, type ActivityAPIClient, type ExecutionFormatter, type ExecutionTrace, type ObsidianVesselSettings } from './historical-sync';
 import { RealtimeSyncService, type ConnectionState } from './realtime-sync';
 
 /**
@@ -58,7 +58,7 @@ export class SyncService {
 
   constructor(
     private app: App,
-    private settings: MetabobVesselSettings,
+    private settings: ObsidianVesselSettings,
     private apiClient: ActivityAPIClient,
     private plugin: Plugin,
     formatter: ExecutionFormatter

@@ -23,11 +23,11 @@ import {
   conceptNotePath,
   renderConceptNote,
 } from '../formatters/concept-formatter';
-import type { MetabobVesselSettings } from '../settings';
+import type { ObsidianVesselSettings } from '../settings';
 
 interface ResolverCtx {
   client: ConceptDbClient | null;
-  settings: MetabobVesselSettings | null;
+  settings: ObsidianVesselSettings | null;
 }
 
 const ctx: ResolverCtx = { client: null, settings: null };
@@ -38,7 +38,7 @@ const ctx: ResolverCtx = { client: null, settings: null };
  */
 export function setConceptDbResolverContext(
   client: ConceptDbClient | null,
-  settings: MetabobVesselSettings | null,
+  settings: ObsidianVesselSettings | null,
 ): void {
   ctx.client = client;
   ctx.settings = settings;

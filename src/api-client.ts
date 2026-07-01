@@ -1,12 +1,12 @@
 /**
  * Activity API Client
  *
- * General-purpose client for interacting with the metabob-activity-api.
+ * General-purpose client for interacting with the obsidian-activity-api.
  * Provides methods for listing and retrieving execution traces and activity templates.
  *
  * Based on the API endpoints defined in:
- * - repos/metabob-activity-api/src/routes/execution-traces.ts
- * - repos/metabob-activity-api/src/routes/activities.ts
+ * - repos/obsidian-activity-api/src/routes/execution-traces.ts
+ * - repos/obsidian-activity-api/src/routes/activities.ts
  */
 
 import type { ExecutionTrace } from './types/execution-trace';
@@ -182,12 +182,12 @@ const defaultLogger = (
 // =============================================================================
 
 /**
- * ActivityAPIClient provides methods for interacting with the metabob-activity-api.
+ * ActivityAPIClient provides methods for interacting with the obsidian-activity-api.
  *
  * Usage:
  * ```typescript
  * const client = new ActivityAPIClient(
- *   'https://activity.metabob.com',
+ *   'http://localhost:18080',
  *   'your-api-key'
  * );
  *

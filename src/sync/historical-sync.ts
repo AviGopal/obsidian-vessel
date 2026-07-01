@@ -9,11 +9,11 @@
 import { App, TFile, TFolder } from 'obsidian';
 import type { SyncStateManager } from './sync-state';
 import type { ExecutionTrace } from '../types/execution-trace';
-import type { MetabobVesselSettings } from '../settings';
+import type { ObsidianVesselSettings } from '../settings';
 
 // Re-export for consumers
 export type { ExecutionTrace } from '../types/execution-trace';
-export type { MetabobVesselSettings } from '../settings';
+export type { ObsidianVesselSettings } from '../settings';
 
 /**
  * API client interface for execution traces
@@ -44,7 +44,7 @@ export interface ExecutionFormatter {
 }
 
 /**
- * Additional sync configuration (extensions to MetabobVesselSettings)
+ * Additional sync configuration (extensions to ObsidianVesselSettings)
  */
 export interface SyncConfig {
   syncBatchSize?: number;
@@ -57,7 +57,7 @@ export interface SyncConfig {
 export class HistoricalSyncService {
   constructor(
     private app: App,
-    private settings: MetabobVesselSettings,
+    private settings: ObsidianVesselSettings,
     private apiClient: ActivityAPIClient,
     private stateManager: SyncStateManager,
     private formatter: ExecutionFormatter
@@ -197,7 +197,7 @@ export class HistoricalSyncService {
 
   /**
    * Generate note path for an execution
-   * Format: Metabob/Executions/YYYY-MM-DD/execution_id.md
+   * Format: Obsidian/Executions/YYYY-MM-DD/execution_id.md
    */
   private getNotePath(execution: ExecutionTrace): string {
     const date = new Date(execution.executed_at);

@@ -16,7 +16,7 @@
  */
 
 import { App, TFile, TAbstractFile } from 'obsidian';
-import type { MetabobVesselSettings } from '../settings';
+import type { ObsidianVesselSettings } from '../settings';
 import type {
   ConceptDbClient,
   ConceptRecord,
@@ -151,7 +151,7 @@ export class ConceptWritebackService {
 
   constructor(
     private app: App,
-    private settings: MetabobVesselSettings,
+    private settings: ObsidianVesselSettings,
     private client: ConceptDbClient,
   ) {}
 

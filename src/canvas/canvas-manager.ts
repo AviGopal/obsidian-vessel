@@ -1,6 +1,6 @@
 import { App, TFile, TFolder } from 'obsidian';
 import { CanvasData } from '../types/canvas';
-import { MetabobVesselSettings } from '../settings';
+import { ObsidianVesselSettings } from '../settings';
 
 /**
  * Manages Obsidian canvas file operations.
@@ -9,7 +9,7 @@ import { MetabobVesselSettings } from '../settings';
 export class CanvasManager {
   constructor(
     private app: App,
-    private settings: MetabobVesselSettings
+    private settings: ObsidianVesselSettings
   ) {}
 
   /**

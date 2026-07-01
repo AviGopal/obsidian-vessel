@@ -13,7 +13,7 @@ import {
   ConceptSyncService,
   makeFsNoteWriter,
 } from '../src/sync/concept-sync';
-import { DEFAULT_SETTINGS, type MetabobVesselSettings } from '../src/settings';
+import { DEFAULT_SETTINGS, type ObsidianVesselSettings } from '../src/settings';
 import { renderConceptNote } from '../src/formatters/concept-formatter';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -32,7 +32,7 @@ if (!apiKey) {
   );
 }
 
-const settings: MetabobVesselSettings = {
+const settings: ObsidianVesselSettings = {
   ...DEFAULT_SETTINGS,
   enableConceptDbSync: true,
   conceptDbEndpoint: 'http://127.0.0.1:18260',

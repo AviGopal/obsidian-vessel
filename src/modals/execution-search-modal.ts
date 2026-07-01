@@ -5,7 +5,7 @@
  */
 
 import { App, Modal, Setting, Notice, debounce } from 'obsidian';
-import type MetabobVesselPlugin from '../main';
+import type ObsidianVesselPlugin from '../main';
 import type { ExecutionTrace } from '../types';
 
 export interface ExecutionSearchOptions {
@@ -15,7 +15,7 @@ export interface ExecutionSearchOptions {
 }
 
 export class ExecutionSearchModal extends Modal {
-  private plugin: MetabobVesselPlugin;
+  private plugin: ObsidianVesselPlugin;
   private options: ExecutionSearchOptions;
   private results: ExecutionTrace[] = [];
   private resultsEl: HTMLElement | null = null;
@@ -23,7 +23,7 @@ export class ExecutionSearchModal extends Modal {
   private statusFilter: 'all' | 'successful' | 'failed' = 'all';
   private loading: boolean = false;
 
-  constructor(app: App, plugin: MetabobVesselPlugin, options: ExecutionSearchOptions = {}) {
+  constructor(app: App, plugin: ObsidianVesselPlugin, options: ExecutionSearchOptions = {}) {
     super(app);
     this.plugin = plugin;
     this.options = options;
@@ -32,7 +32,7 @@ export class ExecutionSearchModal extends Modal {
 
   onOpen() {
     const { contentEl } = this;
-    contentEl.addClass('metabob-search-modal');
+    contentEl.addClass('obsidian-search-modal');
 
     const title = this.options.recent
       ? 'Recent Executions'

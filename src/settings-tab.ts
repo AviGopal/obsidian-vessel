@@ -1,21 +1,21 @@
 /**
- * Settings Tab for Metabob Vessel Plugin
+ * Settings Tab for Obsidian Vessel Plugin
  *
  * Provides the UI for configuring the plugin in Obsidian's settings.
  * Organized into sections: Connection, Sync, HTTP Server, Note Formatting, and Canvas.
  */
 
 import { App, PluginSettingTab, Setting, Notice } from 'obsidian';
-import type MetabobVesselPlugin from './main';
+import type ObsidianVesselPlugin from './main';
 import { DEFAULT_SETTINGS, validateSettings, generateVesselId } from './settings';
 
 /**
- * Settings tab for the Metabob Vessel plugin
+ * Settings tab for the Obsidian Vessel plugin
  */
-export class MetabobVesselSettingTab extends PluginSettingTab {
-  plugin: MetabobVesselPlugin;
+export class ObsidianVesselSettingTab extends PluginSettingTab {
+  plugin: ObsidianVesselPlugin;
 
-  constructor(app: App, plugin: MetabobVesselPlugin) {
+  constructor(app: App, plugin: ObsidianVesselPlugin) {
     super(app, plugin);
     this.plugin = plugin;
   }
@@ -25,7 +25,7 @@ export class MetabobVesselSettingTab extends PluginSettingTab {
     containerEl.empty();
 
     // Header
-    containerEl.createEl('h1', { text: 'Metabob Vessel Settings' });
+    containerEl.createEl('h1', { text: 'Obsidian Vessel Settings' });
 
     // Create all sections
     this.createConnectionSection(containerEl);
@@ -161,13 +161,13 @@ export class MetabobVesselSettingTab extends PluginSettingTab {
   private createConnectionSection(containerEl: HTMLElement): void {
     containerEl.createEl('h2', { text: 'Connection' });
     containerEl.createEl('p', {
-      text: 'Configure the connection to the Metabob Activity API.',
+      text: 'Configure the connection to the Obsidian Activity API.',
       cls: 'setting-item-description',
     });
 
     new Setting(containerEl)
       .setName('Activity API URL')
-      .setDesc('URL of the metabob-activity-api server')
+      .setDesc('URL of the obsidian-activity-api server')
       .addText(text => text
         .setPlaceholder(DEFAULT_SETTINGS.activityApiUrl)
         .setValue(this.plugin.settings.activityApiUrl)

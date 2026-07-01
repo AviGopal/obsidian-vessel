@@ -13,7 +13,7 @@
  */
 
 import type { App } from 'obsidian';
-import type { MetabobVesselSettings } from '../settings';
+import type { ObsidianVesselSettings } from '../settings';
 
 interface DiscoveryVesselEntry {
   vessel_id: string;
@@ -105,7 +105,7 @@ export class VesselSyncService {
 
   constructor(
     private readonly app: App,
-    private readonly settings: MetabobVesselSettings,
+    private readonly settings: ObsidianVesselSettings,
   ) {}
 
   async start(): Promise<void> {

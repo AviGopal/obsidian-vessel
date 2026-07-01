@@ -6,11 +6,11 @@
  *
  * Based on patterns from:
  * - repos/minibob/src/vessel-bootstrap.ts
- * - repos/metabob-activity-api/src/routes/vessel-registry.ts
+ * - repos/obsidian-activity-api/src/routes/vessel-registry.ts
  */
 
 import { requestUrl } from 'obsidian';
-import { MetabobVesselSettings } from './settings';
+import { ObsidianVesselSettings } from './settings';
 
 // =============================================================================
 // Types
@@ -148,7 +148,7 @@ const defaultLogger = (
  * ```
  */
 export class VesselClient {
-  private settings: MetabobVesselSettings;
+  private settings: ObsidianVesselSettings;
   private registered: boolean = false;
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private startTime: number;
@@ -164,7 +164,7 @@ export class VesselClient {
   private vaultPath: string = '';
   private serverPort: number = 0;
 
-  constructor(settings: MetabobVesselSettings, options: VesselClientOptions = {}) {
+  constructor(settings: ObsidianVesselSettings, options: VesselClientOptions = {}) {
     this.settings = settings;
     this.startTime = Date.now();
     this.logger = options.logger || defaultLogger;
@@ -473,7 +473,7 @@ export class VesselClient {
   /**
    * Update settings and re-register if needed
    */
-  async updateSettings(newSettings: MetabobVesselSettings): Promise<void> {
+  async updateSettings(newSettings: ObsidianVesselSettings): Promise<void> {
     const needsReregister =
       newSettings.vesselId !== this.settings.vesselId ||
       newSettings.vesselName !== this.settings.vesselName ||

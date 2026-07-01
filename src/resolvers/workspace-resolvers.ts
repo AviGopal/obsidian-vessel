@@ -20,7 +20,7 @@ import type { App, TFile, WorkspaceLeaf } from 'obsidian';
 import { registerResolver } from './index';
 import type { ImpulsePointer, ResolverResult } from './types';
 
-const VIEW_TYPE_GOAL_DISPATCH = 'metabob-goal-dispatch';
+const VIEW_TYPE_GOAL_DISPATCH = 'obsidian-goal-dispatch';
 
 /** obsidian:workspace_state — read-only snapshot of the live Obsidian UI state. */
 export async function resolveWorkspaceState(

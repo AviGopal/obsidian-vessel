@@ -1,10 +1,10 @@
-/* Metabob Vessel Plugin Styles */
+/* Obsidian Vessel Plugin Styles */
 
 /* ============================================
    Goal Dispatch View (sidebar)
    ============================================ */
 
-.metabob-goal-dispatch-view {
+.obsidian-goal-dispatch-view {
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -209,28 +209,28 @@
 
 
 /* Status bar indicator */
-.metabob-status-bar-item {
+.obsidian-status-bar-item {
   display: flex;
   align-items: center;
   gap: 4px;
 }
 
-.metabob-status-indicator {
+.obsidian-status-indicator {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   display: inline-block;
 }
 
-.metabob-status-indicator.connected {
+.obsidian-status-indicator.connected {
   background-color: var(--color-green);
 }
 
-.metabob-status-indicator.disconnected {
+.obsidian-status-indicator.disconnected {
   background-color: var(--color-red);
 }
 
-.metabob-status-indicator.syncing {
+.obsidian-status-indicator.syncing {
   background-color: var(--color-yellow);
   animation: pulse 1s infinite;
 }
@@ -245,17 +245,17 @@
 }
 
 /* Modal styles */
-.metabob-modal {
+.obsidian-modal {
   padding: 20px;
 }
 
-.metabob-modal .setting-item {
+.obsidian-modal .setting-item {
   border-top: none;
   padding-top: 10px;
 }
 
 /* Connection status in settings */
-.metabob-connection-status {
+.obsidian-connection-status {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -264,16 +264,16 @@
   background-color: var(--background-secondary);
 }
 
-.metabob-connection-status.connected {
+.obsidian-connection-status.connected {
   border-left: 3px solid var(--color-green);
 }
 
-.metabob-connection-status.disconnected {
+.obsidian-connection-status.disconnected {
   border-left: 3px solid var(--color-red);
 }
 
 /* Sync indicator */
-.metabob-sync-notice {
+.obsidian-sync-notice {
   position: fixed;
   bottom: 40px;
   right: 20px;
@@ -295,7 +295,7 @@
 }
 
 /* Canvas vessel markers */
-.metabob-canvas-node-marker {
+.obsidian-canvas-node-marker {
   position: absolute;
   top: 4px;
   right: 4px;
@@ -310,7 +310,7 @@
    Status Bar Styles
    ============================================ */
 
-.metabob-status-bar {
+.obsidian-status-bar {
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -318,44 +318,44 @@
   padding: 0 8px;
 }
 
-.metabob-status-bar .status-dot {
+.obsidian-status-bar .status-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   display: inline-block;
 }
 
-.metabob-status-bar .status-dot.connected {
+.obsidian-status-bar .status-dot.connected {
   background-color: var(--color-green);
 }
 
-.metabob-status-bar .status-dot.disconnected {
+.obsidian-status-bar .status-dot.disconnected {
   background-color: var(--color-red);
 }
 
-.metabob-status-bar .status-dot.syncing {
+.obsidian-status-bar .status-dot.syncing {
   background-color: var(--color-yellow);
   animation: pulse 1s infinite;
 }
 
-.metabob-status-bar .status-dot.error {
+.obsidian-status-bar .status-dot.error {
   background-color: var(--color-red);
   animation: pulse 0.5s infinite;
 }
 
-.metabob-status-bar .status-dot.success {
+.obsidian-status-bar .status-dot.success {
   background-color: var(--color-green);
 }
 
-.metabob-status-bar.syncing {
+.obsidian-status-bar.syncing {
   color: var(--text-muted);
 }
 
-.metabob-status-bar.error {
+.obsidian-status-bar.error {
   color: var(--color-red);
 }
 
-.metabob-status-bar.success {
+.obsidian-status-bar.success {
   color: var(--color-green);
 }
 
@@ -363,16 +363,16 @@
    Status Modal Styles
    ============================================ */
 
-.metabob-status-modal {
+.obsidian-status-modal {
   padding: 16px;
   max-width: 500px;
 }
 
-.metabob-status-modal .status-section {
+.obsidian-status-modal .status-section {
   margin-bottom: 20px;
 }
 
-.metabob-status-modal .status-section h3 {
+.obsidian-status-modal .status-section h3 {
   margin: 0 0 12px 0;
   font-size: 14px;
   font-weight: 600;
@@ -381,38 +381,38 @@
   padding-bottom: 8px;
 }
 
-.metabob-status-modal .status-row {
+.obsidian-status-modal .status-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 6px 0;
 }
 
-.metabob-status-modal .status-label {
+.obsidian-status-modal .status-label {
   color: var(--text-muted);
 }
 
-.metabob-status-modal .status-value {
+.obsidian-status-modal .status-value {
   font-family: var(--font-monospace);
 }
 
-.metabob-status-modal .status-indicator {
+.obsidian-status-modal .status-indicator {
   font-size: 12px;
   padding: 2px 8px;
   border-radius: 4px;
 }
 
-.metabob-status-modal .status-indicator.connected {
+.obsidian-status-modal .status-indicator.connected {
   background-color: var(--background-modifier-success);
   color: var(--color-green);
 }
 
-.metabob-status-modal .status-indicator.disconnected {
+.obsidian-status-modal .status-indicator.disconnected {
   background-color: var(--background-modifier-error);
   color: var(--color-red);
 }
 
-.metabob-status-modal .status-actions {
+.obsidian-status-modal .status-actions {
   display: flex;
   gap: 8px;
   margin-top: 16px;
@@ -420,11 +420,11 @@
   border-top: 1px solid var(--background-modifier-border);
 }
 
-.metabob-status-modal .status-actions button {
+.obsidian-status-modal .status-actions button {
   flex: 1;
 }
 
-.metabob-status-modal .syncing-indicator {
+.obsidian-status-modal .syncing-indicator {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -434,7 +434,7 @@
   margin-top: 8px;
 }
 
-.metabob-status-modal .syncing-indicator .spinner {
+.obsidian-status-modal .syncing-indicator .spinner {
   width: 16px;
   height: 16px;
   border: 2px solid var(--background-modifier-border);
@@ -443,24 +443,24 @@
   animation: spin 1s linear infinite;
 }
 
-.metabob-status-modal .collapsible .collapsible-header {
+.obsidian-status-modal .collapsible .collapsible-header {
   cursor: pointer;
 }
 
-.metabob-status-modal .collapsible .collapsible-header::after {
+.obsidian-status-modal .collapsible .collapsible-header::after {
   content: ' ▸';
 }
 
-.metabob-status-modal .collapsible.expanded .collapsible-header::after {
+.obsidian-status-modal .collapsible.expanded .collapsible-header::after {
   content: ' ▾';
 }
 
-.metabob-status-modal .collapsible .collapsible-content {
+.obsidian-status-modal .collapsible .collapsible-content {
   display: none;
   padding-top: 8px;
 }
 
-.metabob-status-modal .collapsible.expanded .collapsible-content {
+.obsidian-status-modal .collapsible.expanded .collapsible-content {
   display: block;
 }
 
@@ -468,21 +468,21 @@
    Search Modal Styles
    ============================================ */
 
-.metabob-search-modal {
+.obsidian-search-modal {
   padding: 16px;
   max-width: 600px;
 }
 
-.metabob-search-modal .search-controls {
+.obsidian-search-modal .search-controls {
   margin-bottom: 16px;
 }
 
-.metabob-search-modal .search-results {
+.obsidian-search-modal .search-results {
   max-height: 400px;
   overflow-y: auto;
 }
 
-.metabob-search-modal .loading-indicator {
+.obsidian-search-modal .loading-indicator {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -490,7 +490,7 @@
   color: var(--text-muted);
 }
 
-.metabob-search-modal .loading-indicator .spinner {
+.obsidian-search-modal .loading-indicator .spinner {
   width: 24px;
   height: 24px;
   border: 3px solid var(--background-modifier-border);
@@ -500,30 +500,30 @@
   margin-right: 12px;
 }
 
-.metabob-search-modal .empty-results {
+.obsidian-search-modal .empty-results {
   text-align: center;
   padding: 32px;
   color: var(--text-muted);
 }
 
-.metabob-search-modal .empty-results .hint-text {
+.obsidian-search-modal .empty-results .hint-text {
   font-size: 12px;
   margin-top: 8px;
 }
 
-.metabob-search-modal .results-count {
+.obsidian-search-modal .results-count {
   font-size: 12px;
   color: var(--text-muted);
   margin-bottom: 8px;
 }
 
-.metabob-search-modal .results-list {
+.obsidian-search-modal .results-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.metabob-search-modal .search-result-item {
+.obsidian-search-modal .search-result-item {
   padding: 12px;
   background-color: var(--background-secondary);
   border-radius: 4px;
@@ -531,40 +531,40 @@
   transition: background-color 0.15s ease;
 }
 
-.metabob-search-modal .search-result-item:hover,
-.metabob-search-modal .search-result-item.hovered {
+.obsidian-search-modal .search-result-item:hover,
+.obsidian-search-modal .search-result-item.hovered {
   background-color: var(--background-modifier-hover);
 }
 
-.metabob-search-modal .result-header {
+.obsidian-search-modal .result-header {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.metabob-search-modal .status-icon {
+.obsidian-search-modal .status-icon {
   font-size: 14px;
 }
 
-.metabob-search-modal .status-icon.success {
+.obsidian-search-modal .status-icon.success {
   color: var(--color-green);
 }
 
-.metabob-search-modal .status-icon.failure {
+.obsidian-search-modal .status-icon.failure {
   color: var(--color-red);
 }
 
-.metabob-search-modal .activity-name {
+.obsidian-search-modal .activity-name {
   flex: 1;
 }
 
-.metabob-search-modal .result-meta {
+.obsidian-search-modal .result-meta {
   font-size: 12px;
   color: var(--text-muted);
   margin-top: 4px;
 }
 
-.metabob-search-modal .error-preview {
+.obsidian-search-modal .error-preview {
   font-size: 12px;
   color: var(--color-red);
   margin-top: 8px;
@@ -573,7 +573,7 @@
   border-radius: 4px;
 }
 
-.metabob-search-modal .error-text {
+.obsidian-search-modal .error-text {
   color: var(--color-red);
 }
 
@@ -581,16 +581,16 @@
    Templates Browser Modal Styles
    ============================================ */
 
-.metabob-templates-modal {
+.obsidian-templates-modal {
   padding: 16px;
   max-width: 700px;
 }
 
-.metabob-templates-modal .templates-controls {
+.obsidian-templates-modal .templates-controls {
   margin-bottom: 16px;
 }
 
-.metabob-templates-modal .templates-list {
+.obsidian-templates-modal .templates-list {
   max-height: 500px;
   overflow-y: auto;
   display: flex;
@@ -598,7 +598,7 @@
   gap: 12px;
 }
 
-.metabob-templates-modal .template-item {
+.obsidian-templates-modal .template-item {
   padding: 12px;
   background-color: var(--background-secondary);
   border-radius: 6px;
@@ -606,23 +606,23 @@
   transition: background-color 0.15s ease;
 }
 
-.metabob-templates-modal .template-item:hover,
-.metabob-templates-modal .template-item.hovered {
+.obsidian-templates-modal .template-item:hover,
+.obsidian-templates-modal .template-item.hovered {
   background-color: var(--background-modifier-hover);
 }
 
-.metabob-templates-modal .template-header {
+.obsidian-templates-modal .template-header {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
 }
 
-.metabob-templates-modal .template-name {
+.obsidian-templates-modal .template-name {
   font-size: 14px;
 }
 
-.metabob-templates-modal .category-badge {
+.obsidian-templates-modal .category-badge {
   font-size: 10px;
   padding: 2px 6px;
   border-radius: 3px;
@@ -630,58 +630,58 @@
   font-weight: 500;
 }
 
-.metabob-templates-modal .category-badge.category-feature {
+.obsidian-templates-modal .category-badge.category-feature {
   background-color: var(--color-green);
   color: white;
 }
 
-.metabob-templates-modal .category-badge.category-bugfix {
+.obsidian-templates-modal .category-badge.category-bugfix {
   background-color: var(--color-red);
   color: white;
 }
 
-.metabob-templates-modal .category-badge.category-refactor {
+.obsidian-templates-modal .category-badge.category-refactor {
   background-color: var(--color-yellow);
   color: black;
 }
 
-.metabob-templates-modal .category-badge.category-tool {
+.obsidian-templates-modal .category-badge.category-tool {
   background-color: var(--color-blue);
   color: white;
 }
 
-.metabob-templates-modal .category-badge.category-infrastructure {
+.obsidian-templates-modal .category-badge.category-infrastructure {
   background-color: var(--color-purple);
   color: white;
 }
 
-.metabob-templates-modal .category-badge.category-meta {
+.obsidian-templates-modal .category-badge.category-meta {
   background-color: var(--text-muted);
   color: white;
 }
 
-.metabob-templates-modal .type-badge {
+.obsidian-templates-modal .type-badge {
   font-size: 10px;
   padding: 2px 6px;
   border-radius: 3px;
   background-color: var(--background-modifier-border);
 }
 
-.metabob-templates-modal .template-desc {
+.obsidian-templates-modal .template-desc {
   font-size: 13px;
   color: var(--text-muted);
   margin: 8px 0;
   line-height: 1.4;
 }
 
-.metabob-templates-modal .template-metrics {
+.obsidian-templates-modal .template-metrics {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 8px;
 }
 
-.metabob-templates-modal .metric-badge {
+.obsidian-templates-modal .metric-badge {
   font-size: 11px;
   padding: 2px 6px;
   border-radius: 3px;
@@ -689,38 +689,38 @@
   color: var(--text-muted);
 }
 
-.metabob-templates-modal .metric-badge.success-rate.high {
+.obsidian-templates-modal .metric-badge.success-rate.high {
   background-color: var(--background-modifier-success);
   color: var(--color-green);
 }
 
-.metabob-templates-modal .metric-badge.success-rate.medium {
+.obsidian-templates-modal .metric-badge.success-rate.medium {
   background-color: var(--background-modifier-message);
   color: var(--color-yellow);
 }
 
-.metabob-templates-modal .metric-badge.success-rate.low {
+.obsidian-templates-modal .metric-badge.success-rate.low {
   background-color: var(--background-modifier-error);
   color: var(--color-red);
 }
 
-.metabob-templates-modal .template-shapes {
+.obsidian-templates-modal .template-shapes {
   display: flex;
   gap: 12px;
   margin-top: 8px;
   font-size: 11px;
 }
 
-.metabob-templates-modal .shapes-text {
+.obsidian-templates-modal .shapes-text {
   font-family: var(--font-monospace);
   color: var(--text-faint);
 }
 
-.metabob-templates-modal .template-tasks {
+.obsidian-templates-modal .template-tasks {
   margin-top: 8px;
 }
 
-.metabob-templates-modal .tasks-count {
+.obsidian-templates-modal .tasks-count {
   font-size: 11px;
   color: var(--text-faint);
 }
@@ -729,31 +729,31 @@
    Execution ID Modal Styles
    ============================================ */
 
-.metabob-execution-id-modal {
+.obsidian-execution-id-modal {
   padding: 16px;
   max-width: 450px;
 }
 
-.metabob-execution-id-modal .modal-description {
+.obsidian-execution-id-modal .modal-description {
   color: var(--text-muted);
   margin-bottom: 16px;
   font-size: 13px;
 }
 
-.metabob-execution-id-modal .example-section {
+.obsidian-execution-id-modal .example-section {
   margin-top: 16px;
   padding: 12px;
   background-color: var(--background-secondary);
   border-radius: 4px;
 }
 
-.metabob-execution-id-modal .example-header {
+.obsidian-execution-id-modal .example-header {
   font-size: 12px;
   color: var(--text-muted);
   margin-bottom: 4px;
 }
 
-.metabob-execution-id-modal .example-list {
+.obsidian-execution-id-modal .example-list {
   font-size: 11px;
   font-family: var(--font-monospace);
   color: var(--text-faint);
@@ -761,7 +761,7 @@
   padding-left: 20px;
 }
 
-.metabob-execution-id-modal .example-list li {
+.obsidian-execution-id-modal .example-list li {
   margin: 4px 0;
 }
 
@@ -822,9 +822,9 @@
 }
 
 /* Smooth status bar transitions */
-.metabob-status-bar,
-.metabob-status-indicator,
-.metabob-status-bar .status-dot {
+.obsidian-status-bar,
+.obsidian-status-indicator,
+.obsidian-status-bar .status-dot {
   transition: color 0.2s ease, background-color 0.2s ease, opacity 0.2s ease;
 }
 

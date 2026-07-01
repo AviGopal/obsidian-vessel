@@ -17,7 +17,7 @@ export class ExecutionIdModal extends Modal {
 
   onOpen() {
     const { contentEl } = this;
-    contentEl.addClass('metabob-execution-id-modal');
+    contentEl.addClass('obsidian-execution-id-modal');
 
     contentEl.createEl('h2', { text: 'Enter Execution ID' });
 

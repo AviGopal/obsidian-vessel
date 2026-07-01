@@ -1,7 +1,7 @@
 {
   "name": "obsidian-vessel",
   "version": "0.1.0",
-  "description": "Connects Obsidian to the Metabob activity system as a knowledge vessel",
+  "description": "Connects Obsidian to the substrate activity system as a knowledge vessel",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
@@ -15,10 +15,10 @@
   "keywords": [
     "obsidian",
     "plugin",
-    "metabob",
+    "substrate",
     "vessel"
   ],
-  "author": "Metabob",
+  "author": "AviGopal",
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^20.11.0",

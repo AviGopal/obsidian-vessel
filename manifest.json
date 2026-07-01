@@ -1,10 +1,10 @@
 {
-  "id": "metabob-vessel",
-  "name": "Metabob Vessel",
+  "id": "obsidian-vessel",
+  "name": "Obsidian Vessel",
   "version": "0.1.2",
   "minAppVersion": "1.0.0",
-  "description": "Connects Obsidian to the Metabob activity system as a knowledge vessel",
-  "author": "Metabob",
-  "authorUrl": "https://metabob.com",
+  "description": "Connects Obsidian to the substrate activity system as a knowledge vessel",
+  "author": "AviGopal",
+  "authorUrl": "https://github.com/AviGopal/obsidian-vessel",
   "isDesktopOnly": true
 }

@@ -5,11 +5,11 @@
  */
 
 import { App, Modal, Setting, Notice, debounce } from 'obsidian';
-import type MetabobVesselPlugin from '../main';
+import type ObsidianVesselPlugin from '../main';
 import type { ActivityTemplate } from '../types';
 
 export class TemplatesBrowserModal extends Modal {
-  private plugin: MetabobVesselPlugin;
+  private plugin: ObsidianVesselPlugin;
   private templates: ActivityTemplate[] = [];
   private templatesEl: HTMLElement | null = null;
   private searchQuery: string = '';
@@ -17,14 +17,14 @@ export class TemplatesBrowserModal extends Modal {
   private sortBy: 'name' | 'success_rate' | 'executions' | 'recent' = 'name';
   private loading: boolean = false;
 
-  constructor(app: App, plugin: MetabobVesselPlugin) {
+  constructor(app: App, plugin: ObsidianVesselPlugin) {
     super(app);
     this.plugin = plugin;
   }
 
   onOpen() {
     const { contentEl } = this;
-    contentEl.addClass('metabob-templates-modal');
+    contentEl.addClass('obsidian-templates-modal');
 
     contentEl.createEl('h2', { text: 'Activity Templates' });
 

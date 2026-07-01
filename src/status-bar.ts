@@ -5,7 +5,7 @@
  * Shows connection status, sync progress, and quick actions.
  */
 
-import type MetabobVesselPlugin from './main';
+import type ObsidianVesselPlugin from './main';
 
 /**
  * Status indicator icons (using Unicode symbols for compatibility)
@@ -23,20 +23,20 @@ const ICONS = {
  * of the vessel status in Obsidian's status bar.
  */
 export class StatusBarManager {
-  private plugin: MetabobVesselPlugin;
+  private plugin: ObsidianVesselPlugin;
   private statusBarEl: HTMLElement;
   private updateInterval: ReturnType<typeof setInterval> | null = null;
   private isRunning: boolean = false;
   private clickHandler: (() => void) | null = null;
 
-  constructor(plugin: MetabobVesselPlugin, statusBarEl: HTMLElement) {
+  constructor(plugin: ObsidianVesselPlugin, statusBarEl: HTMLElement) {
     this.plugin = plugin;
     this.statusBarEl = statusBarEl;
-    this.statusBarEl.addClass('metabob-status-bar');
+    this.statusBarEl.addClass('obsidian-status-bar');
 
     // Set up click handler
     this.clickHandler = () => {
-      this.plugin.app.commands.executeCommandById('metabob-vessel-status');
+      this.plugin.app.commands.executeCommandById('obsidian-vessel-status');
     };
     this.statusBarEl.addEventListener('click', this.clickHandler);
 
@@ -99,7 +99,7 @@ export class StatusBarManager {
     if (status.syncing) {
       icon = ICONS.syncing;
       text = 'Syncing...';
-      tooltip = 'Metabob: Sync in progress';
+      tooltip = 'Obsidian: Sync in progress';
     } else if (status.apiConnected) {
       icon = ICONS.connected;
       text = `${status.syncedCount}`;
@@ -107,10 +107,10 @@ export class StatusBarManager {
     } else {
       icon = ICONS.disconnected;
       text = 'Offline';
-      tooltip = 'Metabob: Not connected to API\nClick to view status';
+      tooltip = 'Obsidian: Not connected to API\nClick to view status';
     }
 
-    this.statusBarEl.innerHTML = `${icon} Metabob: ${text}`;
+    this.statusBarEl.innerHTML = `${icon} Obsidian: ${text}`;
     this.statusBarEl.setAttribute('aria-label', tooltip);
     this.statusBarEl.setAttribute('title', tooltip);
   }
@@ -120,7 +120,7 @@ export class StatusBarManager {
    */
   private buildTooltip(status: ReturnType<typeof this.plugin.getStatus>): string {
     const lines = [
-      'Metabob Vessel',
+      'Obsidian Vessel',
       '---',
       `API: ${status.apiConnected ? 'Connected' : 'Disconnected'}`,
       `Server: ${status.serverRunning ? 'Running' : 'Stopped'}`,

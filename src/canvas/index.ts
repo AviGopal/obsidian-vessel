@@ -1,5 +1,5 @@
 /**
- * Canvas Visualization Module for Metabob Vessel
+ * Canvas Visualization Module for Obsidian Vessel
  *
  * Provides canvas generation and management for visualizing:
  * - Execution traces
@@ -26,7 +26,7 @@
 
 import type { App } from 'obsidian';
 import type { CanvasData } from '../types/canvas';
-import type { MetabobVesselSettings } from '../settings';
+import type { ObsidianVesselSettings } from '../settings';
 
 // Core canvas management
 export { CanvasManager } from './canvas-manager';
@@ -62,7 +62,7 @@ export {
  */
 export async function initializeCanvases(
   app: App,
-  settings: MetabobVesselSettings
+  settings: ObsidianVesselSettings
 ): Promise<void> {
   const { CanvasManager } = await import('./canvas-manager');
   const canvasManager = new CanvasManager(app, settings);
@@ -76,7 +76,7 @@ export async function initializeCanvases(
       y: 0,
       width: 500,
       height: 300,
-      text: `# Welcome to Metabob Vessel
+      text: `# Welcome to Obsidian Vessel
 
 ## Getting Started
 

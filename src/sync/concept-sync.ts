@@ -12,7 +12,7 @@
  */
 
 import type { App, TFile } from 'obsidian';
-import type { MetabobVesselSettings } from '../settings';
+import type { ObsidianVesselSettings } from '../settings';
 import type { ConceptDbClient, ConceptRecord, ConceptNeighbor } from '../concept-db-client';
 import { shortConceptId } from '../concept-db-client';
 import {
@@ -139,7 +139,7 @@ export class ConceptSyncService {
   private maxConceptsPerTick: number;
 
   constructor(
-    private settings: MetabobVesselSettings,
+    private settings: ObsidianVesselSettings,
     private client: ConceptDbClient,
     private writer: NoteWriter,
     options: ConceptSyncOptions = {},

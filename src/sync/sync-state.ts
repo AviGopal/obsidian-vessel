@@ -38,7 +38,7 @@ interface SerializedSyncState {
 export class SyncStateManager {
   private state: SyncState;
   private plugin: Plugin;
-  private stateKey = 'metabob-sync-state';
+  private stateKey = 'obsidian-sync-state';
   private saveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private saveDebounceMs = 1000;
 

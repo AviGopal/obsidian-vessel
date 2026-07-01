@@ -1,8 +1,8 @@
 import { App, Plugin, PluginManifest, TFile, Notice } from 'obsidian';
 import { GoalDispatchView, VIEW_TYPE_GOAL_DISPATCH } from './views/goal-dispatch-view';
 import { GoalInputModal } from './views/goal-input-modal';
-import { MetabobVesselSettings, DEFAULT_SETTINGS } from './settings';
-import { MetabobVesselSettingTab } from './settings-tab';
+import { ObsidianVesselSettings, DEFAULT_SETTINGS } from './settings';
+import { ObsidianVesselSettingTab } from './settings-tab';
 import { HTTPServer } from './server/index';
 import { sendJson, sendError, parseJsonBody } from './server/routes';
 import { VesselClient } from './vessel-client';
@@ -87,9 +87,9 @@ export interface VesselStatus {
 }
 
 /**
- * Metabob Vessel Plugin for Obsidian
+ * Obsidian Vessel Plugin for Obsidian
  *
- * This plugin transforms Obsidian into a vessel for the Metabob activity system,
+ * This plugin transforms Obsidian into a vessel for the Obsidian activity system,
  * enabling:
  * - Impulse resolution from vault content (notes, search, canvas, backlinks, etc.)
  * - Execution trace syncing and visualization
@@ -102,8 +102,8 @@ export interface VesselStatus {
  * - SyncService: Syncs execution traces bidirectionally
  * - Resolvers: Type-specific impulse resolution (note, search, canvas, etc.)
  */
-export default class MetabobVesselPlugin extends Plugin {
-  settings: MetabobVesselSettings;
+export default class ObsidianVesselPlugin extends Plugin {
+  settings: ObsidianVesselSettings;
 
   // Services
   httpServer: HTTPServer | null = null;
@@ -154,7 +154,7 @@ export default class MetabobVesselPlugin extends Plugin {
    * 9. Initial sync (delayed to let Obsidian finish loading)
    */
   async onload() {
-    console.log('[Metabob Vessel] Loading plugin...');
+    console.log('[Obsidian Vessel] Loading plugin...');
 
     // Phase 1: Load settings
     // Settings must be loaded first as all other components depend on configuration
@@ -226,7 +226,7 @@ export default class MetabobVesselPlugin extends Plugin {
 
     // Phase 9: Register UI components
     // Settings tab for configuration
-    this.addSettingTab(new MetabobVesselSettingTab(this.app, this));
+    this.addSettingTab(new ObsidianVesselSettingTab(this.app, this));
 
     // Register Goal Dispatch sidebar view
     this.registerView(
@@ -316,11 +316,11 @@ export default class MetabobVesselPlugin extends Plugin {
 
     // Phase 11: Add ribbon icons
     // Existing: quick access to status command
-    this.addRibbonIcon('activity', 'Metabob Vessel', () => {
+    this.addRibbonIcon('activity', 'Obsidian Vessel', () => {
       // Execute the status command when clicked
-      const command = this.app.commands.commands['metabob-vessel:status'];
+      const command = this.app.commands.commands['obsidian-vessel:status'];
       if (command) {
-        this.app.commands.executeCommandById('metabob-vessel:status');
+        this.app.commands.executeCommandById('obsidian-vessel:status');
       }
     });
 
@@ -336,13 +336,13 @@ export default class MetabobVesselPlugin extends Plugin {
     if (this.settings.syncOnStart) {
       setTimeout(() => {
         this.syncService?.syncHistorical().catch(error => {
-          console.error('[Metabob Vessel] Initial sync failed:', error);
+          console.error('[Obsidian Vessel] Initial sync failed:', error);
         });
       }, 2000);
     }
 
-    console.log('[Metabob Vessel] Plugin loaded successfully');
-    console.log(`[Metabob Vessel] Registered resolver types: ${listResolverTypes().join(', ')}`);
+    console.log('[Obsidian Vessel] Plugin loaded successfully');
+    console.log(`[Obsidian Vessel] Registered resolver types: ${listResolverTypes().join(', ')}`);
   }
 
   /**
@@ -355,7 +355,7 @@ export default class MetabobVesselPlugin extends Plugin {
    * 4. Stop HTTP server
    */
   async onunload() {
-    console.log('[Metabob Vessel] Unloading plugin...');
+    console.log('[Obsidian Vessel] Unloading plugin...');
 
     // Stop status bar updates first (UI cleanup)
     this.statusBarManager?.stop();
@@ -364,7 +364,7 @@ export default class MetabobVesselPlugin extends Plugin {
     try {
       await this.vesselClient?.deregister();
     } catch (error) {
-      console.error('[Metabob Vessel] Error during deregistration:', error);
+      console.error('[Obsidian Vessel] Error during deregistration:', error);
     }
 
     // Cleanup sync service (close connections)
@@ -387,7 +387,7 @@ export default class MetabobVesselPlugin extends Plugin {
       setObserveObsidianEventsContext(null, null);
       setGroupInteractionEpisodesContext(null);
     } catch (error) {
-      console.error('[Metabob Vessel] Error stopping observation layer:', error);
+      console.error('[Obsidian Vessel] Error stopping observation layer:', error);
     }
     this.obsidianEventLog = null;
     this.stopObservation = null;
@@ -396,7 +396,7 @@ export default class MetabobVesselPlugin extends Plugin {
     try {
       await this.httpServer?.stop();
     } catch (error) {
-      console.error('[Metabob Vessel] Error stopping HTTP server:', error);
+      console.error('[Obsidian Vessel] Error stopping HTTP server:', error);
     }
 
     // Clear references
@@ -409,7 +409,7 @@ export default class MetabobVesselPlugin extends Plugin {
     this.executionFormatter = null;
     this.templateFormatter = null;
 
-    console.log('[Metabob Vessel] Plugin unloaded');
+    console.log('[Obsidian Vessel] Plugin unloaded');
   }
 
   /**
@@ -473,13 +473,13 @@ export default class MetabobVesselPlugin extends Plugin {
 
       await this.httpServer.start();
       this.registerActionObservationRoutes(this.httpServer);
-      console.log(`[Metabob Vessel] HTTP server started on port ${this.settings.serverPort}`);
+      console.log(`[Obsidian Vessel] HTTP server started on port ${this.settings.serverPort}`);
     } catch (error) {
-      console.error('[Metabob Vessel] Failed to start HTTP server:', error);
+      console.error('[Obsidian Vessel] Failed to start HTTP server:', error);
 
       // Show user-friendly error
       const errorMessage = error instanceof Error ? error.message : String(error);
-      new Notice(`Metabob: Failed to start HTTP server - ${errorMessage}`);
+      new Notice(`Obsidian: Failed to start HTTP server - ${errorMessage}`);
 
       // Server failure is not fatal - we can still work in offline mode
       this.httpServer = null;
@@ -551,7 +551,7 @@ export default class MetabobVesselPlugin extends Plugin {
           // dispatchGoal is fire-and-forget from the HTTP perspective;
           // we return immediately after enqueue so the HTTP call doesn't block.
           (leaf.view as GoalDispatchView).dispatchGoal(body.goal).catch((err) => {
-            console.error('[Metabob Vessel] dispatch-goal error:', err);
+            console.error('[Obsidian Vessel] dispatch-goal error:', err);
           });
         }
         sendJson(res, { success: true, ...(executionId ? { executionId } : {}) });
@@ -668,13 +668,13 @@ export default class MetabobVesselPlugin extends Plugin {
       if (success) {
         // Start heartbeat to maintain registration
         this.vesselClient.startHeartbeat();
-        console.log('[Metabob Vessel] Registered with activity-api');
+        console.log('[Obsidian Vessel] Registered with activity-api');
       } else {
-        console.warn('[Metabob Vessel] Registration returned false');
+        console.warn('[Obsidian Vessel] Registration returned false');
       }
     } catch (error) {
       // Registration failure is not fatal - we work in offline mode
-      console.error('[Metabob Vessel] Failed to register:', error);
+      console.error('[Obsidian Vessel] Failed to register:', error);
       // Don't show notice - this is expected when API is unavailable
     }
   }
@@ -684,13 +684,13 @@ export default class MetabobVesselPlugin extends Plugin {
    * Used when settings change or connection is lost
    */
   async reconnect() {
-    console.log('[Metabob Vessel] Reconnecting...');
+    console.log('[Obsidian Vessel] Reconnecting...');
 
     // Deregister first
     try {
       await this.vesselClient?.deregister();
     } catch (error) {
-      console.error('[Metabob Vessel] Error during deregistration:', error);
+      console.error('[Obsidian Vessel] Error during deregistration:', error);
     }
 
     // Re-initialize vessel client with new settings
@@ -716,7 +716,7 @@ export default class MetabobVesselPlugin extends Plugin {
     );
     await this.syncService.initialize();
 
-    console.log('[Metabob Vessel] Reconnection complete');
+    console.log('[Obsidian Vessel] Reconnection complete');
   }
 
   /**
@@ -724,13 +724,13 @@ export default class MetabobVesselPlugin extends Plugin {
    * Used when server settings change
    */
   async restartServer() {
-    console.log('[Metabob Vessel] Restarting HTTP server...');
+    console.log('[Obsidian Vessel] Restarting HTTP server...');
 
     // Stop existing server
     try {
       await this.httpServer?.stop();
     } catch (error) {
-      console.error('[Metabob Vessel] Error stopping HTTP server:', error);
+      console.error('[Obsidian Vessel] Error stopping HTTP server:', error);
     }
 
     this.httpServer = null;
@@ -740,7 +740,7 @@ export default class MetabobVesselPlugin extends Plugin {
       await this.startHTTPServer();
     }
 
-    console.log('[Metabob Vessel] HTTP server restart complete');
+    console.log('[Obsidian Vessel] HTTP server restart complete');
   }
 
   /**
@@ -803,7 +803,7 @@ export default class MetabobVesselPlugin extends Plugin {
     try {
       this.stopObservation?.();
     } catch (error) {
-      console.error('[Metabob Vessel] Error tearing down prior observation layer:', error);
+      console.error('[Obsidian Vessel] Error tearing down prior observation layer:', error);
     }
 
     const log = new ObsidianEventLog(10_000);
@@ -816,7 +816,7 @@ export default class MetabobVesselPlugin extends Plugin {
     setSubstrateWritePrefixes([`${syncRoot}/`, 'substrate/', 'Substrate/']);
     setGroupInteractionEpisodesContext(log);
     this.stopObservation = startObserveObsidianEvents();
-    console.log('[Metabob Vessel] Observation layer started (event log cap=10000)');
+    console.log('[Obsidian Vessel] Observation layer started (event log cap=10000)');
   }
 
   /**
@@ -891,7 +891,7 @@ export default class MetabobVesselPlugin extends Plugin {
       return file;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error('[Metabob Vessel] Failed to create note:', error);
+      console.error('[Obsidian Vessel] Failed to create note:', error);
       new Notice(`Failed to create note: ${errorMessage}`);
       return null;
     }
@@ -937,7 +937,7 @@ export default class MetabobVesselPlugin extends Plugin {
       return file;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error('[Metabob Vessel] Failed to create template note:', error);
+      console.error('[Obsidian Vessel] Failed to create template note:', error);
       new Notice(`Failed to create template note: ${errorMessage}`);
       return null;
     }
@@ -972,7 +972,7 @@ export default class MetabobVesselPlugin extends Plugin {
       new Notice(`Opened execution canvas with ${response.executions.length} traces`);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error('[Metabob Vessel] Failed to open canvas:', error);
+      console.error('[Obsidian Vessel] Failed to open canvas:', error);
       new Notice(`Failed to open canvas: ${errorMessage}`);
     }
   }
@@ -1006,7 +1006,7 @@ export default class MetabobVesselPlugin extends Plugin {
       new Notice(`Opened composition canvas with ${graph.totalNodes} activities and ${graph.totalEdges} relationships`);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error('[Metabob Vessel] Failed to open composition canvas:', error);
+      console.error('[Obsidian Vessel] Failed to open composition canvas:', error);
       new Notice(`Failed to open composition canvas: ${errorMessage}`);
     }
   }

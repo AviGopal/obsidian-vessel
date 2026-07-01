@@ -8,7 +8,7 @@ import {
   CanvasGroupNode
 } from '../types/canvas';
 import { ExecutionTrace } from '../types';
-import { MetabobVesselSettings } from '../settings';
+import { ObsidianVesselSettings } from '../settings';
 import type { CompositionGraph, CompositionNode, CompositionEdge } from '../api-client';
 
 /**
@@ -76,7 +76,7 @@ export class ExecutionCanvasBuilder {
 
   constructor(
     private app: App,
-    private settings: MetabobVesselSettings
+    private settings: ObsidianVesselSettings
   ) {
     this.canvasManager = new CanvasManager(app, settings);
   }

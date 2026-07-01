@@ -18,7 +18,7 @@ export class GoalInputModal extends Modal {
 
   onOpen(): void {
     const { contentEl } = this;
-    contentEl.addClass('metabob-goal-input-modal');
+    contentEl.addClass('obsidian-goal-input-modal');
 
     contentEl.createEl('h2', { text: 'Dispatch Goal to Substrate' });
     contentEl.createEl('p', {
@@ -30,7 +30,7 @@ export class GoalInputModal extends Modal {
       .setName('Goal')
       .setDesc('Plain-language description of the goal')
       .addTextArea((ta) => {
-        ta.setPlaceholder('e.g. Fix the failing tests in metabob-activity-api');
+        ta.setPlaceholder('e.g. Fix the failing tests in obsidian-activity-api');
         ta.onChange((value) => {
           this.goal = value.trim();
         });

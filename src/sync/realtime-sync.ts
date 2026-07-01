@@ -7,7 +7,7 @@
  */
 
 import type { App } from 'obsidian';
-import type { ExecutionTrace, MetabobVesselSettings } from './historical-sync';
+import type { ExecutionTrace, ObsidianVesselSettings } from './historical-sync';
 
 /**
  * WebSocket message types from Activity API
@@ -69,7 +69,7 @@ export class RealtimeSyncService {
 
   constructor(
     private app: App,
-    private settings: MetabobVesselSettings,
+    private settings: ObsidianVesselSettings,
     private onExecution: ExecutionCallback,
     private onStatusChange: StatusCallback
   ) {}
