@@ -548,6 +548,30 @@ export default class ObsidianVesselPlugin extends Plugin {
       }
     });
 
+    // ── POST /actions/reload-plugin ─────────────────────────────────────
+    // Plugin-scoped hot-reload so substrate-authored UI (new commands/views built
+    // into main.js) takes effect WITHOUT the deny-globbed app:reload. Responds first,
+    // then disable→enable on the next tick so the JSON flushes before this plugin
+    // (and its HTTP server) unloads. The re-enabled instance loads the freshly-built
+    // main.js. This is the deploy cutover for substrate-authored obsidian features.
+    server.addRoute('POST', '/actions/reload-plugin', async (_req, res) => {
+      const pluginId = this.manifest.id || 'obsidian-vessel';
+      sendJson(res, { success: true, reloading: pluginId });
+      setTimeout(() => {
+        void (async () => {
+          try {
+            const plugins = (this.app as unknown as {
+              plugins: { disablePlugin(id: string): Promise<void>; enablePlugin(id: string): Promise<void> };
+            }).plugins;
+            await plugins.disablePlugin(pluginId);
+            await plugins.enablePlugin(pluginId);
+          } catch (err) {
+            console.error('[Obsidian Vessel] reload-plugin failed:', err);
+          }
+        })();
+      }, 150);
+    });
+
     // ── POST /actions/open-note ─────────────────────────────────────────
     server.addRoute('POST', '/actions/open-note', async (req, res) => {
       try {

@@ -4,7 +4,7 @@
  * Registers all plugin commands with Obsidian's command palette.
  */
 
-import { Notice } from 'obsidian';
+import { Notice, Plugin } from 'obsidian';
 import type ObsidianVesselPlugin from './main';
 import { VesselStatusModal } from './modals/vessel-status-modal';
 import { ExecutionIdModal } from './modals/execution-id-modal';
@@ -176,6 +176,40 @@ export function registerCommands(plugin: ObsidianVesselPlugin): void {
         }
       })();
       return true;
+    },
+  });
+
+  // Show Substrate Expectation
+  plugin.addCommand({
+    id: 'obsidian-vessel-show-expectation',
+    name: 'Obsidian Vessel: Show substrate expectation',
+    icon: 'sparkles',
+    callback: async () => {
+      const activityApiUrl = plugin.settings.activityApiUrl;
+      if (!activityApiUrl) {
+        new Notice('Substrate expectation unavailable');
+        return;
+      }
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        let response: Response;
+        try {
+          response = await fetch(`${activityApiUrl}/v2/impulses/resolve`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ impulse: { pointer: { type: 'implicitVesselReport' } } }),
+            signal: controller.signal,
+          });
+        } finally {
+          clearTimeout(timeoutId);
+        }
+        const data: unknown = await response.json();
+        const summary = JSON.stringify(data).slice(0, 300);
+        new Notice(summary);
+      } catch {
+        new Notice('Substrate expectation unavailable');
+      }
     },
   });
 
