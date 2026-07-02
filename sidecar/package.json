@@ -8,7 +8,7 @@
     "typecheck": "tsc --noEmit federation-sidecar.ts --module esnext --moduleResolution bundler --target es2022 --skipLibCheck"
   },
   "dependencies": {
-    "@avigopal/libp2p-federation-transport": "file:../../libp2p-federation-transport"
+    "@avigopal/libp2p-federation-transport": "github:AviGopal/libp2p-federation-transport"
   },
   "devDependencies": {
     "@types/bun": "^1.0.0",
