@@ -141,6 +141,15 @@
 .goal-dispatch-line.gd-concept-link { color: #6ee7b7; font-size: 10.5px; opacity: 0.85; }
 .goal-dispatch-line.gd-suppressed   { color: var(--text-faint); font-size: 10.5px; font-style: italic; opacity: 0.7; }
 
+/* Hollow completion: goal-host verdict reached=false - dim the whole event
+   output and tint it amber so it cannot be mistaken for a success. */
+.goal-dispatch-output.mb-hollow {
+  opacity: 0.75;
+  border-color: var(--color-yellow);
+  background: color-mix(in srgb, var(--color-yellow) 6%, var(--background-primary-alt));
+}
+.goal-dispatch-output.mb-hollow .goal-dispatch-line.gd-success { color: var(--color-yellow); }
+
 /* The answer block — full multi-paragraph rendering of the goalAnswer concept. */
 .goal-dispatch-line.gd-answer-block {
   align-items: flex-start;
