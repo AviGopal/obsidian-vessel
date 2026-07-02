@@ -56,6 +56,7 @@ import './resolvers/execute-command';
 import './resolvers/command-catalog';
 import './resolvers/workspace-resolvers';
 import './resolvers/write-note-resolver';
+import './resolvers/ui-view-resolver';
 import { setConceptDbResolverContext } from './resolvers/concept-view-resolver';
 import { setConceptWritebackResolverContext } from './resolvers/concept-writeback-resolver';
 import {
