@@ -209,6 +209,11 @@ export class VesselClient {
       ttl: this.settings.registrationTtl,
     };
 
+    const sidecarAddrs = await this.fetchSidecarMultiaddr();
+    if (sidecarAddrs.length > 0) {
+      (registration as unknown as Record<string, unknown>)['libp2p_multiaddr'] = sidecarAddrs;
+    }
+
     this.logger('info', 'Registering vessel', {
       vesselId,
       vesselName,
@@ -269,6 +274,19 @@ export class VesselClient {
     });
     this.lastError = lastError?.message;
     return false;
+  }
+
+  private async fetchSidecarMultiaddr(): Promise<string[]> {
+    if (!this.settings.enableFederationSidecar) return [];
+    const healthUrl = 'http://127.0.0.1:' + String(this.settings.federationHealthPort || 8402) + '/health';
+    try {
+      const response = await this.fetchWithTimeout(healthUrl, { method: 'GET' }, 2000);
+      if (!response.ok) return [];
+      const body = (await response.json()) as { libp2p_multiaddr?: string };
+      return typeof body.libp2p_multiaddr === 'string' && body.libp2p_multiaddr.length > 0 ? [body.libp2p_multiaddr] : [];
+    } catch {
+      return [];
+    }
   }
 
   /**
