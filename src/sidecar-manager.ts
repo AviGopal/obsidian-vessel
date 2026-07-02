@@ -15,8 +15,16 @@
  */
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
+import * as fs from 'fs';
 import * as path from 'path';
 import { ObsidianVesselSettings } from './settings';
+
+// Injected at build time by esbuild.config.mjs (`define`) from
+// sidecar/federation-sidecar.ts and sidecar/package.json, so release installs
+// (which ship only main.js/manifest.json/styles.css) can materialize the
+// sidecar package on first start.
+declare const __SIDECAR_SOURCE__: string;
+declare const __SIDECAR_PACKAGE_JSON__: string;
 
 export interface SidecarManagerOptions {
   /** Absolute path to the vault root. */
@@ -100,10 +108,71 @@ export class SidecarManager {
     return path.join(pluginDirAbs, 'sidecar');
   }
 
+  /**
+   * Materialize the sidecar package into <pluginDir>/sidecar when missing or
+   * stale (release installs ship only the plugin bundle — the sidecar sources
+   * are embedded at build time and written out here), then `bun install` its
+   * dependencies when node_modules is absent. Returns false on failure.
+   */
+  private async ensureSidecarMaterialized(sidecarDir: string, bunPath: string): Promise<boolean> {
+    try {
+      fs.mkdirSync(sidecarDir, { recursive: true });
+      const scriptPath = path.join(sidecarDir, 'federation-sidecar.ts');
+      const pkgPath = path.join(sidecarDir, 'package.json');
+      if (!fs.existsSync(scriptPath) || fs.readFileSync(scriptPath, 'utf8') !== __SIDECAR_SOURCE__) {
+        fs.writeFileSync(scriptPath, __SIDECAR_SOURCE__);
+      }
+      if (!fs.existsSync(pkgPath) || fs.readFileSync(pkgPath, 'utf8') !== __SIDECAR_PACKAGE_JSON__) {
+        fs.writeFileSync(pkgPath, __SIDECAR_PACKAGE_JSON__);
+      }
+    } catch (err) {
+      this.logger('error', `sidecar materialization failed: ${err instanceof Error ? err.message : String(err)}`);
+      return false;
+    }
+    if (fs.existsSync(path.join(sidecarDir, 'node_modules', '@avigopal', 'libp2p-federation-transport'))) {
+      return true;
+    }
+    this.logger('info', `installing sidecar dependencies: ${bunPath} install (cwd=${sidecarDir})`);
+    return await new Promise<boolean>((resolve) => {
+      let child: ChildProcessWithoutNullStreams;
+      try {
+        child = spawn(bunPath, ['install'], { cwd: sidecarDir, stdio: 'pipe' });
+      } catch (err) {
+        this.logger('error', `failed to run bun install: ${err instanceof Error ? err.message : String(err)}`);
+        resolve(false);
+        return;
+      }
+      let stderr = '';
+      child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+      const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* already exited */ } }, 180_000);
+      child.on('exit', (code) => {
+        clearTimeout(timer);
+        if (code !== 0) this.logger('error', `bun install exited with ${code}: ${stderr.slice(-500)}`);
+        resolve(code === 0);
+      });
+      child.on('error', (err) => {
+        clearTimeout(timer);
+        this.logger('error', `bun install error: ${err.message}`);
+        resolve(false);
+      });
+    });
+  }
+
   private spawnChild(): void {
+    void this.prepareAndSpawn();
+  }
+
+  private async prepareAndSpawn(): Promise<void> {
     const sidecarDir = this.resolveSidecarDir();
     const scriptPath = path.join(sidecarDir, 'federation-sidecar.ts');
     const bunPath = this.settings.federationBunPath || 'bun';
+
+    const ready = await this.ensureSidecarMaterialized(sidecarDir, bunPath);
+    if (this.stopped) return;
+    if (!ready) {
+      this.scheduleRestart();
+      return;
+    }
 
     const env: NodeJS.ProcessEnv = {
       ...process.env,
