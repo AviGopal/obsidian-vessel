@@ -98,6 +98,20 @@ export class GoalHostClient {
     throw new Error(`No response after ${Math.round(timeoutMs / 60000)} min${lastError ? `: ${lastError}` : ''}`);
   }
 
+  /**
+   * Fetch the dispatch record from goal-host GET /executions/:dispatchId.
+   * The record carries the honest goal-reach verdict: `reached` (true/false/null)
+   * and `goalReachReason` — distinct from `status`, which is only exit status.
+   */
+  async getDispatchRecord(dispatchId: string): Promise<Record<string, unknown>> {
+    const r = await requestUrl({
+      url: this.endpoint + '/executions/' + dispatchId,
+      method: 'GET',
+      headers: { 'Authorization': 'ApiKey ' + this.apiKey },
+    });
+    return r.json as Record<string, unknown>;
+  }
+
   async dispatchGoal(goal: string, ctx?: VaultContext): Promise<GoalDispatchResult> {
     const variables: Record<string, unknown> = ctx ? { ...ctx } : {};
     const expectedOutputShapes = ctx?.available_shapes?.length
