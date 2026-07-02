@@ -18,7 +18,7 @@ import type { App, TFile } from 'obsidian';
 import type { ImpulsePointer, ResolverResult } from './types';
 import { registerResolver } from './index';
 
-interface WriteNotePointer {
+export interface WriteNotePointer {
   type: string;
   /** Vault-relative path; MUST be under an allowed prefix. */
   path?: string;
@@ -26,6 +26,9 @@ interface WriteNotePointer {
   content?: string;
   /** Override allowed prefixes (default ['Substrate/']). */
   allowed_prefixes?: string[];
+  dispatch_id?: string;
+  goal?: string;
+  reached?: boolean;
 }
 
 const DEFAULT_ALLOWED_PREFIXES = ['Substrate/'];
@@ -68,7 +71,7 @@ async function resolveWriteNote(
     } else {
       await app.vault.create(path, content);
     }
-    registerSolicitation(path, path);
+    registerSolicitation(path, p.dispatch_id ?? path);
     return {
       content: JSON.stringify({ wrote: true, path, bytes: content.length }),
       metadata: { shape: 'obsidian:write_note', summary: `wrote ${content.length}b to ${path}`, producedBy: 'obsidian-vessel' },
