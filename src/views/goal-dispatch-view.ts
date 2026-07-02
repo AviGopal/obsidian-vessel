@@ -900,6 +900,7 @@ export class GoalDispatchView extends ItemView {
           if (this.goalFile) this.goalNoteManager.markComplete(this.goalFile, 'failed', this.mintedConcepts);
           this.dispatching = false;
           this.setDispatchBtnState(false);
+          void this.renderReachVerdict();
         } else {
           this.appendMessage(`${pad}✗ Sub-activity failed`, 'failure');
         }
