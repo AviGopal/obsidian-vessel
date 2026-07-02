@@ -500,6 +500,28 @@ export class GoalDispatchView extends ItemView {
     this.outputEl.scrollTop = this.outputEl.scrollHeight;
   }
 
+  private async renderReachVerdict(): Promise<void> {
+    const dispatchId = this.activeDispatchId;
+    if (!dispatchId) return;
+    try {
+      const client = new GoalHostClient(this.plugin.settings.goalHostEndpoint, this.plugin.settings.apiKey);
+      const record = await client.getDispatchRecord(dispatchId);
+      const reached = record.reached as boolean | null;
+      const reason = record.goalReachReason as string | null;
+      if (reached === true) {
+        this.appendMessage('reached: yes', 'success');
+      } else if (reached === false) {
+        this.appendMessage('reached: no - ' + (reason ?? 'no reason given'), 'failure');
+        if (this.outputEl) this.outputEl.addClass('mb-hollow');
+      } else {
+        this.appendMessage('reached: unknown (verdict pending)', undefined);
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.appendMessage('reached: unavailable (' + msg + ')', undefined);
+    }
+  }
+
   private clearOutput(): void {
     if (this.outputEl) this.outputEl.empty();
   }
