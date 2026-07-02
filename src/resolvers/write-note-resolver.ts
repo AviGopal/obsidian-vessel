@@ -65,16 +65,24 @@ async function resolveWriteNote(
     if (dir && !app.vault.getAbstractFileByPath(dir)) {
       await app.vault.createFolder(dir).catch(() => { /* exists / race */ });
     }
+    // safety gate passed — write the note
+    let body = content;
+    if (p.dispatch_id || p.goal) {
+      body += '\n\n---\n' + 'provenance: substrate-authored\n';
+      if (p.goal) body += 'goal: ' + p.goal + '\n';
+      if (p.dispatch_id) body += 'dispatch: ' + p.dispatch_id + '\n';
+      if (p.reached !== undefined) body += 'reached: ' + (p.reached ? 'yes' : 'no') + '\n';
+    }
     const existing = app.vault.getAbstractFileByPath(path);
     if (existing && 'stat' in existing) {
-      await app.vault.modify(existing as TFile, content);
+      await app.vault.modify(existing as TFile, body);
     } else {
-      await app.vault.create(path, content);
+      await app.vault.create(path, body);
     }
     registerSolicitation(path, p.dispatch_id ?? path);
     return {
-      content: JSON.stringify({ wrote: true, path, bytes: content.length }),
-      metadata: { shape: 'obsidian:write_note', summary: `wrote ${content.length}b to ${path}`, producedBy: 'obsidian-vessel' },
+      content: JSON.stringify({ wrote: true, path, bytes: body.length }),
+      metadata: { shape: 'obsidian:write_note', summary: `wrote ${body.length}b to ${path}`, producedBy: 'obsidian-vessel', dispatch_id: p.dispatch_id },
     };
   } catch (err) {
     return {
