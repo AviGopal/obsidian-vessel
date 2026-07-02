@@ -523,7 +523,10 @@ export class GoalDispatchView extends ItemView {
   }
 
   private clearOutput(): void {
-    if (this.outputEl) this.outputEl.empty();
+    if (this.outputEl) {
+      this.outputEl.removeClass('mb-hollow');
+      this.outputEl.empty();
+    }
   }
 
   private setDispatchBtnState(disabled: boolean): void {
