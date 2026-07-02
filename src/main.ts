@@ -6,6 +6,7 @@ import { ObsidianVesselSettingTab } from './settings-tab';
 import { HTTPServer } from './server/index';
 import { sendJson, sendError, parseJsonBody } from './server/routes';
 import { VesselClient } from './vessel-client';
+import { SidecarManager } from './sidecar-manager';
 import { ActivityAPIClient } from './api-client';
 import { SyncService } from './sync/index';
 import { ConceptSyncService, makeObsidianNoteWriter } from './sync/concept-sync';
@@ -108,6 +109,7 @@ export default class ObsidianVesselPlugin extends Plugin {
   // Services
   httpServer: HTTPServer | null = null;
   vesselClient: VesselClient | null = null;
+  sidecarManager: SidecarManager | null = null;
   apiClient: ActivityAPIClient | null = null;
   syncService: SyncService | null = null;
   canvasBuilder: ExecutionCanvasBuilder | null = null;
@@ -185,6 +187,13 @@ export default class ObsidianVesselPlugin extends Plugin {
     // Phase 6: Register with activity-api
     // This makes us discoverable to other vessels and the backend
     await this.registerVessel();
+
+    // Phase 6b: Start the federation sidecar (opt-in)
+    // Makes this plugin reachable from a REMOTE substrate hub over a libp2p
+    // relay circuit, in addition to the local-container registration above.
+    if (this.settings.enableFederationSidecar) {
+      this.startFederationSidecar();
+    }
 
     // Phase 7: Initialize sync service
     // Sync service handles bidirectional execution trace synchronization
@@ -392,6 +401,13 @@ export default class ObsidianVesselPlugin extends Plugin {
     this.obsidianEventLog = null;
     this.stopObservation = null;
 
+    // Stop the federation sidecar child process (if running)
+    try {
+      this.sidecarManager?.stop();
+    } catch (error) {
+      console.error('[Obsidian Vessel] Error stopping federation sidecar:', error);
+    }
+
     // Stop HTTP server last (may have pending requests)
     try {
       await this.httpServer?.stop();
@@ -401,6 +417,7 @@ export default class ObsidianVesselPlugin extends Plugin {
 
     // Clear references
     this.httpServer = null;
+    this.sidecarManager = null;
     this.vesselClient = null;
     this.apiClient = null;
     this.syncService = null;
@@ -726,6 +743,49 @@ export default class ObsidianVesselPlugin extends Plugin {
       console.error('[Obsidian Vessel] Failed to register:', error);
       // Don't show notice - this is expected when API is unavailable
     }
+  }
+
+  /**
+   * Start the libp2p federation sidecar as a managed child process (opt-in).
+   * See src/sidecar-manager.ts for the spawn/supervise/restart logic and
+   * sidecar/federation-sidecar.ts for the transport + shape-route mapping.
+   */
+  private startFederationSidecar(): void {
+    if (this.sidecarManager) {
+      this.sidecarManager.updateSettings(this.settings);
+      this.sidecarManager.start();
+      return;
+    }
+
+    const adapter = this.app.vault.adapter as { basePath?: string };
+    const vaultBasePath = adapter.basePath || '';
+    const pluginDir = this.manifest.dir || '';
+
+    this.sidecarManager = new SidecarManager(this.settings, {
+      vaultBasePath,
+      pluginDir,
+      serverPort: this.settings.serverPort,
+      logger: (level, msg) => {
+        const line = `[Obsidian Vessel][sidecar] ${msg}`;
+        if (level === 'error') console.error(line);
+        else if (level === 'warn') console.warn(line);
+        else console.log(line);
+      },
+    });
+    this.sidecarManager.start();
+  }
+
+  /**
+   * Restart the federation sidecar — used by the "Restart Federation Sidecar"
+   * settings action, and safe to call even if it isn't currently running.
+   */
+  async restartFederationSidecar(): Promise<void> {
+    if (!this.sidecarManager) {
+      this.startFederationSidecar();
+      return;
+    }
+    this.sidecarManager.updateSettings(this.settings);
+    await this.sidecarManager.restart();
   }
 
   /**

@@ -1,0 +1,17 @@
+{
+  "name": "obsidian-vessel-federation-sidecar",
+  "private": true,
+  "version": "0.1.0",
+  "description": "libp2p Circuit Relay v2 passthrough spawned by the obsidian-vessel plugin (see ../src/sidecar-manager.ts) to make the plugin's HTTP surface reachable from a remote substrate hub.",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit federation-sidecar.ts --module esnext --moduleResolution bundler --target es2022 --skipLibCheck"
+  },
+  "dependencies": {
+    "@avigopal/libp2p-federation-transport": "file:../../libp2p-federation-transport"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.0.0",
+    "typescript": "^5.4.0"
+  }
+}

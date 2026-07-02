@@ -198,6 +198,37 @@ export interface ObsidianVesselSettings {
    * advertised endpoint must be the container->host gateway.
    */
   advertisedHost: string;
+
+  // ==========================================================================
+  // Federation Sidecar Settings
+  // ==========================================================================
+
+  /**
+   * Enable spawning the libp2p federation sidecar (bundled under
+   * `sidecar/federation-sidecar.ts`) as a managed child process. This makes
+   * the plugin's local HTTP server reachable from a REMOTE substrate (a hub
+   * across the internet, not just the local container) over a Circuit Relay
+   * v2 overlay, without bundling libp2p into the plugin's own esbuild bundle.
+   */
+  enableFederationSidecar: boolean;
+
+  /** Circuit Relay v2 multiaddr to reserve on, e.g. `/ip4/<host>/tcp/30333/p2p/<relay-peer-id>`. */
+  federationRelayMultiaddr: string;
+
+  /** Discovery-vessel base URL to register with (typically the remote hub). */
+  federationDiscoveryUrl: string;
+
+  /** API key for the federation discovery registration; falls back to `apiKey` when empty. */
+  federationApiKey: string;
+
+  /** Stable vessel id to advertise (seeds the libp2p identity — keep constant across restarts). */
+  federationVesselId: string;
+
+  /** Plain-HTTP liveness port for the sidecar (loopback only; real reachability is the relay circuit). */
+  federationHealthPort: number;
+
+  /** Path to the `bun` executable used to run the sidecar (default: resolved from PATH). */
+  federationBunPath: string;
 }
 
 /**
@@ -282,6 +313,15 @@ export const DEFAULT_SETTINGS: ObsidianVesselSettings = {
   // Host-mapped discovery port (in-container :8100 is published on host :18100).
   discoveryVesselEndpoint: 'http://127.0.0.1:18100',
   advertisedHost: 'host.docker.internal',
+
+  // Federation Sidecar
+  enableFederationSidecar: false,
+  federationRelayMultiaddr: '',
+  federationDiscoveryUrl: '',
+  federationApiKey: '',
+  federationVesselId: 'obsidian-host-vessel',
+  federationHealthPort: 8402,
+  federationBunPath: 'bun',
 };
 
 /**
