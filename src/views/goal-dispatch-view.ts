@@ -884,6 +884,7 @@ export class GoalDispatchView extends ItemView {
           }
           this.dispatching = false;
           this.setDispatchBtnState(false);
+          void this.renderReachVerdict();
         } else {
           const ok = success !== false;
           this.appendMessage(`${pad}${ok ? '✓' : '✗'} Sub-activity done${durStr}`, ok ? 'sub' : 'failure');
