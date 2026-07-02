@@ -248,12 +248,21 @@ export class HTTPServer {
     this.config.logger('Shutting down server...', 'info');
 
     return new Promise((resolve, reject) => {
-      // Set a timeout for graceful shutdown
+      // Set a timeout as a last-resort safety net (should rarely fire — see below).
       const forceShutdownTimeout = setTimeout(() => {
         this.config.logger('Forcing server shutdown after timeout', 'warn');
         this.server?.closeAllConnections?.();
         resolve();
       }, 5000);
+
+      // Close idle/keep-alive connections immediately rather than waiting up to
+      // 5s for them to drain naturally. Node's server.close() callback doesn't
+      // fire until every open connection ends, so a single lingering keep-alive
+      // socket (e.g. a polling client) would otherwise hold the port bound for
+      // the full grace period — long enough for a fast disable->enable cycle
+      // (e.g. the reload-plugin action, ~150ms apart) to hit EADDRINUSE on the
+      // rebind before the old socket is released.
+      this.server?.closeAllConnections?.();
 
       this.server!.close((error) => {
         clearTimeout(forceShutdownTimeout);
