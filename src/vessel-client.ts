@@ -382,6 +382,7 @@ export class VesselClient {
       // Re-registering with discovery is idempotent and refreshes the TTL while
       // keeping the resolve contract current; it also self-heals if discovery
       // restarted and lost the registry.
+      const sidecarAddrs = await this.fetchSidecarMultiaddr();
       const registration = {
         vesselId,
         vesselName,
@@ -395,6 +396,7 @@ export class VesselClient {
         auth_scheme: 'ApiKey',
         resolve_timeout_ms: 10000,
         metadata: { vaultPath: this.vaultPath, pluginVersion: '0.1.0' },
+        ...(sidecarAddrs.length > 0 ? { libp2p_multiaddr: sidecarAddrs } : {}),
         ttl: this.settings.registrationTtl,
       };
 
