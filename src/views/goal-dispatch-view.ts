@@ -106,6 +106,7 @@ export class GoalDispatchView extends ItemView {
   private ws: WebSocket | null = null;
   private wsReconnectTimer: number | null = null;
   private activeExecutionId: string | null = null;
+  private activeDispatchId: string | null = null;
   private goalFile: TFile | null = null;
   private goalNoteManager: GoalNoteManager;
   private dispatching = false;
@@ -361,6 +362,7 @@ export class GoalDispatchView extends ItemView {
       // Step 1: dispatch → 202 with dispatchId
       const result = await client.dispatchGoal(goal, ctx);
       const dispatchId = result.executionId; // holds dispatchId from 202 body
+      this.activeDispatchId = dispatchId;
 
       // Show elapsed time while the auto-draft LLM selects/authors an activity.
       // This can take 30-120s; without feedback the UI looks frozen.
