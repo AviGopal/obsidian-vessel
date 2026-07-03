@@ -57,6 +57,7 @@ import './resolvers/command-catalog';
 import './resolvers/workspace-resolvers';
 import './resolvers/write-note-resolver';
 import './resolvers/ui-view-resolver';
+import { setPresenceRhythmContext } from './resolvers/presence-rhythm-resolver';
 import { setConceptDbResolverContext } from './resolvers/concept-view-resolver';
 import { setConceptWritebackResolverContext } from './resolvers/concept-writeback-resolver';
 import {
@@ -396,6 +397,7 @@ export default class ObsidianVesselPlugin extends Plugin {
       stopObserveObsidianEvents();
       setObserveObsidianEventsContext(null, null);
       setGroupInteractionEpisodesContext(null);
+      setPresenceRhythmContext(null);
     } catch (error) {
       console.error('[Obsidian Vessel] Error stopping observation layer:', error);
     }
@@ -925,6 +927,7 @@ export default class ObsidianVesselPlugin extends Plugin {
     const syncRoot = (this.settings.conceptDbSyncRoot || 'concept-db').replace(/\/+$/, '');
     setSubstrateWritePrefixes([`${syncRoot}/`, 'substrate/', 'Substrate/']);
     setGroupInteractionEpisodesContext(log);
+    setPresenceRhythmContext(log);
     this.stopObservation = startObserveObsidianEvents();
     console.log('[Obsidian Vessel] Observation layer started (event log cap=10000)');
   }
