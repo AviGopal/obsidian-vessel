@@ -10,7 +10,11 @@
     "lint": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "test": "bun test",
     "test:integration": "bun test/integration/http-harness.ts",
-    "test:integration:port": "bun test/integration/http-harness.ts --port"
+    "test:integration:port": "bun test/integration/http-harness.ts --port",
+    "substrate:deploy": "node esbuild.config.mjs production && cp main.js manifest.json styles.css \"$SUBSTRATE_BASE_ROOT\"/"
+  },
+  "substrate": {
+    "restart_unit": "obsidian-desktop.service"
   },
   "keywords": [
     "obsidian",
