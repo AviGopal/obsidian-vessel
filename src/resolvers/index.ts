@@ -10,6 +10,7 @@ import type { ImpulsePointer, ResolverFunction, ResolverResult } from './types';
 // Import and register all resolvers
 import { resolveNote } from './note-resolver';
 import { resolveSearch } from './search-resolver';
+import { resolveListNotes } from './list-notes-resolver';
 import { resolveCanvas } from './canvas-resolver';
 import { resolveBacklinks } from './backlinks-resolver';
 import { resolveFrontmatter } from './frontmatter-resolver';
@@ -118,6 +119,7 @@ registerResolver('obsidian:note', resolveNote);
 
 // Search resolver - obsidian:search
 registerResolver('obsidian:search', resolveSearch);
+registerResolver('obsidian:list_notes', resolveListNotes);
 
 // Canvas resolver - obsidian:canvas
 registerResolver('obsidian:canvas', resolveCanvas);
