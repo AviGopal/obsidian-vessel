@@ -508,6 +508,22 @@ export class GoalDispatchView extends ItemView {
       const record = await client.getDispatchRecord(dispatchId);
       const reached = record.reached as boolean | null;
       const reason = record.goalReachReason as string | null;
+      // Persist the reach verdict into the per-goal vault note
+      if (this.goalFile && (reached !== undefined || reason)) {
+        try {
+          const outcomeLabel = reached === true ? '✅ Reached' : reached === false ? '❌ Not reached' : '⏳ Unknown';
+          const outcomeLine = `\n## Outcome\n- **Verdict**: ${outcomeLabel}\n- **Reason**: ${reason ?? ''}\n- **Recorded**: ${new Date().toISOString()}`;
+          const noteFile = this.plugin.app.vault.getAbstractFileByPath(this.goalFile.path);
+          if (noteFile instanceof TFile) {
+            const existing = await this.plugin.app.vault.read(noteFile);
+            if (!existing.includes('## Outcome')) {
+              await this.plugin.app.vault.modify(noteFile, existing + outcomeLine);
+            }
+          }
+        } catch (e) {
+          console.warn('[GoalDispatch] Could not append outcome to goal note:', e);
+        }
+      }
       if (reached === true) {
         this.appendMessage('reached: yes', 'success');
       } else if (reached === false) {
