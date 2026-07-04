@@ -439,6 +439,7 @@ export default class ObsidianVesselPlugin extends Plugin {
   async loadSettings() {
     const data = await this.loadData();
     this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
+    this.settings.shapes = Array.from(new Set([...DEFAULT_SETTINGS.shapes, ...(this.settings.shapes ?? [])]));
   }
 
   /**
