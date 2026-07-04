@@ -84,7 +84,16 @@ async function resolveWriteNote(
     }
     const existing = app.vault.getAbstractFileByPath(path);
     if (existing && 'stat' in existing) {
-      await app.vault.modify(existing as TFile, body);
+      // SAFETY: if the existing note has frontmatter and the incoming body does
+      // not, prepend the existing frontmatter so we never silently delete it.
+      const existingContent = await app.vault.read(existing as TFile);
+      const existingFmMatch = existingContent.match(/^(---\n[\s\S]*?\n---\n)/);
+      const incomingHasFm = /^---\n/.test(body);
+      const bodyToWrite =
+        existingFmMatch && !incomingHasFm
+          ? existingFmMatch[1] + body
+          : body;
+      await app.vault.modify(existing as TFile, bodyToWrite);
     } else {
       await app.vault.create(path, body);
     }
