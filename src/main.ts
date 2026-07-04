@@ -536,65 +536,58 @@ export default class ObsidianVesselPlugin extends Plugin {
   /**
    * Register action + observation HTTP endpoints on the running server.
    *
-   * Action endpoints (POST) let external callers trigger plugin behaviours.
-   * Observation endpoints (GET) expose aggregated vault/plugin state.
+   * DEPRECATED compatibility surface: each route is a thin delegate over the
+   * equivalent discovery-advertised impulse shape (obsidian:concept_sync,
+   * obsidian:concept_rebuild, obsidian:reload_plugin, obsidian:open_note,
+   * obsidian:dispatch_goal, obsidian:concept_status). The canonical surface is
+   * POST /resolve with those shapes — capability gating, provenance tagging,
+   * and trace recording apply there automatically. These routes remain only
+   * for existing callers (dev-vessel seed template, federation sidecar,
+   * obsidian-plugin-reload.sh) and should not gain new consumers.
    */
   private registerActionObservationRoutes(server: HTTPServer): void {
-    // ── POST /actions/sync ──────────────────────────────────────────────
+    // ── POST /actions/sync ── delegate → obsidian:concept_sync ──────────
     server.addRoute('POST', '/actions/sync', async (_req, res) => {
       try {
-        if (!this.conceptSync) {
-          sendJson(res, { success: false, errors: ['Concept sync not enabled'] });
-          return;
-        }
-        const synced = await this.conceptSync.pullAll();
-        sendJson(res, { success: true, synced });
+        const result = await resolve({ type: 'obsidian:concept_sync' } as unknown as ImpulsePointer, this.app);
+        const content = typeof result === 'string' ? result : result.content;
+        const parsed = JSON.parse(content || '{}') as { synced?: number };
+        sendJson(res, { success: true, synced: parsed.synced ?? 0 });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         sendJson(res, { success: false, synced: 0, errors: [msg] });
       }
     });
 
-    // ── POST /actions/rebuild ───────────────────────────────────────────
+    // ── POST /actions/rebuild ── delegate → obsidian:concept_rebuild ────
     server.addRoute('POST', '/actions/rebuild', async (_req, res) => {
       try {
-        if (!this.conceptSync) {
-          sendJson(res, { success: false, rebuilt: 0 });
-          return;
-        }
-        const result = await this.conceptSync.forceRebuild(this.app);
-        sendJson(res, { success: true, rebuilt: result.rebuilt });
+        const result = await resolve({ type: 'obsidian:concept_rebuild' } as unknown as ImpulsePointer, this.app);
+        const content = typeof result === 'string' ? result : result.content;
+        const parsed = JSON.parse(content || '{}') as { rebuilt?: number };
+        sendJson(res, { success: true, rebuilt: parsed.rebuilt ?? 0 });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         sendJson(res, { success: false, rebuilt: 0, errors: [msg] });
       }
     });
 
-    // ── POST /actions/reload-plugin ─────────────────────────────────────
-    // Plugin-scoped hot-reload so substrate-authored UI (new commands/views built
-    // into main.js) takes effect WITHOUT the deny-globbed app:reload. Responds first,
-    // then disable→enable on the next tick so the JSON flushes before this plugin
-    // (and its HTTP server) unloads. The re-enabled instance loads the freshly-built
-    // main.js. This is the deploy cutover for substrate-authored obsidian features.
+    // ── POST /actions/reload-plugin ── delegate → obsidian:reload_plugin ─
+    // The resolver responds immediately and defers the disable→enable by
+    // 150ms so this JSON flushes before the plugin (and its HTTP server)
+    // unloads. This is the deploy cutover for substrate-authored features.
     server.addRoute('POST', '/actions/reload-plugin', async (_req, res) => {
       const pluginId = this.manifest.id || 'obsidian-vessel';
-      sendJson(res, { success: true, reloading: pluginId });
-      setTimeout(() => {
-        void (async () => {
-          try {
-            const plugins = (this.app as unknown as {
-              plugins: { disablePlugin(id: string): Promise<void>; enablePlugin(id: string): Promise<void> };
-            }).plugins;
-            await plugins.disablePlugin(pluginId);
-            await plugins.enablePlugin(pluginId);
-          } catch (err) {
-            console.error('[Obsidian Vessel] reload-plugin failed:', err);
-          }
-        })();
-      }, 150);
+      try {
+        await resolve({ type: 'obsidian:reload_plugin' } as unknown as ImpulsePointer, this.app);
+        sendJson(res, { success: true, reloading: pluginId });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        sendError(res, msg, 500);
+      }
     });
 
-    // ── POST /actions/open-note ─────────────────────────────────────────
+    // ── POST /actions/open-note ── delegate → obsidian:open_note ────────
     server.addRoute('POST', '/actions/open-note', async (req, res) => {
       try {
         const body = await parseJsonBody<{ path?: string }>(req);
@@ -602,7 +595,7 @@ export default class ObsidianVesselPlugin extends Plugin {
           sendError(res, 'Missing required field: path', 400);
           return;
         }
-        await this.app.workspace.openLinkText(body.path, '', false);
+        await resolve({ type: 'obsidian:open_note', path: body.path } as unknown as ImpulsePointer, this.app);
         sendJson(res, { success: true, path: body.path });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -610,22 +603,18 @@ export default class ObsidianVesselPlugin extends Plugin {
       }
     });
 
-    // ── POST /actions/dispatch-goal ─────────────────────────────────────
+    // ── POST /actions/dispatch-goal ── delegate → obsidian:dispatch_goal ─
     server.addRoute('POST', '/actions/dispatch-goal', async (req, res) => {
       try {
         const body = await parseJsonBody<{ goal?: string }>(req).catch(() => ({})) as { goal?: string };
-        await this.activateGoalDispatchView();
-        const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_GOAL_DISPATCH);
-        const leaf = leaves[0];
-        let executionId: string | undefined;
-        if (leaf && leaf.view instanceof GoalDispatchView && body.goal) {
-          // dispatchGoal is fire-and-forget from the HTTP perspective;
-          // we return immediately after enqueue so the HTTP call doesn't block.
-          (leaf.view as GoalDispatchView).dispatchGoal(body.goal).catch((err) => {
-            console.error('[Obsidian Vessel] dispatch-goal error:', err);
-          });
+        if (body.goal) {
+          // Resolver activates the goal-dispatch view and enqueues the goal
+          // fire-and-forget, mirroring the previous inline behaviour.
+          await resolve({ type: 'obsidian:dispatch_goal', goal: body.goal } as unknown as ImpulsePointer, this.app);
+        } else {
+          await this.activateGoalDispatchView();
         }
-        sendJson(res, { success: true, ...(executionId ? { executionId } : {}) });
+        sendJson(res, { success: true });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         sendError(res, msg, 500);
@@ -653,65 +642,32 @@ export default class ObsidianVesselPlugin extends Plugin {
       }
     });
 
-    // ── GET /observations/concept-status ───────────────────────────────
+    // ── GET /observations/concept-status ── delegate → obsidian:concept_status ─
     server.addRoute('GET', '/observations/concept-status', async (_req, res) => {
       try {
-        const syncRoot = this.settings.conceptDbSyncRoot || 'concept-db';
-        const allFiles = this.app.vault.getMarkdownFiles();
-        const conceptFiles = allFiles.filter((f) => f.path.startsWith(syncRoot + '/'));
-
-        let totalNotes = 0;
-        let notesWithEdges = 0;
-        let notesWithSignal = 0;
-        let relevanceSum = 0;
-        let relevanceCount = 0;
-        let familyNotes = 0;
-        let vesselNotes = 0;
-        let lowestRelevance: { path: string; relevance: number } | null = null;
-
-        for (const file of conceptFiles) {
-          totalNotes++;
-          const cache = this.app.metadataCache.getFileCache(file);
-          if (!cache) continue;
-          const fm = cache.frontmatter;
-          if (!fm) continue;
-
-          // Edges check: frontmatter has `edges:` key
-          if (fm.edges && typeof fm.edges === 'object' && Object.keys(fm.edges).length > 0) {
-            notesWithEdges++;
-          }
-
-          // Signal check: loaded > 0
-          if (typeof fm.loaded === 'number' && fm.loaded > 0) {
-            notesWithSignal++;
-          }
-
-          // Relevance aggregation
-          if (typeof fm.relevance === 'number') {
-            relevanceSum += fm.relevance;
-            relevanceCount++;
-            if (lowestRelevance === null || fm.relevance < lowestRelevance.relevance) {
-              lowestRelevance = { path: file.path, relevance: fm.relevance };
-            }
-          }
-
-          // Family/vessel source types
-          if (fm.source_type === 'activity_family') familyNotes++;
-          if (fm.source_type === 'vessel') vesselNotes++;
-        }
-
-        const avgRelevance = relevanceCount > 0
-          ? Math.round((relevanceSum / relevanceCount) * 100) / 100
+        const result = await resolve({ type: 'obsidian:concept_status' } as unknown as ImpulsePointer, this.app);
+        const content = typeof result === 'string' ? result : result.content;
+        const stats = JSON.parse(content || '{}') as {
+          totalNotes?: number;
+          notesWithEdges?: number;
+          notesWithSignal?: number;
+          averageRelevance?: number | null;
+          lowestRelevance?: { path: string; relevance: number } | null;
+          familyNotes?: number;
+          vesselNotes?: number;
+        };
+        // Preserve the historical route contract: `avgRelevance`, rounded to 2dp.
+        const avgRelevance = typeof stats.averageRelevance === 'number'
+          ? Math.round(stats.averageRelevance * 100) / 100
           : 0;
-
         sendJson(res, {
-          totalNotes,
-          notesWithEdges,
-          notesWithSignal,
+          totalNotes: stats.totalNotes ?? 0,
+          notesWithEdges: stats.notesWithEdges ?? 0,
+          notesWithSignal: stats.notesWithSignal ?? 0,
           avgRelevance,
-          lowestRelevance,
-          familyNotes,
-          vesselNotes,
+          lowestRelevance: stats.lowestRelevance ?? null,
+          familyNotes: stats.familyNotes ?? 0,
+          vesselNotes: stats.vesselNotes ?? 0,
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
