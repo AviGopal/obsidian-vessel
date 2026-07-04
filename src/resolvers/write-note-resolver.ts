@@ -67,6 +67,15 @@ async function resolveWriteNote(
     }
     // safety gate passed — write the note
     let body = content;
+    // Provenance styling: notes CREATED by the substrate carry a cssclasses
+    // frontmatter marker so the vault styles them distinctly from human text.
+    // Existing (co-inhabited) notes are never reclassified whole-note; block-level
+    // provenance there stays the callout convention.
+    if (!app.vault.getAbstractFileByPath(path)) {
+      body = /^---\n/.test(body)
+        ? body.replace(/^---\n/, '---\ncssclasses:\n  - substrate-authored\n')
+        : '---\ncssclasses:\n  - substrate-authored\n---\n' + body;
+    }
     if (p.dispatch_id || p.goal) {
       body += '\n\n---\n' + 'provenance: substrate-authored\n';
       if (p.goal) body += 'goal: ' + p.goal + '\n';
