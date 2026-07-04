@@ -254,7 +254,9 @@ export const DEFAULT_SETTINGS: ObsidianVesselSettings = {
   vesselName: 'Obsidian Vessel',
   heartbeatInterval: 30000,  // 30 seconds
   registrationTtl: 300,      // 5 minutes
-  shapes: ['obsidian:note', 'obsidian:search', 'obsidian:list_notes', 'obsidian:canvas', 'obsidian:backlinks', 'obsidian:frontmatter', 'obsidian:daily_note', 'obsidian:graph_query', 'obsidian:concept_view', 'obsidian:concept_writeback', 'obsidian:event_observed', 'obsidian:interaction_episode', 'obsidian:action_effect_model', 'obsidian:command_catalog', 'obsidian:execute_command', 'obsidian:workspace_state', 'obsidian:open_note', 'obsidian:write_note', 'obsidian:ui_view', 'obsidian:presence_rhythm'],
+  shapes: ['obsidian:note', 'obsidian:search', 'obsidian:list_notes', 'obsidian:canvas', 'obsidian:backlinks', 'obsidian:frontmatter', 'obsidian:daily_note', 'obsidian:graph_query', 'obsidian:concept_view', 'obsidian:concept_writeback', 'obsidian:event_observed', 'obsidian:interaction_episode', 'obsidian:action_effect_model', 'obsidian:command_catalog', 'obsidian:execute_command', 'obsidian:workspace_state', 'obsidian:open_note',
+    'obsidian:reload_plugin',
+    'obsidian:dispatch_goal', 'obsidian:write_note', 'obsidian:ui_view', 'obsidian:presence_rhythm'],
 
   // Sync preferences
   executionNotesFolder: 'Obsidian/Executions',

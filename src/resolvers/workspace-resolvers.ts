@@ -75,3 +75,72 @@ export async function resolveOpenNote(
 
 registerResolver('obsidian:workspace_state', resolveWorkspaceState);
 registerResolver('obsidian:open_note', resolveOpenNote);
+
+// ---------------------------------------------------------------------------
+// obsidian:reload_plugin
+// ---------------------------------------------------------------------------
+
+const resolveReloadPlugin = {
+  shape: 'obsidian:reload_plugin',
+  resolve: async (_pointer: ImpulsePointer, app: App): Promise<ResolverResult> => {
+    const pluginId = 'obsidian-vessel';
+    const result: ResolverResult = {
+      content: '',
+      metadata: {
+        shape: 'obsidian:reload_plugin',
+        summary: `Reloading plugin ${pluginId}`,
+        availableOps: ['reload'],
+      },
+    };
+    setTimeout(async () => {
+      try {
+        const plugins = (app as any).plugins;
+        await plugins.disablePlugin(pluginId);
+        await plugins.enablePlugin(pluginId);
+      } catch (err) {
+        console.error('[obsidian-vessel] reload_plugin failed:', err);
+      }
+    }, 150);
+    return result;
+  },
+};
+
+registerResolver('obsidian:reload_plugin', resolveReloadPlugin.resolve);
+
+// ---------------------------------------------------------------------------
+// obsidian:dispatch_goal
+// ---------------------------------------------------------------------------
+
+const resolveDispatchGoal = {
+  shape: 'obsidian:dispatch_goal',
+  resolve: async (pointer: ImpulsePointer, app: App): Promise<ResolverResult> => {
+    const goal = (pointer as any).goal as string;
+    if (!goal) {
+      throw new Error('obsidian:dispatch_goal requires a goal string in the pointer');
+    }
+    const plugin = (app as any).plugins?.plugins?.['obsidian-vessel'];
+    if (plugin && typeof plugin.activateGoalDispatchView === 'function') {
+      await plugin.activateGoalDispatchView();
+    }
+    const leaves = app.workspace.getLeavesOfType('obsidian-goal-dispatch');
+    const leaf = leaves[0];
+    if (leaf) {
+      const view = leaf.view as any;
+      if (view && typeof view.dispatchGoal === 'function') {
+        Promise.resolve(view.dispatchGoal(goal)).catch((err: unknown) =>
+          console.error('[obsidian-vessel] dispatchGoal failed:', err)
+        );
+      }
+    }
+    return {
+      content: '',
+      metadata: {
+        shape: 'obsidian:dispatch_goal',
+        summary: `Dispatched goal: ${goal}`,
+        availableOps: ['dispatch'],
+      },
+    };
+  },
+};
+
+registerResolver('obsidian:dispatch_goal', resolveDispatchGoal.resolve);
