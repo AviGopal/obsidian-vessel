@@ -837,3 +837,18 @@
   transition: color 0.2s ease, background-color 0.2s ease, opacity 0.2s ease;
 }
 
+/* provenance delineation */
+.callout[data-callout="substrate"] {
+    --callout-color: 80, 160, 220;
+}
+
+.callout[data-callout="operator"] {
+    --callout-color: 200, 120, 60;
+}
+
+.substrate-authored {
+    border-left: 3px solid rgb(80, 160, 220);
+    background-color: rgba(80, 160, 220, 0.05);
+}
+/* end of styles */
+
