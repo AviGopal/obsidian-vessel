@@ -55,6 +55,7 @@ import './resolvers/probe-obsidian-action-effects';
 import './resolvers/execute-command';
 import './resolvers/command-catalog';
 import './resolvers/workspace-resolvers';
+import './resolvers/concept-sync-resolvers';
 import './resolvers/write-note-resolver';
 import './resolvers/ui-view-resolver';
 import { setPresenceRhythmContext } from './resolvers/presence-rhythm-resolver';
