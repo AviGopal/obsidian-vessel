@@ -1,7 +1,8 @@
-import { App, Plugin, PluginManifest, TFile, Notice } from 'obsidian';
+import { App, Plugin, PluginManifest, TFile, Notice, requestUrl } from 'obsidian';
+import type { CachedMetadata } from 'obsidian';
 import { GoalDispatchView, VIEW_TYPE_GOAL_DISPATCH } from './views/goal-dispatch-view';
 import { GoalInputModal } from './views/goal-input-modal';
-import { ObsidianVesselSettings, DEFAULT_SETTINGS } from './settings';
+import { DEFAULT_SETTINGS, ObsidianVesselSettings, syncImprovements } from './settings';
 import { ObsidianVesselSettingTab } from './settings-tab';
 import { HTTPServer } from './server/index';
 import { sendJson, sendError, parseJsonBody } from './server/routes';
@@ -158,12 +159,46 @@ export default class ObsidianVesselPlugin extends Plugin {
    * 8. UI components (settings tab, commands, status bar)
    * 9. Initial sync (delayed to let Obsidian finish loading)
    */
+  private improvementSyncTimer: ReturnType<typeof setInterval> | null = null;
+
+  private scheduleImprovementSync(): void {
+    if (this.improvementSyncTimer !== null) {
+      clearInterval(this.improvementSyncTimer);
+      this.improvementSyncTimer = null;
+    }
+    if (!this.settings.enableImprovementSync) return;
+    const intervalMs = Math.max(1, this.settings.improvementSyncIntervalMinutes) * 60 * 1000;
+    const writeNote = async (path: string, content: string): Promise<void> => {
+      const existing = this.app.vault.getAbstractFileByPath(path);
+      if (existing && 'stat' in existing) {
+        await this.app.vault.modify(existing as import('obsidian').TFile, content);
+      } else {
+        const folder = path.substring(0, path.lastIndexOf('/'));
+        if (folder) {
+          const folderExists = this.app.vault.getAbstractFileByPath(folder);
+          if (!folderExists) await this.app.vault.createFolder(folder);
+        }
+        await this.app.vault.create(path, content);
+      }
+    };
+    // Run once immediately, then on interval
+    syncImprovements(this.settings, writeNote).catch((e: unknown) =>
+      console.error('[obsidian-vessel] improvement sync error', e)
+    );
+    this.improvementSyncTimer = setInterval(() => {
+      syncImprovements(this.settings, writeNote).catch((e: unknown) =>
+        console.error('[obsidian-vessel] improvement sync error', e)
+      );
+    }, intervalMs);
+  }
+
   async onload() {
     console.log('[Obsidian Vessel] Loading plugin...');
 
     // Phase 1: Load settings
     // Settings must be loaded first as all other components depend on configuration
     await this.loadSettings();
+    this.scheduleImprovementSync();
 
     // Phase 2: Initialize formatters
     // Formatters are stateless utilities, safe to initialize early
@@ -235,6 +270,16 @@ export default class ObsidianVesselPlugin extends Plugin {
     // activities (`group-interaction-episodes`,
     // `probe-obsidian-action-effects`) have data to consume.
     this.initializeObservationLayer();
+
+    // Phase 8d: Goal verdict watcher — closes the human feedback loop from
+    // goal notes into the oracle corpus (goal_verification_labels). When a
+    // completed Goals/<executionId>.md note gets a human_verdict frontmatter
+    // value, forward it as a goal_verification_label_write impulse.
+    this.registerEvent(
+      this.app.metadataCache.on('changed', (file, _data, cache) => {
+        void this.handleGoalVerdictChange(file, cache);
+      }),
+    );
 
     // Phase 9: Register UI components
     // Settings tab for configuration
@@ -367,6 +412,10 @@ export default class ObsidianVesselPlugin extends Plugin {
    * 4. Stop HTTP server
    */
   async onunload() {
+    if (this.improvementSyncTimer !== null) {
+      clearInterval(this.improvementSyncTimer);
+      this.improvementSyncTimer = null;
+    }
     console.log('[Obsidian Vessel] Unloading plugin...');
 
     // Stop status bar updates first (UI cleanup)
@@ -1148,5 +1197,171 @@ export default class ObsidianVesselPlugin extends Plugin {
    */
   getResolverTypes(): string[] {
     return listResolverTypes();
+  }
+
+  // ── Goal verdict feedback loop ───────────────────────────────────────────
+  // Echo-loop guards (the plugin must not react to its own note writes):
+  // the affordance append is gated by `verdict_prompted: true`; submission
+  // fires only when `human_verdict` holds a valid value AND `verdict_submitted`
+  // is not yet true (set on success, so a verdict submits exactly once); an
+  // in-flight path set plus a per-session attempted set debounce concurrent
+  // metadata events and prevent failure retry loops.
+
+  private verdictInFlight = new Set<string>();
+  private verdictAttempted = new Set<string>();
+
+  /**
+   * Handle a metadataCache `changed` event for goal notes. Appends the
+   * "Your verdict" affordance on terminal status, and forwards a human
+   * verdict (`human_verdict: reached | not_reached | partial`) exactly once
+   * into goal_verification_labels via activity-api — the same oracle-corpus
+   * surface the MCP cockpit's provide_feedback tool uses.
+   */
+  async handleGoalVerdictChange(file: TFile, cache: CachedMetadata | null): Promise<void> {
+    try {
+      if (!file.path.startsWith('Goals/') || !file.path.endsWith('.md')) return;
+      const fm = cache?.frontmatter as Record<string, unknown> | undefined;
+      if (!fm || !fm.executionId) return;
+      if (this.verdictInFlight.has(file.path)) return;
+
+      const status = typeof fm.status === 'string' ? fm.status : 'running';
+      if (status === 'running') return;
+      const verdict = typeof fm.human_verdict === 'string' ? fm.human_verdict.trim() : '';
+
+      if (!fm.verdict_prompted && fm.verdict_submitted !== true && !verdict) {
+        this.verdictInFlight.add(file.path);
+        try {
+          await this.appendVerdictAffordance(file);
+        } finally {
+          this.verdictInFlight.delete(file.path);
+        }
+        return;
+      }
+
+      if (
+        ['reached', 'not_reached', 'partial'].includes(verdict) &&
+        fm.verdict_submitted !== true &&
+        !this.verdictAttempted.has(file.path)
+      ) {
+        this.verdictInFlight.add(file.path);
+        this.verdictAttempted.add(file.path);
+        try {
+          await this.submitGoalVerdict(file, fm, verdict);
+        } finally {
+          this.verdictInFlight.delete(file.path);
+        }
+      }
+    } catch (error) {
+      console.error('[Obsidian Vessel] Goal verdict handling failed:', error);
+    }
+  }
+
+  private async appendVerdictAffordance(file: TFile): Promise<void> {
+    await this.app.fileManager.processFrontMatter(file, (fm) => {
+      fm.verdict_prompted = true;
+      if (fm.human_verdict === undefined) fm.human_verdict = '';
+    });
+    const callout = [
+      '',
+      '> [!question] Your verdict',
+      '> Was this goal actually achieved? Set the `human_verdict` property above to',
+      '> `reached`, `not_reached`, or `partial` (optionally add a `verdict_note`).',
+      "> It will be recorded as a ground-truth label in the substrate's oracle corpus.",
+      '',
+    ].join('\n');
+    await this.app.vault.process(file, (data) => data + callout);
+  }
+
+  private async submitGoalVerdict(
+    file: TFile,
+    fm: Record<string, unknown>,
+    verdict: string,
+  ): Promise<void> {
+    const activityApiUrl = this.settings.activityApiUrl;
+    if (!activityApiUrl) return;
+
+    const executionId = String(fm.executionId);
+    const goal = typeof fm.goal === 'string' && fm.goal.trim()
+      ? fm.goal
+      : 'goal for execution ' + executionId;
+
+    // Derive activity_id from the durable execution trace (the note does not
+    // carry the selected template).
+    let activityId: string | undefined;
+    try {
+      const trace = await this.apiClient?.getExecutionTrace(executionId);
+      activityId = trace?.activity_id ?? trace?.variant_id ?? undefined;
+    } catch {
+      // trace lookup is best-effort
+    }
+    if (!activityId) {
+      await this.appendVerdictResult(file, false, 'could not derive activity_id from the execution trace — verdict not recorded');
+      return;
+    }
+
+    const verdictMap: Record<string, string> = {
+      reached: 'achieved',
+      not_reached: 'not_achieved',
+      partial: 'partial',
+    };
+    const rawConf = typeof fm.verdict_confidence === 'number' ? fm.verdict_confidence : 0.9;
+    const confidence = Math.min(Math.max(rawConf, 0), 1);
+    const note = typeof fm.verdict_note === 'string' && fm.verdict_note.trim()
+      ? fm.verdict_note.trim()
+      : 'human verdict from goal note';
+
+    const pointer = {
+      type: 'goal_verification_label_write',
+      goal,
+      execution_id: executionId,
+      activity_id: activityId,
+      verdict: verdictMap[verdict],
+      confidence,
+      labeler: 'human',
+      notes: note + ' [operator: obsidian-vessel-human]',
+    };
+
+    let ok = false;
+    let detail = '';
+    try {
+      const resp = await requestUrl({
+        url: activityApiUrl.replace(/\/+$/, '') + '/v2/impulses/resolve',
+        method: 'POST',
+        headers: {
+          'Authorization': 'ApiKey ' + this.settings.apiKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ impulse: { pointer } }),
+        throw: false,
+      });
+      const body = resp.json as { success?: boolean; error?: string } | undefined;
+      ok = resp.status < 300 && body?.success !== false;
+      if (!ok) detail = body?.error ?? 'HTTP ' + resp.status;
+    } catch (error) {
+      detail = error instanceof Error ? error.message : String(error);
+    }
+
+    if (ok) {
+      await this.app.fileManager.processFrontMatter(file, (f) => {
+        f.verdict_submitted = true;
+      });
+    }
+    await this.appendVerdictResult(
+      file,
+      ok,
+      ok
+        ? 'Verdict `' + verdict + '` recorded in the oracle corpus (goal_verification_labels).'
+        : 'Verdict submission failed: ' + detail,
+    );
+  }
+
+  private async appendVerdictResult(file: TFile, ok: boolean, message: string): Promise<void> {
+    const callout = [
+      '',
+      '> [!' + (ok ? 'success' : 'warning') + '] ' + (ok ? 'Feedback recorded' : 'Feedback not recorded'),
+      '> ' + message,
+      '',
+    ].join('\n');
+    await this.app.vault.process(file, (data) => data + callout);
   }
 }
