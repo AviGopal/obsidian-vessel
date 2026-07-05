@@ -5,6 +5,8 @@
  * These control connection, sync behavior, note formatting, and canvas generation.
  */
 
+export { syncImprovements } from './sync/improvement-sync';
+
 export interface ObsidianVesselSettings {
   // ==========================================================================
   // Connection Settings
@@ -229,6 +231,16 @@ export interface ObsidianVesselSettings {
 
   /** Path to the `bun` executable used to run the sidecar (default: resolved from PATH). */
   federationBunPath: string;
+
+  // ==========================================================================
+  // Improvement Note Settings
+  // ==========================================================================
+
+  /** Enable the periodic substrate-improvement note (pulled by the plugin). */
+  enableImprovementSync: boolean;
+
+  /** Minutes between improvement-note pulls. */
+  improvementSyncIntervalMinutes: number;
 }
 
 /**
@@ -327,6 +339,10 @@ export const DEFAULT_SETTINGS: ObsidianVesselSettings = {
   federationVesselId: 'obsidian-host-vessel',
   federationHealthPort: 8402,
   federationBunPath: 'bun',
+
+  // Improvement Note
+  enableImprovementSync: true,
+  improvementSyncIntervalMinutes: 30,
 };
 
 /**

@@ -15,6 +15,7 @@ import { ConceptWritebackService } from './sync/concept-writeback';
 import { ConceptBusListener } from './sync/concept-bus-listener';
 import { ActivityFamilySyncService } from './sync/activity-family-sync';
 import { VesselSyncService } from './sync/vessel-sync';
+import { syncImprovements } from './sync/improvement-sync';
 import { ConceptDbClient } from './concept-db-client';
 import { ExecutionCanvasBuilder } from './canvas/index';
 import { ConceptCanvasBuilder } from './canvas/concept-canvas';
@@ -159,6 +160,48 @@ export default class ObsidianVesselPlugin extends Plugin {
    * 8. UI components (settings tab, commands, status bar)
    * 9. Initial sync (delayed to let Obsidian finish loading)
    */
+  private improvementSyncTimer: ReturnType<typeof setInterval> | null = null;
+
+  /**
+   * Substrate-improvement note: PULLED on an interval by the plugin
+   * (never pushed by the substrate, never in the boredom rotation).
+   * Restores the substrate-authored e985897 wiring, completed with the
+   * settings fields and the syncImprovements implementation it required.
+   */
+  private scheduleImprovementSync(): void {
+    if (this.improvementSyncTimer !== null) {
+      clearInterval(this.improvementSyncTimer);
+      this.improvementSyncTimer = null;
+    }
+    if (!this.settings.enableImprovementSync) return;
+    const intervalMs = Math.max(5, this.settings.improvementSyncIntervalMinutes) * 60 * 1000;
+    const writeNote = async (path: string, content: string): Promise<void> => {
+      const { TFile } = await import('obsidian');
+      const existing = this.app.vault.getAbstractFileByPath(path);
+      if (existing instanceof TFile) {
+        await this.app.vault.modify(existing, content);
+      } else {
+        const folder = path.substring(0, path.lastIndexOf('/'));
+        if (folder && !this.app.vault.getAbstractFileByPath(folder)) {
+          try {
+            await this.app.vault.createFolder(folder);
+          } catch {
+            // may have been created concurrently
+          }
+        }
+        await this.app.vault.create(path, content);
+      }
+    };
+    syncImprovements(this.settings, writeNote).catch((e: unknown) =>
+      console.error('[obsidian-vessel] improvement sync error', e)
+    );
+    this.improvementSyncTimer = setInterval(() => {
+      syncImprovements(this.settings, writeNote).catch((e: unknown) =>
+        console.error('[obsidian-vessel] improvement sync error', e)
+      );
+    }, intervalMs);
+  }
+
   async onload() {
     console.log('[Obsidian Vessel] Loading plugin...');
 
@@ -229,6 +272,9 @@ export default class ObsidianVesselPlugin extends Plugin {
       this.vesselSync = new VesselSyncService(this.app, this.settings);
       await this.vesselSync.start();
     }
+
+    // Substrate-improvement note (see sync/improvement-sync.ts)
+    this.scheduleImprovementSync();
 
     // Phase 8c: Phase 1 observation layer.
     // Always on — the resolvers are inert until queried, and the
@@ -378,6 +424,10 @@ export default class ObsidianVesselPlugin extends Plugin {
    * 4. Stop HTTP server
    */
   async onunload() {
+    if (this.improvementSyncTimer !== null) {
+      clearInterval(this.improvementSyncTimer);
+      this.improvementSyncTimer = null;
+    }
 
     console.log('[Obsidian Vessel] Unloading plugin...');
 
