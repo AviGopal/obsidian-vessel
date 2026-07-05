@@ -260,6 +260,112 @@ function buildNote(
   return lines.join('\n');
 }
 
+export interface ImprovementEntry {
+  id: string;
+  title: string;
+  body: string;
+  tags: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface SyncState {
+  lastSyncedAt: string | null;
+  syncedIds: string[];
+}
+
+export class ImprovementSync {
+  private vaultPath: string;
+  private syncDir: string;
+  private state: SyncState;
+
+  constructor(vaultPath: string) {
+    this.vaultPath = vaultPath;
+    this.syncDir = `${vaultPath}/improvements`;
+    this.state = { lastSyncedAt: null, syncedIds: [] };
+    this.ensureSyncDir();
+  }
+
+  private ensureSyncDir(): void {
+    try {
+      const fs = require("fs") as typeof import("fs");
+      if (!fs.existsSync(this.syncDir)) {
+        fs.mkdirSync(this.syncDir, { recursive: true });
+      }
+      const stateFile = `${this.syncDir}/.sync-state.json`;
+      if (fs.existsSync(stateFile)) {
+        const raw = fs.readFileSync(stateFile, "utf-8");
+        this.state = JSON.parse(raw) as SyncState;
+      }
+    } catch {
+      // non-fatal: vault may not be writable yet
+    }
+  }
+
+  private persistState(): void {
+    try {
+      const fs = require("fs") as typeof import("fs");
+      fs.writeFileSync(
+        `${this.syncDir}/.sync-state.json`,
+        JSON.stringify(this.state, null, 2),
+        "utf-8"
+      );
+    } catch {
+      // non-fatal
+    }
+  }
+
+  private entryToMarkdown(entry: ImprovementEntry): string {
+    const tags = entry.tags.map((t) => `- ${t}`).join("\n");
+    return [
+      `# ${entry.title}`,
+      ``,
+      `**Created:** ${entry.createdAt}`,
+      `**Updated:** ${entry.updatedAt}`,
+      ``,
+      `## Tags`,
+      tags,
+      ``,
+      `## Body`,
+      ``,
+      entry.body,
+    ].join("\n");
+  }
+
+  syncEntry(entry: ImprovementEntry): { written: boolean; path: string } {
+    const fs = require("fs") as typeof import("fs");
+    const safeName = entry.title.replace(/[^a-zA-Z0-9-_]/g, "_").slice(0, 80);
+    const filePath = `${this.syncDir}/${entry.id}-${safeName}.md`;
+    const content = this.entryToMarkdown(entry);
+    fs.writeFileSync(filePath, content, "utf-8");
+    if (!this.state.syncedIds.includes(entry.id)) {
+      this.state.syncedIds.push(entry.id);
+    }
+    this.state.lastSyncedAt = new Date().toISOString();
+    this.persistState();
+    return { written: true, path: filePath };
+  }
+
+  syncAll(entries: ImprovementEntry[]): { written: number; paths: string[] } {
+    const paths: string[] = [];
+    for (const entry of entries) {
+      const result = this.syncEntry(entry);
+      if (result.written) {
+        paths.push(result.path);
+      }
+    }
+    return { written: paths.length, paths };
+  }
+
+  getState(): SyncState {
+    return { ...this.state };
+  }
+
+  listSynced(): string[] {
+    return [...this.state.syncedIds];
+  }
+}
+
 /**
  * Pull all improvement metrics and render/update the vault note.
  * Called by main.ts scheduleImprovementSync() on load + interval.
