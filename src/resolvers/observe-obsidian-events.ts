@@ -34,6 +34,41 @@ import {
 } from './observation-types';
 import { sha256Hex } from './observation-hash';
 
+let lastPulseWriteMs = 0;
+let pulseSessionId: string | null = null;
+
+function writeLiveEditPulse(activePath: string | null): void {
+  // Throttle: at most one write per 2000 ms. The pulse is a liveness marker
+  // OTHER planes consume so they know the operator is actively editing —
+  // it carries only the vault-RELATIVE active file path (never editor text),
+  // and is written OUTSIDE the vault (absolute /workspace path) precisely so
+  // it does NOT generate a vault file-modify event and echo back into the
+  // observation channel (the fm-50 writeback-echo-loop failure).
+  const now = Date.now();
+  if (now - lastPulseWriteMs < 2000) return;
+  lastPulseWriteMs = now;
+  if (pulseSessionId === null) {
+    pulseSessionId = 'obs-' + Date.now().toString(36);
+  }
+  try {
+    // Lazy require so a top-level node:fs import cannot break plugin bundling.
+    require('fs').writeFileSync(
+      '/workspace/obsidian-live-edit-pulse.json',
+      JSON.stringify({
+        marker: 'obsidian_live_edit_pulse',
+        note_path: activePath,
+        session_id: pulseSessionId,
+        last_activity_ts: new Date().toISOString(),
+        pid: process.pid,
+      }),
+    );
+  } catch {
+    // Best-effort: the pulse must never break observation. On sandboxed
+    // platforms the write simply fails silently.
+  }
+}
+
+
 interface Ctx {
   app: App | null;
   log: ObsidianEventLog | null;
@@ -164,6 +199,8 @@ export function startObserveObsidianEvents(): () => void {
     // event marker so the probe can later disambiguate clusters by
     // count, not content.
     push(buildObsidianEvent({ kind: 'editor-change', rawPayload: { t: 'editor-change' } }));
+    const activeFile = app.workspace.getActiveFile ? app.workspace.getActiveFile() : null;
+    writeLiveEditPulse(activeFile ? activeFile.path : null);
   };
   const onLayout = () => {
     push(buildObsidianEvent({ kind: 'layout-change', rawPayload: { t: 'layout-change' } }));
