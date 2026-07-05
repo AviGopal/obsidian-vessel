@@ -2,7 +2,7 @@ import { App, Plugin, PluginManifest, TFile, Notice, requestUrl } from 'obsidian
 import type { CachedMetadata } from 'obsidian';
 import { GoalDispatchView, VIEW_TYPE_GOAL_DISPATCH } from './views/goal-dispatch-view';
 import { GoalInputModal } from './views/goal-input-modal';
-import { DEFAULT_SETTINGS, ObsidianVesselSettings, syncImprovements } from './settings';
+import { ObsidianVesselSettings, DEFAULT_SETTINGS } from './settings';
 import { ObsidianVesselSettingTab } from './settings-tab';
 import { HTTPServer } from './server/index';
 import { sendJson, sendError, parseJsonBody } from './server/routes';
@@ -159,46 +159,12 @@ export default class ObsidianVesselPlugin extends Plugin {
    * 8. UI components (settings tab, commands, status bar)
    * 9. Initial sync (delayed to let Obsidian finish loading)
    */
-  private improvementSyncTimer: ReturnType<typeof setInterval> | null = null;
-
-  private scheduleImprovementSync(): void {
-    if (this.improvementSyncTimer !== null) {
-      clearInterval(this.improvementSyncTimer);
-      this.improvementSyncTimer = null;
-    }
-    if (!this.settings.enableImprovementSync) return;
-    const intervalMs = Math.max(1, this.settings.improvementSyncIntervalMinutes) * 60 * 1000;
-    const writeNote = async (path: string, content: string): Promise<void> => {
-      const existing = this.app.vault.getAbstractFileByPath(path);
-      if (existing && 'stat' in existing) {
-        await this.app.vault.modify(existing as import('obsidian').TFile, content);
-      } else {
-        const folder = path.substring(0, path.lastIndexOf('/'));
-        if (folder) {
-          const folderExists = this.app.vault.getAbstractFileByPath(folder);
-          if (!folderExists) await this.app.vault.createFolder(folder);
-        }
-        await this.app.vault.create(path, content);
-      }
-    };
-    // Run once immediately, then on interval
-    syncImprovements(this.settings, writeNote).catch((e: unknown) =>
-      console.error('[obsidian-vessel] improvement sync error', e)
-    );
-    this.improvementSyncTimer = setInterval(() => {
-      syncImprovements(this.settings, writeNote).catch((e: unknown) =>
-        console.error('[obsidian-vessel] improvement sync error', e)
-      );
-    }, intervalMs);
-  }
-
   async onload() {
     console.log('[Obsidian Vessel] Loading plugin...');
 
     // Phase 1: Load settings
     // Settings must be loaded first as all other components depend on configuration
     await this.loadSettings();
-    this.scheduleImprovementSync();
 
     // Phase 2: Initialize formatters
     // Formatters are stateless utilities, safe to initialize early
@@ -412,10 +378,7 @@ export default class ObsidianVesselPlugin extends Plugin {
    * 4. Stop HTTP server
    */
   async onunload() {
-    if (this.improvementSyncTimer !== null) {
-      clearInterval(this.improvementSyncTimer);
-      this.improvementSyncTimer = null;
-    }
+
     console.log('[Obsidian Vessel] Unloading plugin...');
 
     // Stop status bar updates first (UI cleanup)
