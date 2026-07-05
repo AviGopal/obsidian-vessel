@@ -416,6 +416,11 @@ export class GoalDispatchView extends ItemView {
       }
 
       this.goalFile = await this.goalNoteManager.createGoalNote(executionId, goal);
+      if (this.goalFile) {
+        // Live walk-progress into the note while the dispatch runs; writes the
+        // honest reach verdict (not just exit status) on completion.
+        void this.goalNoteManager.trackProgress(this.goalFile, dispatchId, client);
+      }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       this.appendMessage(`Error dispatching goal: ${msg}`, 'error');

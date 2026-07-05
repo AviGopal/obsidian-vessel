@@ -8,6 +8,7 @@
 
 import { registerSolicitation } from '../resolvers/observe-obsidian-events';
 import type { App, TFile } from 'obsidian';
+import type { GoalHostClient } from './goal-host-client';
 
 const GOALS_FOLDER = 'Goals';
 
@@ -118,6 +119,96 @@ export class GoalNoteManager {
       }
     } catch (error) {
       console.error('[GoalNoteManager] Failed to mark complete:', error);
+    }
+  }
+
+  /**
+   * Live-track a running dispatch into the goal note.
+   *
+   * Polls goal-host GET /executions/:dispatchId (via client.getDispatchRecord)
+   * while the dispatch is running, appending each newly seen walkLog line under
+   * the Events section so long-running goals show their walk decisions as they
+   * happen. On a terminal status, records the honest reach verdict — `reached`
+   * plus goalReachReason and completionShapes — in frontmatter and as a callout
+   * directly above the Events section; `status` alone is only exit status.
+   *
+   * Per-poll errors are swallowed so transient goal-host restarts don't kill
+   * tracking. Resolves when the dispatch leaves `running` or on timeout.
+   */
+  async trackProgress(
+    file: TFile,
+    dispatchId: string,
+    client: GoalHostClient,
+    intervalMs = 5000,
+    timeoutMs = 30 * 60 * 1000,
+  ): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    let seenWalkLines = 0;
+
+    while (Date.now() < deadline) {
+      let record: Record<string, unknown> | null = null;
+      try {
+        record = await client.getDispatchRecord(dispatchId);
+      } catch {
+        // transient — goal-host may be restarting mid-walk; keep polling
+      }
+
+      if (record) {
+        const walkLog = Array.isArray(record.walkLog) ? (record.walkLog as unknown[]) : [];
+        if (walkLog.length > seenWalkLines) {
+          const fresh = walkLog
+            .slice(seenWalkLines)
+            .map(l => "- `" + String(l).replace(/`/g, "'") + "`")
+            .join('\n');
+          seenWalkLines = walkLog.length;
+          await this.appendEvent(file, fresh);
+        }
+
+        const status = String(record.status ?? 'running');
+        if (status !== 'running') {
+          await this.writeReachVerdict(file, record);
+          return;
+        }
+      }
+      await new Promise(r => setTimeout(r, intervalMs));
+    }
+  }
+
+  /**
+   * Mirror the goal-reach verdict into frontmatter and insert a verdict
+   * callout above the Events section.
+   */
+  private async writeReachVerdict(file: TFile, record: Record<string, unknown>): Promise<void> {
+    const reached = record.reached === true;
+    const reason = typeof record.goalReachReason === 'string' ? record.goalReachReason : '';
+    const shapes = Array.isArray(record.completionShapes)
+      ? (record.completionShapes as unknown[]).map(String)
+      : [];
+    try {
+      await this.app.fileManager.processFrontMatter(file, (fm) => {
+        fm.status = String(record.status ?? 'completed');
+        fm.reached = reached;
+        if (reason) fm.goalReachReason = reason;
+        fm.completedAt = new Date().toISOString();
+      });
+
+      const verdict = [
+        '',
+        `> [!${reached ? 'success' : 'failure'}] ${reached ? 'Goal reached' : 'Goal NOT reached'}`,
+        ...(reason ? [`> ${reason}`] : []),
+        ...(shapes.length
+          ? ['> **Completion shapes:** ' + shapes.map(x => '`' + x + '`').join(', ')]
+          : []),
+        '',
+      ].join('\n');
+
+      await this.app.vault.process(file, (data) => {
+        const idx = data.indexOf('\n## Events');
+        if (idx >= 0) return data.slice(0, idx) + '\n' + verdict + data.slice(idx);
+        return data + '\n' + verdict;
+      });
+    } catch (error) {
+      console.error('[GoalNoteManager] Failed to write reach verdict:', error);
     }
   }
 
