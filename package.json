@@ -1,6 +1,6 @@
 {
   "name": "obsidian-vessel",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Connects Obsidian to the substrate activity system as a knowledge vessel",
   "main": "main.js",
   "scripts": {
