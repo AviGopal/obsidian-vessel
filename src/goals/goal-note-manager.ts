@@ -192,6 +192,13 @@ export class GoalNoteManager {
         fm.completedAt = new Date().toISOString();
       });
 
+      const walkLog = Array.isArray(record.walkLog)
+        ? (record.walkLog as unknown[]).map(l =>
+            String(l).replace(/^\[goal-host-vessel\] /, '').replace(/`/g, "'"))
+        : [];
+      const selectedTemplate = typeof record.selectedTemplateId === 'string'
+        ? record.selectedTemplateId
+        : '';
       const verdict = [
         '',
         `> [!${reached ? 'success' : 'failure'}] ${reached ? 'Goal reached' : 'Goal NOT reached'}`,
@@ -199,6 +206,12 @@ export class GoalNoteManager {
         ...(shapes.length
           ? ['> **Completion shapes:** ' + shapes.map(x => '`' + x + '`').join(', ')]
           : []),
+        '',
+        '> [!info]- Why',
+        ...(selectedTemplate ? ['> **Selected approach:** `' + selectedTemplate + '`'] : []),
+        ...(walkLog.length
+          ? walkLog.map(l => '> - `' + l + '`')
+          : ['> _No walk decision log recorded for this dispatch._']),
         '',
       ].join('\n');
 
