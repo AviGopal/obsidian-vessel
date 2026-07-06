@@ -39,6 +39,8 @@ export interface HTTPServerConfig {
   logger?: (message: string, level?: 'info' | 'warn' | 'error' | 'debug') => void;
   /** System-managed fallback: forward shapes this vault doesn't own to the substrate. */
   substrateProxy?: RouteContext['substrateProxy'];
+  /** Vault-touch ledger: threaded into RouteContext so handleResolve records every resolve. */
+  vaultTouches?: RouteContext['vaultTouches'];
 }
 
 /** Route handler type */
@@ -69,10 +71,11 @@ const defaultLogger = (message: string, level: string = 'info') => {
  */
 export class HTTPServer {
   private server: Server | null = null;
-  private config: Required<Omit<HTTPServerConfig, 'cors' | 'resolvers' | 'substrateProxy'>> & {
+  private config: Required<Omit<HTTPServerConfig, 'cors' | 'resolvers' | 'substrateProxy' | 'vaultTouches'>> & {
     cors: CorsOptions;
     resolvers: Map<string, ImpulseResolver>;
     substrateProxy?: RouteContext['substrateProxy'];
+    vaultTouches?: RouteContext['vaultTouches'];
   };
   private routes: Map<string, RouteHandler> = new Map();
   private isShuttingDown = false;
@@ -87,6 +90,7 @@ export class HTTPServer {
       resolvers: config.resolvers ?? new Map(),
       logger: config.logger ?? defaultLogger,
       substrateProxy: config.substrateProxy,
+      vaultTouches: config.vaultTouches,
     };
 
     this.setupRoutes();
@@ -101,6 +105,7 @@ export class HTTPServer {
       resolvers: this.config.resolvers,
       log: this.config.logger,
       substrateProxy: this.config.substrateProxy,
+      vaultTouches: this.config.vaultTouches,
     };
 
     this.routes.set('GET /health', (req, res) => handleHealth(req, res, context));
