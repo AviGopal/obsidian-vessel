@@ -10,6 +10,7 @@
 import type { App } from 'obsidian';
 import type { ImpulsePointer, ResolverResult } from './types';
 import { registerResolver } from './index';
+import { SUB_TOKEN_WHITELIST } from '../views/theme-token-override';
 
 const GOAL_DISPATCH_VIEW_TYPE = 'obsidian-goal-dispatch';
 
@@ -42,7 +43,20 @@ async function resolveUiView(_pointer: ImpulsePointer, app: App): Promise<Resolv
       if (t.startsWith('reached:')) verdict_line = t;
     }
     const hollow = scroll ? scroll.classList.contains('sub-hollow') : false;
-    goal_dispatch = { open: true, event_lines, verdict_line, hollow };
+    // Effective design tokens on the panel root (inline overrides from
+    // Substrate/theme-tokens.md included via computed style) — the read
+    // surface for the legibility audit tick and for verifying token
+    // round-trips without a screenshot.
+    const rootEl = container.querySelector('.obsidian-goal-dispatch-view') as HTMLElement | null;
+    const effective_tokens: Record<string, string> = {};
+    if (rootEl) {
+      const cs = window.getComputedStyle(rootEl);
+      for (const key of SUB_TOKEN_WHITELIST) {
+        const v = cs.getPropertyValue(key).trim();
+        if (v) effective_tokens[key] = v;
+      }
+    }
+    goal_dispatch = { open: true, event_lines, verdict_line, hollow, effective_tokens };
   }
 
   const report = { activeFile, layout, goal_dispatch };
