@@ -84,8 +84,48 @@ export async function forwardUiFeedbackToGapStore(
   devVesselEndpoint: string,
   apiKey?: string,
 ): Promise<ForwardResult> {
-  void fb;
-  void devVesselEndpoint;
-  void apiKey;
-  return { forwarded: false, status: 'not_implemented' };
+  const slug = fb.region
+    .replace(/[^a-zA-Z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60);
+  const gapId = `ui-feedback-${slug}-${fb.kind}`;
+  const url = `${devVesselEndpoint.replace(/\/+$/, '')}/v2/impulses/resolve`;
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (apiKey) {
+    headers['Authorization'] = `ApiKey ${apiKey}`;
+  }
+  const body = JSON.stringify({
+    impulse: {
+      pointer: {
+        type: 'substrateGap_write',
+        gap: {
+          id: gapId,
+          category: 'ui_legibility',
+          source: 'human_reported',
+          summary: `UI feedback (${fb.kind}) on ${fb.surface} region ${fb.region}${fb.prose ? ': ' + fb.prose : ''}`,
+          detected_at: fb.created_at,
+          status: 'open',
+          classification_metadata: {
+            surface: fb.surface,
+            region: fb.region,
+            kind: fb.kind,
+            prose: fb.prose ?? null,
+            vessel_id: fb.vessel_id,
+          },
+        },
+      },
+    },
+  });
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers,
+      body,
+      signal: AbortSignal.timeout(10000),
+    });
+    return { forwarded: resp.ok, status: resp.status, gapId };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { forwarded: false, status: message, gapId };
+  }
 }
