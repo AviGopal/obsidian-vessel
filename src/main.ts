@@ -72,6 +72,7 @@ import {
 import { setGroupInteractionEpisodesContext } from './resolvers/group-interaction-episodes';
 import { ObsidianEventLog } from './resolvers/observation-types';
 import { VaultTouchLedger } from './server/vault-touch-ledger';
+import { SolicitationManager } from './solicitations/solicitation-manager';
 
 /**
  * Current status of the vessel plugin
@@ -141,6 +142,10 @@ export default class ObsidianVesselPlugin extends Plugin {
   // Vault-touch ledger: in-memory record of every substrate resolve against
   // this vault (read via obsidian:vault_touches; pulsed on the status bar).
   vaultTouchLedger: VaultTouchLedger | null = null;
+
+  // Human-as-resolver (WS5): pending solicitations awaiting the human's answer,
+  // rendered as cards in the goal-dispatch panel.
+  solicitationManager: SolicitationManager | null = null;
 
   // Formatters
   executionFormatter: ExecutionFormatter | null = null;
@@ -567,6 +572,36 @@ export default class ObsidianVesselPlugin extends Plugin {
       ledger.subscribe((touch) => {
         this.statusBarManager?.showMessage(`⇅ substrate ${touch.mode}: ${touch.shape.replace('obsidian:', '')}`, 1500);
       });
+
+      // Human-as-resolver (WS5): accept human_input solicitations and hold them
+      // for the panel; the answer is POSTed back to goal-host via
+      // solicitationResponse_write, with typing heartbeats extending the deadline.
+      // Registered ALWAYS (capability), while discovery ADVERTISEMENT of the
+      // human shapes is presence-conditioned (startPresenceAdvertiser).
+      this.solicitationManager = this.solicitationManager ?? new SolicitationManager({
+        goalHostEndpoint: this.settings.goalHostEndpoint,
+        apiKey: this.settings.apiKey,
+        notify: (m: string) => new Notice(m),
+      });
+      const solicitations = this.solicitationManager;
+      const acceptSolicitation = async (pointer: any) => {
+        const q = typeof pointer?.question_markdown === 'string' ? pointer.question_markdown : '';
+        // Rendering-contract validator (substrate-self-detection): refuse bodies
+        // that are not decision-ready markdown — raw JSON blobs are a rendering
+        // failure, distinct from the human declining.
+        if (!q || /```json|^\s*\{"/m.test(q)) {
+          return { success: false, error: 'insufficient_context: solicitation body is not decision-ready markdown (raw JSON or empty)' };
+        }
+        const sol = solicitations.accept(pointer ?? {});
+        if (!sol) return { success: false, error: 'invalid solicitation: solicitation_id and question_markdown are required' };
+        return {
+          success: true,
+          content: JSON.stringify({ accepted: true, solicitation_id: sol.solicitationId, will_respond_via: 'solicitationResponse_write' }),
+          metadata: { shape: 'human_input', summary: 'solicitation accepted; awaiting human answer' },
+        };
+      };
+      resolvers.set('human_input', acceptSolicitation);
+      resolvers.set('human_judgment', acceptSolicitation);
 
       this.httpServer = new HTTPServer({
         port: this.settings.serverPort,
