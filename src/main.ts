@@ -71,6 +71,7 @@ import {
 } from './resolvers/observe-obsidian-events';
 import { setGroupInteractionEpisodesContext } from './resolvers/group-interaction-episodes';
 import { ObsidianEventLog } from './resolvers/observation-types';
+import { VaultTouchLedger } from './server/vault-touch-ledger';
 
 /**
  * Current status of the vessel plugin
@@ -136,6 +137,10 @@ export default class ObsidianVesselPlugin extends Plugin {
   // both the windowing and probe resolvers see the same events.
   obsidianEventLog: ObsidianEventLog | null = null;
   private stopObservation: (() => void) | null = null;
+
+  // Vault-touch ledger: in-memory record of every substrate resolve against
+  // this vault (read via obsidian:vault_touches; pulsed on the status bar).
+  vaultTouchLedger: VaultTouchLedger | null = null;
 
   // Formatters
   executionFormatter: ExecutionFormatter | null = null;
@@ -541,6 +546,27 @@ export default class ObsidianVesselPlugin extends Plugin {
         });
       }
 
+      // Vault-touch ledger: serve the ring buffer as the obsidian:vault_touches
+      // read shape and pulse the status bar on every touch. Never written into
+      // the vault (churn + echo-suppression conflicts).
+      this.vaultTouchLedger = this.vaultTouchLedger ?? new VaultTouchLedger(500);
+      const ledger = this.vaultTouchLedger;
+      resolvers.set('obsidian:vault_touches', async (pointer) => {
+        const rows = ledger.read({
+          limit: typeof pointer?.limit === 'number' ? pointer.limit : 100,
+          since: typeof pointer?.since === 'string' ? pointer.since : undefined,
+          mode: pointer?.mode === 'read' || pointer?.mode === 'write' ? pointer.mode : undefined,
+        });
+        return {
+          success: true,
+          content: JSON.stringify(rows),
+          metadata: { shape: 'obsidian:vault_touches', rowCount: rows.length, summary: `${rows.length} vault touches (of ${ledger.size()} recorded)` },
+        };
+      });
+      ledger.subscribe((touch) => {
+        this.statusBarManager?.showMessage(`⇅ substrate ${touch.mode}: ${touch.shape.replace('obsidian:', '')}`, 1500);
+      });
+
       this.httpServer = new HTTPServer({
         port: this.settings.serverPort,
         cors: {
@@ -553,6 +579,7 @@ export default class ObsidianVesselPlugin extends Plugin {
           shapes: this.settings.shapes,
         },
         resolvers,
+        vaultTouches: this.vaultTouchLedger,
         // System-managed resolvers: shapes this vault doesn't own are forwarded to the
         // substrate (activity-api) so the plugin is a window into the whole fleet, not
         // just its built-in shapes. Inert when no activityApiUrl is configured.
