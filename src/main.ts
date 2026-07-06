@@ -2,6 +2,7 @@ import { App, Plugin, PluginManifest, TFile, Notice, requestUrl } from 'obsidian
 import type { CachedMetadata } from 'obsidian';
 import { GoalDispatchView, VIEW_TYPE_GOAL_DISPATCH } from './views/goal-dispatch-view';
 import { GoalInputModal } from './views/goal-input-modal';
+import { THEME_TOKENS_NOTE_PATH, parseThemeTokens, applyThemeTokens } from './views/theme-token-override';
 import { ObsidianVesselSettings, DEFAULT_SETTINGS } from './settings';
 import { ObsidianVesselSettingTab } from './settings-tab';
 import { HTTPServer } from './server/index';
@@ -303,6 +304,19 @@ export default class ObsidianVesselPlugin extends Plugin {
         void this.handleGoalVerdictChange(file, cache);
       }),
     );
+
+    // Phase 8e: runtime design-token override. The plugin reads
+    // Substrate/theme-tokens.md (whitelisted --sub-* pairs) on load and on
+    // vault-file change, applying values as inline custom properties on the
+    // goal-dispatch panel root — the substrate can adjust token VALUES via
+    // obsidian:write_note without a plugin rebuild.
+    const themeTokenWatch = (file: { path: string }): void => {
+      if (file.path === THEME_TOKENS_NOTE_PATH) void this.refreshThemeTokens();
+    };
+    this.registerEvent(this.app.vault.on('modify', themeTokenWatch));
+    this.registerEvent(this.app.vault.on('create', themeTokenWatch));
+    this.registerEvent(this.app.vault.on('delete', themeTokenWatch));
+    void this.refreshThemeTokens();
 
     // Phase 9: Register UI components
     // Settings tab for configuration
@@ -1064,6 +1078,34 @@ export default class ObsidianVesselPlugin extends Plugin {
       await this.vesselClient.updateSettings(next);
     };
     this.registerInterval(window.setInterval(() => { void check(); }, 60_000));
+  }
+
+  /**
+   * Read Substrate/theme-tokens.md and apply whitelisted --sub-* overrides to
+   * every open goal-dispatch panel root. Missing note → clears overrides back
+   * to the styles.css defaults. Invalid/unknown keys are ignored and logged.
+   */
+  async refreshThemeTokens(): Promise<void> {
+    try {
+      const roots = Array.from(
+        document.querySelectorAll<HTMLElement>('.obsidian-goal-dispatch-view'),
+      );
+      if (roots.length === 0) return;
+      let tokens: Record<string, string> = {};
+      const f = this.app.vault.getAbstractFileByPath(THEME_TOKENS_NOTE_PATH);
+      if (f instanceof TFile) {
+        const text = await this.app.vault.cachedRead(f);
+        const parsed = parseThemeTokens(text);
+        tokens = parsed.applied;
+        if (parsed.ignored.length > 0) {
+          console.warn('[Obsidian Vessel] theme-tokens: ignored entries:', parsed.ignored);
+        }
+      }
+      for (const root of roots) applyThemeTokens(root, tokens);
+      console.log('[Obsidian Vessel] theme tokens applied:', Object.keys(tokens));
+    } catch (error) {
+      console.error('[Obsidian Vessel] theme-token refresh failed:', error);
+    }
   }
 
   /**

@@ -1,227 +1,450 @@
-/* Obsidian Vessel Plugin Styles */
+/* Obsidian Vessel Plugin Styles
+ *
+ * Token-first: every plugin surface consumes the --sub-* design tokens
+ * declared below. Component grammar (panel surfaces):
+ *   sub-card       — bounded content blocks (fleet row, solicitation, answer)
+ *   sub-chip       — inline pills (pool shapes, statuses, missing targets)
+ *   sub-feed-line  — one line of a chronological feed (events, vault touches)
+ * Status-bar / modal / canvas classes outside the panel keep their historic
+ * names but reference tokens.
+ */
 
 /* ============================================
-   Goal Dispatch View (sidebar)
+   Design tokens
+   ============================================
+   Declared on body, NOT :root — an Obsidian plugin must not restyle the app
+   root, and body-level custom properties inherit into every plugin surface
+   (panel, modals, status bar). All names are namespaced --sub-*.
+   Runtime overrides: the plugin reads Substrate/theme-tokens.md and applies
+   whitelisted --sub-* values as inline properties on the panel root, which
+   take precedence over these inherited defaults. */
+body {
+  /* Type scale — 3 steps, 12px floor */
+  --sub-font-s: 12px;
+  --sub-font-m: 13px;
+  --sub-font-l: 15px;
+
+  /* Spacing scale */
+  --sub-space-1: 4px;
+  --sub-space-2: 8px;
+  --sub-space-3: 12px;
+
+  /* Radii */
+  --sub-radius-s: 4px;
+  --sub-radius-m: 6px;
+
+  /* Semantic colors — exclusively Obsidian theme variables */
+  --sub-text: var(--text-normal);
+  --sub-text-muted: var(--text-muted);
+  --sub-text-faint: var(--text-faint);
+  --sub-accent: var(--text-accent);
+  --sub-error: var(--text-error);
+  --sub-ok: var(--color-green);
+  --sub-fail: var(--color-red);
+  --sub-warn: var(--color-orange);
+  --sub-run: var(--color-yellow);
+  --sub-info: var(--color-blue);
+  --sub-concept: var(--color-green);
+  --sub-provenance-substrate: var(--color-blue);
+  --sub-provenance-operator: var(--color-orange);
+  --sub-border: var(--background-modifier-border);
+  --sub-bg: var(--background-primary);
+  --sub-bg-alt: var(--background-primary-alt);
+  --sub-bg-card: var(--background-secondary);
+  --sub-bg-hover: var(--background-modifier-hover);
+}
+
+/* ============================================
+   Goal Dispatch panel — space model
+   omnibox (pinned) → solicitations → fleet (running) → completed count
+   → one scroll container (event feed + collapsed touch feed)
    ============================================ */
 
 .obsidian-goal-dispatch-view {
   display: flex;
   flex-direction: column;
   height: 100%;
-  padding: 12px;
+  padding: var(--sub-space-3);
   box-sizing: border-box;
-  gap: 0;
+  gap: var(--sub-space-2);
+  font-size: var(--sub-font-m);
+  color: var(--sub-text);
 }
 
-.goal-dispatch-input-section {
+/* ── Omnibox: single-line input, expands to multiline on focus ── */
+.sub-omnibox {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--sub-space-1);
 }
 
-.goal-dispatch-textarea-wrapper {
-  position: relative;
-}
-
-.goal-dispatch-textarea {
+.sub-omnibox-input {
   width: 100%;
   box-sizing: border-box;
-  resize: vertical;
-  min-height: 80px;
-  border-radius: 6px;
-  padding: 8px 10px;
+  resize: none;
+  min-height: 0;
+  height: auto;
+  border-radius: var(--sub-radius-m);
+  padding: var(--sub-space-1) var(--sub-space-2);
   font-family: var(--font-text);
-  font-size: 13px;
-  background: var(--background-primary);
-  border: 1px solid var(--background-modifier-border);
-  color: var(--text-normal);
-  transition: border-color 0.15s ease;
+  font-size: var(--sub-font-m);
   line-height: 1.5;
+  background: var(--sub-bg);
+  border: 1px solid var(--sub-border);
+  color: var(--sub-text);
+  transition: border-color 0.15s ease, min-height 0.15s ease;
 }
 
-.goal-dispatch-textarea:focus {
+.sub-omnibox.is-expanded .sub-omnibox-input {
+  min-height: 88px;
+  resize: vertical;
+}
+
+.sub-omnibox-input:focus {
   outline: none;
   border-color: var(--interactive-accent);
   box-shadow: 0 0 0 2px rgba(var(--interactive-accent-rgb), 0.15);
 }
 
-.goal-dispatch-textarea::placeholder {
-  color: var(--text-faint);
+.sub-omnibox-input::placeholder {
+  color: var(--sub-text-faint);
   font-style: italic;
 }
 
-.goal-dispatch-btn-row {
+.sub-omnibox-actions {
+  display: none;
+}
+
+.sub-omnibox.is-expanded .sub-omnibox-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--sub-space-2);
   align-items: center;
 }
 
-.goal-dispatch-btn {
+.sub-omnibox-dispatch {
   flex: 1;
   cursor: pointer;
-  font-size: 13px;
-  padding: 6px 14px;
-  border-radius: 5px;
+  font-size: var(--sub-font-m);
+  padding: var(--sub-space-1) var(--sub-space-3);
+  border-radius: var(--sub-radius-s);
 }
 
-.goal-dispatch-btn:disabled {
+.sub-omnibox-dispatch:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
 
-.goal-dispatch-clear-btn {
+.sub-omnibox-clear {
   cursor: pointer;
-  padding: 6px 12px;
-  border-radius: 5px;
-  font-size: 12px;
-  border: 1px solid var(--background-modifier-border);
+  padding: var(--sub-space-1) var(--sub-space-2);
+  border-radius: var(--sub-radius-s);
+  font-size: var(--sub-font-s);
+  border: 1px solid var(--sub-border);
   background: transparent;
-  color: var(--text-muted);
+  color: var(--sub-text-muted);
   transition: all 0.15s ease;
   white-space: nowrap;
 }
 
-.goal-dispatch-clear-btn:hover {
-  background: var(--background-modifier-hover);
-  color: var(--text-normal);
-  border-color: var(--text-muted);
+.sub-omnibox-clear:hover {
+  background: var(--sub-bg-hover);
+  color: var(--sub-text);
+  border-color: var(--sub-text-muted);
 }
 
-.goal-dispatch-divider {
-  margin: 10px 0;
-  border: none;
-  border-top: 1px solid var(--background-modifier-border);
-  flex-shrink: 0;
+.sub-omnibox-hint {
+  font-size: var(--sub-font-s);
+  color: var(--sub-text-faint);
+  white-space: nowrap;
+  user-select: none;
 }
 
-.goal-dispatch-output-section {
-  flex: 1;
-  min-height: 0;
+/* ── Cards ── */
+.sub-card {
+  border: 1px solid var(--sub-border);
+  border-radius: var(--sub-radius-m);
+  padding: var(--sub-space-2);
+  background: var(--sub-bg-card);
+  font-size: var(--sub-font-s);
+}
+
+/* Solicitation: the substrate asking the human — highest priority, pinned. */
+.sub-card--solicitation {
+  border-color: var(--sub-warn);
+  background: color-mix(in srgb, var(--sub-warn) 6%, var(--sub-bg-card));
+  margin: 0;
+}
+
+.sub-solicitation-title {
+  font-weight: 700;
+  font-size: var(--sub-font-m);
+  margin-bottom: var(--sub-space-1);
+}
+
+.sub-solicitation-answer {
+  width: 100%;
+  margin-top: var(--sub-space-2);
+  font-size: var(--sub-font-s);
+}
+
+.sub-solicitation-btns {
   display: flex;
-  flex-direction: column;
+  gap: var(--sub-space-1);
+  margin-top: var(--sub-space-2);
+  flex-wrap: wrap;
 }
 
-.goal-dispatch-output {
-  flex: 1;
-  overflow-y: auto;
-  padding: 8px 10px;
-  background: var(--background-primary-alt);
-  border-radius: 6px;
-  border: 1px solid var(--background-modifier-border);
-  font-family: var(--font-monospace);
-  font-size: 11.5px;
-  line-height: 1.65;
-  scroll-behavior: smooth;
+.sub-solicitation-btns button {
+  font-size: var(--sub-font-s);
+  padding: var(--sub-space-1) var(--sub-space-2);
 }
 
-.goal-dispatch-line {
+/* Fleet row: collapsed one-liner (dot + goal snippet + relative elapsed). */
+.sub-card--fleet {
+  background: transparent;
+  border: none;
+  border-radius: var(--sub-radius-s);
+  padding: var(--sub-space-1) var(--sub-space-1);
+  cursor: pointer;
   display: flex;
   align-items: baseline;
-  gap: 5px;
-  padding: 1px 2px;
-  border-radius: 3px;
+  gap: var(--sub-space-1);
+  flex-wrap: wrap;
 }
 
-.goal-dispatch-line:hover {
-  background: var(--background-modifier-hover);
+.sub-card--fleet:hover {
+  background: var(--sub-bg-hover);
 }
 
-/* Type-specific line colouring */
-.goal-dispatch-line.gd-success { color: var(--color-green); }
-.goal-dispatch-line.gd-failure { color: var(--color-red); }
-.goal-dispatch-line.gd-task    { color: var(--interactive-accent); }
-.goal-dispatch-line.gd-tool    { color: var(--text-muted); font-size: 10.5px; }
-.goal-dispatch-line.gd-impulse { color: var(--text-faint); font-size: 10.5px; }
-.goal-dispatch-line.gd-sub     { color: var(--color-yellow); }
-.goal-dispatch-line.gd-error   { color: var(--color-red); font-weight: 600; }
-.goal-dispatch-line.gd-ready   { color: var(--text-faint); font-style: italic; }
-.goal-dispatch-line.gd-divider { color: var(--text-faint); letter-spacing: 0.05em; opacity: 0.4; }
-.goal-dispatch-line.gd-concept      { color: #10b981; font-weight: 500; }
-.goal-dispatch-line.gd-concept-link { color: #6ee7b7; font-size: 10.5px; opacity: 0.85; }
-.goal-dispatch-line.gd-suppressed   { color: var(--text-faint); font-size: 10.5px; font-style: italic; opacity: 0.7; }
-
-/* Hollow completion: goal-host verdict reached=false - dim the whole event
-   output and tint it amber so it cannot be mistaken for a success. */
-.goal-dispatch-output.mb-hollow {
-  opacity: 0.75;
-  border-color: var(--color-yellow);
-  background: color-mix(in srgb, var(--color-yellow) 6%, var(--background-primary-alt));
-}
-.goal-dispatch-output.mb-hollow .goal-dispatch-line.gd-success { color: var(--color-yellow); }
-
-/* The answer block — full multi-paragraph rendering of the goalAnswer concept. */
-.goal-dispatch-line.gd-answer-block {
+/* Answer block: full rendering of the goal's authored answer in the feed. */
+.sub-card--answer {
   align-items: flex-start;
-  margin: 8px 0;
-  padding: 8px 10px;
-  border-left: 3px solid #10b981;
-  background: var(--background-secondary);
-  border-radius: 4px;
+  margin: var(--sub-space-2) 0;
+  border-left: 3px solid var(--sub-ok);
+  background: var(--sub-bg-card);
 }
-.gd-answer-body { display: flex; flex-direction: column; gap: 4px; }
-.gd-answer-header { color: #10b981; font-weight: 600; font-size: 11.5px; }
-.gd-answer-text {
-  color: var(--text-normal);
-  font-size: 12px;
+
+.sub-answer-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sub-space-1);
+}
+
+.sub-answer-header {
+  color: var(--sub-ok);
+  font-weight: 600;
+  font-size: var(--sub-font-s);
+}
+
+.sub-answer-text {
+  color: var(--sub-text);
+  font-size: var(--sub-font-s);
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
 }
-.gd-answer-attribution { color: var(--text-faint); font-size: 10px; font-style: italic; }
 
-.goal-dispatch-ts {
-  color: var(--text-faint);
-  flex-shrink: 0;
-  font-size: 10px;
-  user-select: none;
-  min-width: 60px;
+.sub-answer-attribution {
+  color: var(--sub-text-faint);
+  font-size: var(--sub-font-s);
+  font-style: italic;
 }
 
-.goal-dispatch-msg {
+/* ── Chips ── */
+.sub-chip {
+  display: inline-block;
+  font-family: var(--font-monospace);
+  font-size: var(--sub-font-s);
+  padding: 0 var(--sub-space-1);
+  border-radius: var(--sub-radius-s);
+  background: var(--sub-bg-alt);
+  border: 1px solid var(--sub-border);
+  color: var(--sub-text-muted);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.sub-chip--ok { color: var(--sub-ok); }
+.sub-chip--fail { color: var(--sub-fail); }
+.sub-chip--warn { color: var(--sub-warn); border-color: var(--sub-warn); }
+.sub-chip--run { color: var(--sub-run); }
+
+/* ── Sections and headers ── */
+.sub-section {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sub-section-header {
+  font-size: var(--sub-font-s);
+  font-weight: 600;
+  color: var(--sub-text-muted);
+  user-select: none;
+}
+
+.sub-section-header.is-toggle {
+  cursor: pointer;
+}
+
+.sub-section-header.is-toggle:hover {
+  color: var(--sub-text);
+}
+
+.sub-fleet-status { flex-shrink: 0; }
+.sub-fleet-status.is-running { color: var(--sub-run); }
+.sub-fleet-status.is-reached { color: var(--sub-ok); }
+.sub-fleet-status.is-not-reached { color: var(--sub-fail); }
+
+.sub-fleet-goal {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sub-fleet-elapsed {
+  color: var(--sub-text-muted);
+  flex-shrink: 0;
+}
+
+.sub-fleet-btn {
+  font-size: var(--sub-font-s);
+  padding: 0 var(--sub-space-1);
+}
+
+/* Expanded fleet detail: pool chips / missing targets / current step. */
+.sub-fleet-detail {
+  flex-basis: 100%;
+  color: var(--sub-text-muted);
+  font-size: var(--sub-font-s);
+  padding-left: var(--sub-space-3);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sub-fleet-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sub-space-1);
+}
+
+.sub-fleet-empty {
+  color: var(--sub-text-faint);
+  font-size: var(--sub-font-s);
+  padding-left: var(--sub-space-1);
+}
+
+/* ── One scroll container: event feed + touch feed ── */
+.sub-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--sub-space-2);
+  background: var(--sub-bg-alt);
+  border-radius: var(--sub-radius-m);
+  border: 1px solid var(--sub-border);
+  scroll-behavior: smooth;
+}
+
+/* ── Feed lines (event stream + vault touches) ── */
+.sub-feed {
+  font-family: var(--font-monospace);
+  font-size: var(--sub-font-s);
+  line-height: 1.6;
+}
+
+.sub-feed-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sub-space-1);
+  padding: 1px 2px;
+  border-radius: var(--sub-radius-s);
+  font-family: var(--font-monospace);
+  font-size: var(--sub-font-s);
+}
+
+.sub-feed-line:hover {
+  background: var(--sub-bg-hover);
+}
+
+.sub-feed-ts {
+  color: var(--sub-text-faint);
+  flex-shrink: 0;
+  user-select: none;
+  min-width: 3.2em;
+  text-align: right;
+}
+
+.sub-feed-msg {
   color: inherit;
   word-break: break-word;
   flex: 1;
 }
 
-/* Kbd hint below textarea */
-.goal-dispatch-hint {
-  font-size: 10px;
-  color: var(--text-faint);
-  text-align: right;
-  margin-top: -4px;
-  padding-right: 2px;
+/* Type-specific feed colouring */
+.sub-feed-line.sub-t-success { color: var(--sub-ok); }
+.sub-feed-line.sub-t-failure { color: var(--sub-fail); }
+.sub-feed-line.sub-t-task    { color: var(--sub-accent); }
+.sub-feed-line.sub-t-tool    { color: var(--sub-text-muted); }
+.sub-feed-line.sub-t-impulse { color: var(--sub-text-faint); }
+.sub-feed-line.sub-t-sub     { color: var(--sub-run); }
+.sub-feed-line.sub-t-error   { color: var(--sub-error); font-weight: 600; }
+.sub-feed-line.sub-t-ready   { color: var(--sub-text-faint); font-style: italic; }
+.sub-feed-line.sub-t-divider { color: var(--sub-text-faint); letter-spacing: 0.05em; opacity: 0.4; }
+.sub-feed-line.sub-t-concept      { color: var(--sub-concept); font-weight: 500; }
+.sub-feed-line.sub-t-concept-link { color: var(--sub-concept); opacity: 0.75; }
+.sub-feed-line.sub-t-suppressed   { color: var(--sub-text-faint); font-style: italic; opacity: 0.7; }
+.sub-feed-line.sub-t-touch-write  { color: var(--sub-warn); }
+
+/* Hollow completion: goal-host verdict reached=false — dim the whole feed
+   and tint it so it cannot be mistaken for a success. */
+.sub-scroll.sub-hollow {
+  opacity: 0.75;
+  border-color: var(--sub-run);
+  background: color-mix(in srgb, var(--sub-run) 6%, var(--sub-bg-alt));
+}
+.sub-scroll.sub-hollow .sub-feed-line.sub-t-success { color: var(--sub-run); }
+
+/* Touch feed: pinned to the bottom of the scroll container, collapsed by
+   default (header shows the count; rows render only when expanded). */
+.sub-touches {
+  margin-top: var(--sub-space-2);
+  padding-top: var(--sub-space-1);
+  border-top: 1px dashed var(--sub-border);
+  color: var(--sub-text-muted);
+  font-size: var(--sub-font-s);
 }
 
-/* Vessel badge in the panel header area */
-.goal-dispatch-vessel-badge {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 8px;
-  font-size: 11px;
-  color: var(--text-faint);
-}
-
-.goal-dispatch-vessel-badge .gd-dot {
-  width: 7px;
-  height: 7px;
+/* Vessel dot (panel header + status surfaces) */
+.sub-dot {
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  background: var(--color-green);
+  background: var(--sub-ok);
   flex-shrink: 0;
+  display: inline-block;
 }
 
-.goal-dispatch-vessel-badge .gd-dot.offline {
-  background: var(--color-red);
+.sub-dot.offline {
+  background: var(--sub-fail);
 }
 
+/* ============================================
+   Status bar (outside the panel — keeps names, consumes tokens)
+   ============================================ */
 
-
-/* Status bar indicator */
 .obsidian-status-bar-item {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--sub-space-1);
 }
 
 .obsidian-status-indicator {
@@ -232,15 +455,15 @@
 }
 
 .obsidian-status-indicator.connected {
-  background-color: var(--color-green);
+  background-color: var(--sub-ok);
 }
 
 .obsidian-status-indicator.disconnected {
-  background-color: var(--color-red);
+  background-color: var(--sub-fail);
 }
 
 .obsidian-status-indicator.syncing {
-  background-color: var(--color-yellow);
+  background-color: var(--sub-run);
   animation: pulse 1s infinite;
 }
 
@@ -253,43 +476,100 @@
   }
 }
 
-/* Modal styles */
+.obsidian-status-bar {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: var(--sub-space-1);
+  padding: 0 var(--sub-space-2);
+}
+
+.obsidian-status-bar .status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.obsidian-status-bar .status-dot.connected {
+  background-color: var(--sub-ok);
+}
+
+.obsidian-status-bar .status-dot.disconnected {
+  background-color: var(--sub-fail);
+}
+
+.obsidian-status-bar .status-dot.syncing {
+  background-color: var(--sub-run);
+  animation: pulse 1s infinite;
+}
+
+.obsidian-status-bar .status-dot.error {
+  background-color: var(--sub-fail);
+  animation: pulse 0.5s infinite;
+}
+
+.obsidian-status-bar .status-dot.success {
+  background-color: var(--sub-ok);
+}
+
+.obsidian-status-bar.syncing {
+  color: var(--sub-text-muted);
+}
+
+.obsidian-status-bar.error {
+  color: var(--sub-fail);
+}
+
+.obsidian-status-bar.success {
+  color: var(--sub-ok);
+}
+
+/* Smooth status bar transitions */
+.obsidian-status-bar,
+.obsidian-status-indicator,
+.obsidian-status-bar .status-dot {
+  transition: color 0.2s ease, background-color 0.2s ease, opacity 0.2s ease;
+}
+
+/* ============================================
+   Modals (outside the panel — keep names, consume tokens)
+   ============================================ */
+
 .obsidian-modal {
   padding: 20px;
 }
 
 .obsidian-modal .setting-item {
   border-top: none;
-  padding-top: 10px;
+  padding-top: var(--sub-space-2);
 }
 
-/* Connection status in settings */
 .obsidian-connection-status {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px;
-  border-radius: 4px;
-  background-color: var(--background-secondary);
+  gap: var(--sub-space-2);
+  padding: var(--sub-space-2);
+  border-radius: var(--sub-radius-s);
+  background-color: var(--sub-bg-card);
 }
 
 .obsidian-connection-status.connected {
-  border-left: 3px solid var(--color-green);
+  border-left: 3px solid var(--sub-ok);
 }
 
 .obsidian-connection-status.disconnected {
-  border-left: 3px solid var(--color-red);
+  border-left: 3px solid var(--sub-fail);
 }
 
-/* Sync indicator */
 .obsidian-sync-notice {
   position: fixed;
   bottom: 40px;
   right: 20px;
   background-color: var(--background-modifier-message);
-  padding: 8px 16px;
-  border-radius: 4px;
-  font-size: 12px;
+  padding: var(--sub-space-2) var(--sub-space-3);
+  border-radius: var(--sub-radius-s);
+  font-size: var(--sub-font-s);
   z-index: 1000;
   animation: fadeInOut 2s ease-in-out;
 }
@@ -306,74 +586,18 @@
 /* Canvas vessel markers */
 .obsidian-canvas-node-marker {
   position: absolute;
-  top: 4px;
-  right: 4px;
-  font-size: 10px;
-  padding: 2px 6px;
-  border-radius: 3px;
+  top: var(--sub-space-1);
+  right: var(--sub-space-1);
+  font-size: var(--sub-font-s);
+  padding: 2px var(--sub-space-1);
+  border-radius: var(--sub-radius-s);
   background-color: var(--interactive-accent);
   color: var(--text-on-accent);
 }
 
-/* ============================================
-   Status Bar Styles
-   ============================================ */
-
-.obsidian-status-bar {
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0 8px;
-}
-
-.obsidian-status-bar .status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  display: inline-block;
-}
-
-.obsidian-status-bar .status-dot.connected {
-  background-color: var(--color-green);
-}
-
-.obsidian-status-bar .status-dot.disconnected {
-  background-color: var(--color-red);
-}
-
-.obsidian-status-bar .status-dot.syncing {
-  background-color: var(--color-yellow);
-  animation: pulse 1s infinite;
-}
-
-.obsidian-status-bar .status-dot.error {
-  background-color: var(--color-red);
-  animation: pulse 0.5s infinite;
-}
-
-.obsidian-status-bar .status-dot.success {
-  background-color: var(--color-green);
-}
-
-.obsidian-status-bar.syncing {
-  color: var(--text-muted);
-}
-
-.obsidian-status-bar.error {
-  color: var(--color-red);
-}
-
-.obsidian-status-bar.success {
-  color: var(--color-green);
-}
-
-/* ============================================
-   Status Modal Styles
-   ============================================ */
-
+/* ── Status modal ── */
 .obsidian-status-modal {
-  padding: 16px;
+  padding: var(--sub-space-3);
   max-width: 500px;
 }
 
@@ -382,23 +606,23 @@
 }
 
 .obsidian-status-modal .status-section h3 {
-  margin: 0 0 12px 0;
-  font-size: 14px;
+  margin: 0 0 var(--sub-space-3) 0;
+  font-size: var(--sub-font-l);
   font-weight: 600;
-  color: var(--text-normal);
-  border-bottom: 1px solid var(--background-modifier-border);
-  padding-bottom: 8px;
+  color: var(--sub-text);
+  border-bottom: 1px solid var(--sub-border);
+  padding-bottom: var(--sub-space-2);
 }
 
 .obsidian-status-modal .status-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 6px 0;
+  padding: var(--sub-space-1) 0;
 }
 
 .obsidian-status-modal .status-label {
-  color: var(--text-muted);
+  color: var(--sub-text-muted);
 }
 
 .obsidian-status-modal .status-value {
@@ -406,27 +630,27 @@
 }
 
 .obsidian-status-modal .status-indicator {
-  font-size: 12px;
-  padding: 2px 8px;
-  border-radius: 4px;
+  font-size: var(--sub-font-s);
+  padding: 2px var(--sub-space-2);
+  border-radius: var(--sub-radius-s);
 }
 
 .obsidian-status-modal .status-indicator.connected {
   background-color: var(--background-modifier-success);
-  color: var(--color-green);
+  color: var(--sub-ok);
 }
 
 .obsidian-status-modal .status-indicator.disconnected {
   background-color: var(--background-modifier-error);
-  color: var(--color-red);
+  color: var(--sub-fail);
 }
 
 .obsidian-status-modal .status-actions {
   display: flex;
-  gap: 8px;
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid var(--background-modifier-border);
+  gap: var(--sub-space-2);
+  margin-top: var(--sub-space-3);
+  padding-top: var(--sub-space-3);
+  border-top: 1px solid var(--sub-border);
 }
 
 .obsidian-status-modal .status-actions button {
@@ -436,17 +660,17 @@
 .obsidian-status-modal .syncing-indicator {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px;
-  background-color: var(--background-secondary);
-  border-radius: 4px;
-  margin-top: 8px;
+  gap: var(--sub-space-2);
+  padding: var(--sub-space-2);
+  background-color: var(--sub-bg-card);
+  border-radius: var(--sub-radius-s);
+  margin-top: var(--sub-space-2);
 }
 
 .obsidian-status-modal .syncing-indicator .spinner {
   width: 16px;
   height: 16px;
-  border: 2px solid var(--background-modifier-border);
+  border: 2px solid var(--sub-border);
   border-top-color: var(--interactive-accent);
   border-radius: 50%;
   animation: spin 1s linear infinite;
@@ -466,24 +690,21 @@
 
 .obsidian-status-modal .collapsible .collapsible-content {
   display: none;
-  padding-top: 8px;
+  padding-top: var(--sub-space-2);
 }
 
 .obsidian-status-modal .collapsible.expanded .collapsible-content {
   display: block;
 }
 
-/* ============================================
-   Search Modal Styles
-   ============================================ */
-
+/* ── Search modal ── */
 .obsidian-search-modal {
-  padding: 16px;
+  padding: var(--sub-space-3);
   max-width: 600px;
 }
 
 .obsidian-search-modal .search-controls {
-  margin-bottom: 16px;
+  margin-bottom: var(--sub-space-3);
 }
 
 .obsidian-search-modal .search-results {
@@ -496,71 +717,71 @@
   align-items: center;
   justify-content: center;
   padding: 32px;
-  color: var(--text-muted);
+  color: var(--sub-text-muted);
 }
 
 .obsidian-search-modal .loading-indicator .spinner {
   width: 24px;
   height: 24px;
-  border: 3px solid var(--background-modifier-border);
+  border: 3px solid var(--sub-border);
   border-top-color: var(--interactive-accent);
   border-radius: 50%;
   animation: spin 1s linear infinite;
-  margin-right: 12px;
+  margin-right: var(--sub-space-3);
 }
 
 .obsidian-search-modal .empty-results {
   text-align: center;
   padding: 32px;
-  color: var(--text-muted);
+  color: var(--sub-text-muted);
 }
 
 .obsidian-search-modal .empty-results .hint-text {
-  font-size: 12px;
-  margin-top: 8px;
+  font-size: var(--sub-font-s);
+  margin-top: var(--sub-space-2);
 }
 
 .obsidian-search-modal .results-count {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-bottom: 8px;
+  font-size: var(--sub-font-s);
+  color: var(--sub-text-muted);
+  margin-bottom: var(--sub-space-2);
 }
 
 .obsidian-search-modal .results-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--sub-space-2);
 }
 
 .obsidian-search-modal .search-result-item {
-  padding: 12px;
-  background-color: var(--background-secondary);
-  border-radius: 4px;
+  padding: var(--sub-space-3);
+  background-color: var(--sub-bg-card);
+  border-radius: var(--sub-radius-s);
   cursor: pointer;
   transition: background-color 0.15s ease;
 }
 
 .obsidian-search-modal .search-result-item:hover,
 .obsidian-search-modal .search-result-item.hovered {
-  background-color: var(--background-modifier-hover);
+  background-color: var(--sub-bg-hover);
 }
 
 .obsidian-search-modal .result-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sub-space-2);
 }
 
 .obsidian-search-modal .status-icon {
-  font-size: 14px;
+  font-size: var(--sub-font-m);
 }
 
 .obsidian-search-modal .status-icon.success {
-  color: var(--color-green);
+  color: var(--sub-ok);
 }
 
 .obsidian-search-modal .status-icon.failure {
-  color: var(--color-red);
+  color: var(--sub-fail);
 }
 
 .obsidian-search-modal .activity-name {
@@ -568,35 +789,32 @@
 }
 
 .obsidian-search-modal .result-meta {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-top: 4px;
+  font-size: var(--sub-font-s);
+  color: var(--sub-text-muted);
+  margin-top: var(--sub-space-1);
 }
 
 .obsidian-search-modal .error-preview {
-  font-size: 12px;
-  color: var(--color-red);
-  margin-top: 8px;
-  padding: 8px;
+  font-size: var(--sub-font-s);
+  color: var(--sub-fail);
+  margin-top: var(--sub-space-2);
+  padding: var(--sub-space-2);
   background-color: var(--background-modifier-error);
-  border-radius: 4px;
+  border-radius: var(--sub-radius-s);
 }
 
 .obsidian-search-modal .error-text {
-  color: var(--color-red);
+  color: var(--sub-fail);
 }
 
-/* ============================================
-   Templates Browser Modal Styles
-   ============================================ */
-
+/* ── Templates browser modal ── */
 .obsidian-templates-modal {
-  padding: 16px;
+  padding: var(--sub-space-3);
   max-width: 700px;
 }
 
 .obsidian-templates-modal .templates-controls {
-  margin-bottom: 16px;
+  margin-bottom: var(--sub-space-3);
 }
 
 .obsidian-templates-modal .templates-list {
@@ -604,178 +822,175 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--sub-space-3);
 }
 
 .obsidian-templates-modal .template-item {
-  padding: 12px;
-  background-color: var(--background-secondary);
-  border-radius: 6px;
+  padding: var(--sub-space-3);
+  background-color: var(--sub-bg-card);
+  border-radius: var(--sub-radius-m);
   cursor: pointer;
   transition: background-color 0.15s ease;
 }
 
 .obsidian-templates-modal .template-item:hover,
 .obsidian-templates-modal .template-item.hovered {
-  background-color: var(--background-modifier-hover);
+  background-color: var(--sub-bg-hover);
 }
 
 .obsidian-templates-modal .template-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sub-space-2);
   flex-wrap: wrap;
 }
 
 .obsidian-templates-modal .template-name {
-  font-size: 14px;
+  font-size: var(--sub-font-m);
 }
 
 .obsidian-templates-modal .category-badge {
-  font-size: 10px;
-  padding: 2px 6px;
-  border-radius: 3px;
+  font-size: var(--sub-font-s);
+  padding: 2px var(--sub-space-1);
+  border-radius: var(--sub-radius-s);
   text-transform: uppercase;
   font-weight: 500;
 }
 
 .obsidian-templates-modal .category-badge.category-feature {
-  background-color: var(--color-green);
-  color: white;
+  background-color: var(--sub-ok);
+  color: var(--text-on-accent);
 }
 
 .obsidian-templates-modal .category-badge.category-bugfix {
-  background-color: var(--color-red);
-  color: white;
+  background-color: var(--sub-fail);
+  color: var(--text-on-accent);
 }
 
 .obsidian-templates-modal .category-badge.category-refactor {
-  background-color: var(--color-yellow);
-  color: black;
+  background-color: var(--sub-run);
+  color: var(--text-on-accent);
 }
 
 .obsidian-templates-modal .category-badge.category-tool {
-  background-color: var(--color-blue);
-  color: white;
+  background-color: var(--sub-info);
+  color: var(--text-on-accent);
 }
 
 .obsidian-templates-modal .category-badge.category-infrastructure {
   background-color: var(--color-purple);
-  color: white;
+  color: var(--text-on-accent);
 }
 
 .obsidian-templates-modal .category-badge.category-meta {
-  background-color: var(--text-muted);
-  color: white;
+  background-color: var(--sub-text-muted);
+  color: var(--text-on-accent);
 }
 
 .obsidian-templates-modal .type-badge {
-  font-size: 10px;
-  padding: 2px 6px;
-  border-radius: 3px;
-  background-color: var(--background-modifier-border);
+  font-size: var(--sub-font-s);
+  padding: 2px var(--sub-space-1);
+  border-radius: var(--sub-radius-s);
+  background-color: var(--sub-border);
 }
 
 .obsidian-templates-modal .template-desc {
-  font-size: 13px;
-  color: var(--text-muted);
-  margin: 8px 0;
+  font-size: var(--sub-font-m);
+  color: var(--sub-text-muted);
+  margin: var(--sub-space-2) 0;
   line-height: 1.4;
 }
 
 .obsidian-templates-modal .template-metrics {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
+  gap: var(--sub-space-1);
+  margin-top: var(--sub-space-2);
 }
 
 .obsidian-templates-modal .metric-badge {
-  font-size: 11px;
-  padding: 2px 6px;
-  border-radius: 3px;
-  background-color: var(--background-primary);
-  color: var(--text-muted);
+  font-size: var(--sub-font-s);
+  padding: 2px var(--sub-space-1);
+  border-radius: var(--sub-radius-s);
+  background-color: var(--sub-bg);
+  color: var(--sub-text-muted);
 }
 
 .obsidian-templates-modal .metric-badge.success-rate.high {
   background-color: var(--background-modifier-success);
-  color: var(--color-green);
+  color: var(--sub-ok);
 }
 
 .obsidian-templates-modal .metric-badge.success-rate.medium {
   background-color: var(--background-modifier-message);
-  color: var(--color-yellow);
+  color: var(--sub-run);
 }
 
 .obsidian-templates-modal .metric-badge.success-rate.low {
   background-color: var(--background-modifier-error);
-  color: var(--color-red);
+  color: var(--sub-fail);
 }
 
 .obsidian-templates-modal .template-shapes {
   display: flex;
-  gap: 12px;
-  margin-top: 8px;
-  font-size: 11px;
+  gap: var(--sub-space-3);
+  margin-top: var(--sub-space-2);
+  font-size: var(--sub-font-s);
 }
 
 .obsidian-templates-modal .shapes-text {
   font-family: var(--font-monospace);
-  color: var(--text-faint);
+  color: var(--sub-text-faint);
 }
 
 .obsidian-templates-modal .template-tasks {
-  margin-top: 8px;
+  margin-top: var(--sub-space-2);
 }
 
 .obsidian-templates-modal .tasks-count {
-  font-size: 11px;
-  color: var(--text-faint);
+  font-size: var(--sub-font-s);
+  color: var(--sub-text-faint);
 }
 
-/* ============================================
-   Execution ID Modal Styles
-   ============================================ */
-
+/* ── Execution ID modal ── */
 .obsidian-execution-id-modal {
-  padding: 16px;
+  padding: var(--sub-space-3);
   max-width: 450px;
 }
 
 .obsidian-execution-id-modal .modal-description {
-  color: var(--text-muted);
-  margin-bottom: 16px;
-  font-size: 13px;
+  color: var(--sub-text-muted);
+  margin-bottom: var(--sub-space-3);
+  font-size: var(--sub-font-m);
 }
 
 .obsidian-execution-id-modal .example-section {
-  margin-top: 16px;
-  padding: 12px;
-  background-color: var(--background-secondary);
-  border-radius: 4px;
+  margin-top: var(--sub-space-3);
+  padding: var(--sub-space-3);
+  background-color: var(--sub-bg-card);
+  border-radius: var(--sub-radius-s);
 }
 
 .obsidian-execution-id-modal .example-header {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-bottom: 4px;
+  font-size: var(--sub-font-s);
+  color: var(--sub-text-muted);
+  margin-bottom: var(--sub-space-1);
 }
 
 .obsidian-execution-id-modal .example-list {
-  font-size: 11px;
+  font-size: var(--sub-font-s);
   font-family: var(--font-monospace);
-  color: var(--text-faint);
+  color: var(--sub-text-faint);
   margin: 0;
   padding-left: 20px;
 }
 
 .obsidian-execution-id-modal .example-list li {
-  margin: 4px 0;
+  margin: var(--sub-space-1) 0;
 }
 
 /* ============================================
-   Global Spinner Animation
+   Global spinner animation
    ============================================ */
 
 @keyframes spin {
@@ -791,85 +1006,59 @@
   display: inline-block;
   width: 16px;
   height: 16px;
-  border: 2px solid var(--background-modifier-border);
+  border: 2px solid var(--sub-border);
   border-top-color: var(--interactive-accent);
   border-radius: 50%;
   animation: spin 1s linear infinite;
 }
 
 /* ============================================
-   Concept Note Signal Styles
+   Concept note signal styles (markdown-rendered surfaces)
    ============================================ */
 
 /* Weight bar inline code — monospace pill with a subtle background tint */
 .mv-weight-bar,
 .markdown-rendered code.mv-weight-bar {
   font-family: var(--font-monospace);
-  font-size: 11px;
+  font-size: var(--sub-font-s);
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: var(--sub-radius-s);
   background: rgba(var(--interactive-accent-rgb), 0.08);
-  color: var(--text-muted);
+  color: var(--sub-text-muted);
   letter-spacing: 0.02em;
 }
 
 /* Signal confidence callout content colour overrides */
 .mv-signal-cold {
-  color: var(--text-faint);
+  color: var(--sub-text-faint);
 }
 
 .mv-signal-low {
-  color: var(--color-red);
+  color: var(--sub-fail);
 }
 
 .mv-signal-mid {
-  color: var(--color-yellow);
+  color: var(--sub-run);
 }
 
 .mv-signal-high {
-  color: var(--color-green);
+  color: var(--sub-ok);
 }
 
-/* Smooth status bar transitions */
-.obsidian-status-bar,
-.obsidian-status-indicator,
-.obsidian-status-bar .status-dot {
-  transition: color 0.2s ease, background-color 0.2s ease, opacity 0.2s ease;
-}
+/* ============================================
+   Provenance delineation (notes-side)
+   ============================================ */
 
-/* provenance delineation */
 .callout[data-callout="substrate"] {
-    --callout-color: 80, 160, 220;
+  --callout-color: var(--color-blue-rgb);
 }
 
 .callout[data-callout="operator"] {
-    --callout-color: 200, 120, 60;
+  --callout-color: var(--color-orange-rgb);
 }
 
 .substrate-authored {
-    border-left: 3px solid rgb(80, 160, 220);
-    background-color: rgba(80, 160, 220, 0.05);
+  border-left: 3px solid var(--sub-provenance-substrate);
+  background-color: color-mix(in srgb, var(--sub-provenance-substrate) 5%, transparent);
 }
-
-/* ── WS3/WS5/WS6: fleet board, solicitation cards, substrate activity ── */
-.goal-fleet-section { margin: 6px 0; padding: 4px 6px; border: 1px solid var(--background-modifier-border); border-radius: 6px; font-size: 12px; }
-.goal-fleet-header { font-weight: 600; margin-bottom: 2px; }
-.goal-fleet-row { padding: 2px 4px; border-radius: 4px; cursor: pointer; display: flex; align-items: baseline; gap: 4px; flex-wrap: wrap; }
-.goal-fleet-row:hover { background: var(--background-modifier-hover); }
-.goal-fleet-status.gf-running { color: var(--color-yellow); }
-.goal-fleet-status.gf-reached { color: var(--color-green); }
-.goal-fleet-status.gf-not-reached { color: var(--color-red); }
-.goal-fleet-goal { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.goal-fleet-elapsed { color: var(--text-muted); }
-.goal-fleet-ctx-btn, .goal-fleet-attach-btn { font-size: 10px; padding: 0 6px; }
-.goal-fleet-detail { flex-basis: 100%; color: var(--text-muted); font-size: 11px; padding-left: 14px; }
-.goal-fleet-missing { color: var(--color-orange); }
-.goal-solicitation-card { margin: 6px 0; padding: 8px; border: 1px solid var(--color-orange); border-radius: 6px; background: rgba(255, 160, 60, 0.06); }
-.goal-solicitation-title { font-weight: 700; margin-bottom: 4px; }
-.goal-solicitation-answer { width: 100%; margin-top: 6px; }
-.goal-solicitation-btns { display: flex; gap: 6px; margin-top: 6px; }
-.goal-touches-section { margin-top: 6px; padding: 4px 6px; border-top: 1px dashed var(--background-modifier-border); font-size: 11px; color: var(--text-muted); }
-.goal-touches-header { font-weight: 600; }
-.goal-touch-row.gt-write { color: var(--color-orange); }
 /* end of styles */
-

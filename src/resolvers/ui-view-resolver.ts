@@ -28,19 +28,20 @@ async function resolveUiView(_pointer: ImpulsePointer, app: App): Promise<Resolv
   let goal_dispatch: Record<string, unknown> = { open: false };
   if (goalLeaf) {
     const container = goalLeaf.view.containerEl;
-    const output = container.querySelector('.goal-dispatch-output');
+    const scroll = container.querySelector('.sub-scroll');
+    const output = container.querySelector('.sub-feed');
     const lineEls = output ? Array.from(output.children) : [];
     const allLines = lineEls
       .map((el) => (el.textContent ?? '').trim())
       .filter((t) => t.length > 0);
     const event_lines = allLines.slice(-20);
-    const msgEls = output ? Array.from(output.querySelectorAll('.goal-dispatch-msg')) : [];
+    const msgEls = output ? Array.from(output.querySelectorAll('.sub-feed-msg')) : [];
     let verdict_line: string | null = null;
     for (const el of msgEls) {
       const t = (el.textContent ?? '').trim();
       if (t.startsWith('reached:')) verdict_line = t;
     }
-    const hollow = output ? output.classList.contains('mb-hollow') : false;
+    const hollow = scroll ? scroll.classList.contains('sub-hollow') : false;
     goal_dispatch = { open: true, event_lines, verdict_line, hollow };
   }
 

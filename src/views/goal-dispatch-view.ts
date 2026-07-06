@@ -4,18 +4,23 @@
  * An Obsidian ItemView that provides a sidebar panel for dispatching
  * goals to goal-host-vessel and watching execution events in real time.
  *
- * Layout:
+ * Space model (0.4.0):
  *   ┌─────────────────────────────────────┐
- *   │ [textarea]                          │
- *   │ [Dispatch] [Clear]                  │
+ *   │ [omnibox — 1 line, expands on focus]│
+ *   │ solicitation cards (pinned)         │
+ *   │ fleet rows (in-flight, collapsed)   │
+ *   │ completed: one-line count (expand)  │
  *   ├─────────────────────────────────────┤
- *   │ scrollable event output             │
+ *   │ ONE scroll container:               │
+ *   │   event feed lines                  │
+ *   │   vault-touch feed (collapsed)      │
  *   └─────────────────────────────────────┘
  *
  * - Dispatches via GoalHostClient (POST /run-goal)
  * - Streams events from activity-api WS, filtered by executionId
  * - Writes vault notes via GoalNoteManager
  * - Reconnects WS on 3s backoff
+ * - Component grammar: sub-card / sub-chip / sub-feed-line (see styles.css)
  */
 
 import { ItemView, WorkspaceLeaf, TFile, Notice, MarkdownView, MarkdownRenderer } from 'obsidian';
@@ -55,9 +60,21 @@ function tierLabel(tier: string | undefined): string {
   return tier ?? '';
 }
 
-/** Format milliseconds as a compact duration string. */
+/** Format milliseconds as a compact duration string (sub-second precision). */
 function fmtDuration(ms: number): string {
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
+}
+
+/** Compact relative elapsed: "42s", "7m", "3h", "2d". No ISO anywhere. */
+function fmtRel(ms: number): string {
+  if (ms < 0) ms = 0;
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
 }
 
 /** Truncate a string for inline preview. */
@@ -99,9 +116,11 @@ export class GoalDispatchView extends ItemView {
   private plugin: ObsidianVesselPlugin;
 
   // DOM elements
+  private omniboxWrapEl: HTMLElement | null = null;
   private textarea: HTMLTextAreaElement | null = null;
   private dispatchBtn: HTMLButtonElement | null = null;
-  private outputEl: HTMLElement | null = null;
+  private scrollEl: HTMLElement | null = null;   // THE one scroll container
+  private outputEl: HTMLElement | null = null;   // feed-lines region inside scrollEl
 
   // State
   private ws: WebSocket | null = null;
@@ -111,6 +130,7 @@ export class GoalDispatchView extends ItemView {
   private goalFile: TFile | null = null;
   private goalNoteManager: GoalNoteManager;
   private dispatching = false;
+  private dispatchStartedAt: number | null = null;
 
   // Execution context: tracks activity name + task descriptions per execId
   private execCtxs = new Map<string, ExecCtx>();
@@ -131,13 +151,18 @@ export class GoalDispatchView extends ItemView {
   private suppressedCount = 0;
   private suppressedSummaryLine: HTMLElement | null = null;
 
-  // Fleet board (WS6): all in-flight dispatches from goal-host's activeDispatches shape.
+  // Fleet board (WS6): in-flight dispatches pinned above the feed; completed
+  // dispatches collapse to a one-line count (expandable).
   private fleetEl: HTMLElement | null = null;
+  private completedEl: HTMLElement | null = null;
+  private completedDispatches: Array<Record<string, unknown>> = [];
+  private completedExpanded = false;
   private fleetTimer: number | null = null;
   // Solicitation cards (WS5) + substrate-activity feed (WS3).
   private solicitationsEl: HTMLElement | null = null;
   private unsubscribeSolicitations: (() => void) | null = null;
   private touchesEl: HTMLElement | null = null;
+  private touchesExpanded = false;
   private unsubscribeTouches: (() => void) | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: ObsidianVesselPlugin) {
@@ -160,6 +185,8 @@ export class GoalDispatchView extends ItemView {
 
   async onOpen(): Promise<void> {
     this.buildUI();
+    // Apply any Substrate/theme-tokens.md overrides to this panel root.
+    void this.plugin.refreshThemeTokens();
     if (this.plugin.settings.enableGoalDispatch) {
       this.connectWS();
     }
@@ -186,13 +213,12 @@ export class GoalDispatchView extends ItemView {
     contentEl.empty();
     contentEl.addClass('obsidian-goal-dispatch-view');
 
-    // Input section
-    const inputSection = contentEl.createDiv('goal-dispatch-input-section');
-
-    const textareaWrapper = inputSection.createDiv('goal-dispatch-textarea-wrapper');
-    this.textarea = textareaWrapper.createEl('textarea', {
-      cls: 'goal-dispatch-textarea',
-      attr: { placeholder: 'Describe your goal…', rows: '4' },
+    // ── Omnibox: single-line input, expands to multiline on focus ──
+    const omnibox = contentEl.createDiv('sub-omnibox');
+    this.omniboxWrapEl = omnibox;
+    this.textarea = omnibox.createEl('textarea', {
+      cls: 'sub-omnibox-input',
+      attr: { placeholder: 'Goal… (⌘↵ to dispatch)', rows: '1' },
     });
     this.textarea.addEventListener('keydown', (ev: KeyboardEvent) => {
       // Ctrl/Cmd+Enter to dispatch
@@ -201,41 +227,46 @@ export class GoalDispatchView extends ItemView {
         this.dispatchFromUI();
       }
     });
+    this.textarea.addEventListener('focus', () => {
+      omnibox.addClass('is-expanded');
+      this.textarea?.setAttribute('rows', '4');
+    });
+    this.textarea.addEventListener('blur', () => {
+      // Collapse back to a single line only when empty; keep drafted text visible.
+      if (!this.textarea?.value.trim()) {
+        omnibox.removeClass('is-expanded');
+        this.textarea?.setAttribute('rows', '1');
+      }
+    });
 
-    // Keyboard hint
-    inputSection.createDiv({ cls: 'goal-dispatch-hint', text: '⌘↵ to dispatch' });
-
-    const btnRow = inputSection.createDiv('goal-dispatch-btn-row');
-
-    this.dispatchBtn = btnRow.createEl('button', {
+    const actions = omnibox.createDiv('sub-omnibox-actions');
+    this.dispatchBtn = actions.createEl('button', {
       text: 'Dispatch',
-      cls: 'mod-cta goal-dispatch-btn',
+      cls: 'mod-cta sub-omnibox-dispatch',
     });
     this.dispatchBtn.addEventListener('click', () => this.dispatchFromUI());
-
-    const clearBtn = btnRow.createEl('button', {
+    const clearBtn = actions.createEl('button', {
       text: 'Clear',
-      cls: 'goal-dispatch-clear-btn',
+      cls: 'sub-omnibox-clear',
     });
     clearBtn.addEventListener('click', () => this.clearOutput());
+    actions.createSpan({ cls: 'sub-omnibox-hint', text: '⌘↵' });
 
-    // Solicitation cards (WS5) — rendered when the substrate asks for input.
-    this.solicitationsEl = contentEl.createDiv('goal-solicitations-section');
+    // ── Priority stack (pinned above the scroll container) ──
+    // 1. Solicitation cards (WS5) — the substrate asking the human.
+    this.solicitationsEl = contentEl.createDiv('sub-section sub-solicitations');
+    // 2. Fleet rows (WS6) — in-flight dispatches, collapsed one-liners.
+    this.fleetEl = contentEl.createDiv('sub-section sub-fleet');
+    // 3. Completed goals — one-line count, expandable.
+    this.completedEl = contentEl.createDiv('sub-section sub-completed');
 
-    // Fleet board (WS6) — every in-flight dispatch on this goal-host.
-    this.fleetEl = contentEl.createDiv('goal-fleet-section');
+    // ── ONE scroll container: event feed + collapsed vault-touch feed ──
+    this.scrollEl = contentEl.createDiv('sub-scroll');
+    this.outputEl = this.scrollEl.createDiv('sub-feed');
+    // 4. Vault-touch feed (WS3) — last, collapsed by default.
+    this.touchesEl = this.scrollEl.createDiv('sub-touches');
 
-    // Divider
-    contentEl.createEl('hr', { cls: 'goal-dispatch-divider' });
-
-    // Output section
-    const outputSection = contentEl.createDiv('goal-dispatch-output-section');
-    this.outputEl = outputSection.createDiv('goal-dispatch-output');
-
-    // Substrate activity (WS3) — live vault-touch feed from the ledger.
-    this.touchesEl = outputSection.createDiv('goal-touches-section');
-
-    this.appendMessage('Ready. Enter a goal and press Dispatch (or Ctrl+Enter).', 'ready');
+    this.appendMessage('Ready. Type a goal above (⌘↵ dispatches).', 'ready');
   }
 
   // ---------------------------------------------------------------------------
@@ -329,7 +360,7 @@ export class GoalDispatchView extends ItemView {
   // ---------------------------------------------------------------------------
 
   /**
-   * Read goal from textarea and dispatch.
+   * Read goal from the omnibox and dispatch.
    */
   private async dispatchFromUI(): Promise<void> {
     const goal = this.textarea?.value.trim() ?? '';
@@ -369,6 +400,7 @@ export class GoalDispatchView extends ItemView {
     this.hiddenExecIds.clear();
     this.suppressedCount = 0;
     this.suppressedSummaryLine = null;
+    this.dispatchStartedAt = Date.now();
     this.appendMessage(`⟶ Goal: "${goal}"`);
 
     // Collect and display the vault context that will accompany the goal
@@ -462,22 +494,31 @@ export class GoalDispatchView extends ItemView {
   // Output helpers
   // ---------------------------------------------------------------------------
 
+  /** Relative timestamp for feed lines: elapsed since the active dispatch. */
+  private feedTs(): string {
+    if (this.dispatchStartedAt === null) return '·';
+    return `+${fmtRel(Date.now() - this.dispatchStartedAt)}`;
+  }
+
+  /** Auto-scroll the single scroll container to the bottom. */
+  private scrollToBottom(): void {
+    if (this.scrollEl) this.scrollEl.scrollTop = this.scrollEl.scrollHeight;
+  }
+
   /**
-   * Append a timestamped message line to the output panel.
+   * Append a timestamped message line to the event feed.
    * Also callable from external code (e.g. after WS reconnect).
    *
-   * type maps to CSS class gd-{type} for color-coding:
+   * type maps to CSS class sub-t-{type} for color-coding:
    *   ready | success | failure | error | task | tool | impulse | divider
    */
   appendMessage(text: string, type?: string): void {
     if (!this.outputEl) return;
-    const cls = ['goal-dispatch-line', type ? `gd-${type}` : ''].filter(Boolean).join(' ');
+    const cls = ['sub-feed-line', type ? `sub-t-${type}` : ''].filter(Boolean).join(' ');
     const line = this.outputEl.createDiv(cls);
-    const ts = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    line.createSpan({ cls: 'goal-dispatch-ts', text: `${ts}` });
-    line.createSpan({ cls: 'goal-dispatch-msg', text });
-    // Auto-scroll to bottom
-    this.outputEl.scrollTop = this.outputEl.scrollHeight;
+    line.createSpan({ cls: 'sub-feed-ts', text: this.feedTs() });
+    line.createSpan({ cls: 'sub-feed-msg', text });
+    this.scrollToBottom();
   }
 
   /**
@@ -517,19 +558,18 @@ export class GoalDispatchView extends ItemView {
   /** Update (or create) the 'selecting' status line in place rather than appending. */
   private updateSelectingMessage(elapsedSecs: number): void {
     if (!this.outputEl) return;
-    const existing = this.outputEl.querySelector('.gd-selecting-line');
+    const existing = this.outputEl.querySelector('.sub-t-selecting');
     const text = elapsedSecs === 0
       ? 'Activity selecting…'
       : `Activity selecting…  ${elapsedSecs}s`;
     if (existing) {
-      existing.querySelector('.goal-dispatch-msg')!.textContent = text;
+      existing.querySelector('.sub-feed-msg')!.textContent = text;
     } else {
-      const line = this.outputEl.createDiv('goal-dispatch-line gd-selecting-line');
-      const ts = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      line.createSpan({ cls: 'goal-dispatch-ts', text: ts });
-      line.createSpan({ cls: 'goal-dispatch-msg', text });
+      const line = this.outputEl.createDiv('sub-feed-line sub-t-ready sub-t-selecting');
+      line.createSpan({ cls: 'sub-feed-ts', text: this.feedTs() });
+      line.createSpan({ cls: 'sub-feed-msg', text });
     }
-    this.outputEl.scrollTop = this.outputEl.scrollHeight;
+    this.scrollToBottom();
   }
 
 
@@ -574,59 +614,96 @@ export class GoalDispatchView extends ItemView {
     }
   }
 
+  /**
+   * Render one collapsed fleet row: status dot + goal snippet (full goal in
+   * tooltip) + relative elapsed. Pool chips / missing targets / current step
+   * render only on expansion (click).
+   */
+  private renderFleetRow(parent: HTMLElement, d: Record<string, unknown>, running: boolean): void {
+    const row = parent.createDiv('sub-card sub-card--fleet');
+    const dot = running ? '●' : d.reached === true ? '✓' : d.reached === false ? '✗' : '○';
+    const statusCls = running ? 'is-running' : d.reached === true ? 'is-reached' : 'is-not-reached';
+    const started = typeof d.startedAt === 'number' ? d.startedAt : 0;
+    const elapsed = started ? fmtRel(Date.now() - started) : '';
+    const goal = typeof d.goal === 'string' ? d.goal : '(no goal)';
+    const goalSnippet = goal.length > 60 ? goal.slice(0, 60) + '…' : goal;
+    row.createSpan({ cls: `sub-fleet-status ${statusCls}`, text: dot });
+    row.createSpan({ cls: 'sub-fleet-goal', text: goalSnippet, attr: { title: goal } });
+    row.createSpan({ cls: 'sub-fleet-elapsed', text: elapsed });
+    row.addEventListener('click', () => void this.expandFleetRow(row, d));
+    if (running) {
+      const ctxBtn = row.createEl('button', { cls: 'sub-fleet-btn', text: '+ctx' });
+      ctxBtn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        void this.injectContext(String(d.dispatchId ?? ''));
+      });
+    }
+  }
+
   private renderFleet(dispatches: Array<Record<string, unknown>>): void {
     const el = this.fleetEl;
     if (!el) return;
     el.empty();
     const running = dispatches.filter((d) => d.status === 'running');
-    const recent = dispatches.filter((d) => d.status !== 'running').slice(0, 5);
-    el.createDiv({ cls: 'goal-fleet-header', text: `Fleet — ${running.length} in flight` });
-    if (running.length === 0 && recent.length === 0) {
-      el.createDiv({ cls: 'goal-fleet-empty', text: 'No dispatches.' });
-      return;
+    this.completedDispatches = dispatches.filter((d) => d.status !== 'running');
+    el.createDiv({ cls: 'sub-section-header', text: `Fleet — ${running.length} in flight` });
+    if (running.length === 0) {
+      el.createDiv({ cls: 'sub-fleet-empty', text: 'No dispatches in flight.' });
     }
-    for (const d of [...running, ...recent]) {
-      const row = el.createDiv('goal-fleet-row');
-      const isRunning = d.status === 'running';
-      const dot = isRunning ? '●' : d.reached === true ? '✓' : d.reached === false ? '✗' : '○';
-      const started = typeof d.startedAt === 'number' ? d.startedAt : 0;
-      const elapsed = started ? fmtDuration(Date.now() - started) : '';
-      const goalSnippet = typeof d.goal === 'string' ? (d.goal.length > 60 ? d.goal.slice(0, 60) + '…' : d.goal) : '(no goal)';
-      row.createSpan({
-        cls: `goal-fleet-status ${isRunning ? 'gf-running' : d.reached === true ? 'gf-reached' : 'gf-not-reached'}`,
-        text: `${dot} `,
-      });
-      row.createSpan({ cls: 'goal-fleet-goal', text: goalSnippet });
-      row.createSpan({ cls: 'goal-fleet-elapsed', text: ` ${elapsed}` });
-      row.addEventListener('click', () => void this.expandFleetRow(row, d));
-      if (isRunning) {
-        const ctxBtn = row.createEl('button', { cls: 'goal-fleet-ctx-btn', text: '+ctx' });
-        ctxBtn.addEventListener('click', (ev) => {
-          ev.stopPropagation();
-          void this.injectContext(String(d.dispatchId ?? ''));
-        });
-      }
+    for (const d of running) this.renderFleetRow(el, d, true);
+    this.renderCompleted();
+  }
+
+  /** Completed goals: a one-line count, expandable to collapsed rows. */
+  private renderCompleted(): void {
+    const el = this.completedEl;
+    if (!el) return;
+    el.empty();
+    const done = this.completedDispatches;
+    if (done.length === 0) return;
+    const reached = done.filter((d) => d.reached === true).length;
+    const header = el.createDiv({
+      cls: 'sub-section-header is-toggle',
+      text: `${this.completedExpanded ? '▾' : '▸'} ${done.length} completed (${reached} reached)`,
+    });
+    header.addEventListener('click', () => {
+      this.completedExpanded = !this.completedExpanded;
+      this.renderCompleted();
+    });
+    if (this.completedExpanded) {
+      for (const d of done.slice(0, 10)) this.renderFleetRow(el, d, false);
     }
   }
 
   private async expandFleetRow(row: HTMLElement, d: Record<string, unknown>): Promise<void> {
-    const existing = row.querySelector('.goal-fleet-detail');
+    const existing = row.querySelector('.sub-fleet-detail');
     if (existing) {
       existing.remove();
       return;
     }
-    const detail = row.createDiv('goal-fleet-detail');
+    const detail = row.createDiv('sub-fleet-detail');
     const j = await this.goalHostResolve({ type: 'goalWalkState', dispatchId: String(d.dispatchId ?? '') });
     const body = ((j?.body ?? {}) as Record<string, unknown>);
     const pool = (Array.isArray(body.poolShapes) ? body.poolShapes : []) as string[];
     const pending = (Array.isArray(body.pendingTargets) ? body.pendingTargets : []) as string[];
     const step = typeof body.currentStep === 'string' ? body.currentStep : null;
-    detail.createDiv({ cls: 'goal-fleet-pool', text: pool.length ? `pool: ${pool.join(', ')}` : 'pool: (empty)' });
-    if (pending.length) detail.createDiv({ cls: 'goal-fleet-missing', text: `missing: ${pending.join(', ')}` });
-    if (step) detail.createDiv({ cls: 'goal-fleet-step', text: step.replace('[goal-host-vessel] ', '') });
+    const chips = detail.createDiv('sub-fleet-chips');
+    if (pool.length === 0 && pending.length === 0) {
+      chips.createSpan({ cls: 'sub-chip', text: 'pool: empty' });
+    }
+    for (const shape of pool) {
+      chips.createSpan({ cls: 'sub-chip', text: shape, attr: { title: shape } });
+    }
+    for (const shape of pending) {
+      chips.createSpan({ cls: 'sub-chip sub-chip--warn', text: `missing: ${shape}`, attr: { title: shape } });
+    }
+    if (step) {
+      const stepText = step.replace('[goal-host-vessel] ', '');
+      detail.createDiv({ text: stepText, attr: { title: stepText } });
+    }
     const execId = typeof d.executionId === 'string' && !d.executionId.startsWith('interrupted:') ? d.executionId : null;
     if (execId) {
-      const attachBtn = detail.createEl('button', { cls: 'goal-fleet-attach-btn', text: 'attach' });
+      const attachBtn = detail.createEl('button', { cls: 'sub-fleet-btn', text: 'attach' });
       attachBtn.addEventListener('click', (ev) => {
         ev.stopPropagation();
         this.activeDispatchId = String(d.dispatchId ?? '');
@@ -681,16 +758,16 @@ export class GoalDispatchView extends ItemView {
     el.empty();
     if (list.length === 0) return;
     for (const sol of list) {
-      const card = el.createDiv('goal-solicitation-card');
-      card.createDiv({ cls: 'goal-solicitation-title', text: '⚑ The substrate needs your input' });
-      const bodyEl = card.createDiv('goal-solicitation-body');
+      const card = el.createDiv('sub-card sub-card--solicitation');
+      card.createDiv({ cls: 'sub-solicitation-title', text: '⚑ The substrate needs your input' });
+      const bodyEl = card.createDiv('sub-solicitation-body');
       void MarkdownRenderer.render(this.plugin.app, sol.questionMarkdown, bodyEl, '/', this);
       const answerEl = card.createEl('textarea', {
-        cls: 'goal-solicitation-answer',
+        cls: 'sub-solicitation-answer',
         attr: { placeholder: 'Your answer… (typing keeps the door open)', rows: '3' },
       });
       answerEl.addEventListener('input', () => this.plugin.solicitationManager?.heartbeat(sol.solicitationId));
-      const btnRow = card.createDiv('goal-solicitation-btns');
+      const btnRow = card.createDiv('sub-solicitation-btns');
       const answerBtn = btnRow.createEl('button', { cls: 'mod-cta', text: 'Answer' });
       answerBtn.addEventListener('click', () => {
         const answer = answerEl.value.trim();
@@ -708,6 +785,7 @@ export class GoalDispatchView extends ItemView {
     }
   }
 
+  /** Vault-touch feed: last in the scroll container, collapsed by default. */
   private startTouchFeed(): void {
     const ledger = this.plugin.vaultTouchLedger;
     if (!ledger || !this.touchesEl) return;
@@ -715,14 +793,28 @@ export class GoalDispatchView extends ItemView {
       const el = this.touchesEl;
       if (!el) return;
       el.empty();
+      const header = el.createDiv({
+        cls: 'sub-section-header is-toggle',
+        text: `${this.touchesExpanded ? '▾' : '▸'} Substrate activity (${ledger.size()} touches)`,
+      });
+      header.addEventListener('click', () => {
+        this.touchesExpanded = !this.touchesExpanded;
+        render();
+      });
+      if (!this.touchesExpanded) return;
       const rows = ledger.read({ limit: 8 });
-      el.createDiv({ cls: 'goal-touches-header', text: `Substrate activity (${ledger.size()} touches)` });
+      const now = Date.now();
       for (const t of [...rows].reverse()) {
-        const ts = new Date(t.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const ageMs = now - new Date(t.timestamp).getTime();
         const paths = t.paths.length ? ` ${t.paths.join(', ')}` : '';
-        el.createDiv({
-          cls: `goal-touch-row gt-${t.mode}`,
-          text: `${ts} ${t.mode === 'write' ? '✎' : '◉'} ${t.shape.replace('obsidian:', '')}${paths}`,
+        const line = el.createDiv({
+          cls: `sub-feed-line${t.mode === 'write' ? ' sub-t-touch-write' : ''}`,
+        });
+        line.createSpan({ cls: 'sub-feed-ts', text: `${fmtRel(ageMs)}` });
+        line.createSpan({
+          cls: 'sub-feed-msg',
+          text: `${t.mode === 'write' ? '✎' : '◉'} ${t.shape.replace('obsidian:', '')}${paths}`,
+          attr: { title: `${t.shape}${paths}` },
         });
       }
     };
@@ -758,7 +850,7 @@ export class GoalDispatchView extends ItemView {
         this.appendMessage('reached: yes', 'success');
       } else if (reached === false) {
         this.appendMessage('reached: no - ' + (reason ?? 'no reason given'), 'failure');
-        if (this.outputEl) this.outputEl.addClass('mb-hollow');
+        if (this.scrollEl) this.scrollEl.addClass('sub-hollow');
       } else {
         this.appendMessage('reached: unknown (verdict pending)', undefined);
       }
@@ -769,10 +861,8 @@ export class GoalDispatchView extends ItemView {
   }
 
   private clearOutput(): void {
-    if (this.outputEl) {
-      this.outputEl.removeClass('mb-hollow');
-      this.outputEl.empty();
-    }
+    if (this.scrollEl) this.scrollEl.removeClass('sub-hollow');
+    if (this.outputEl) this.outputEl.empty();
   }
 
   private setDispatchBtnState(disabled: boolean): void {
@@ -860,16 +950,19 @@ export class GoalDispatchView extends ItemView {
    */
   private appendAnswerBlock(answer: string, conceptId: string | undefined): void {
     if (!this.outputEl) return;
-    const wrap = this.outputEl.createDiv('goal-dispatch-line gd-answer-block');
-    const ts = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    wrap.createSpan({ cls: 'goal-dispatch-ts', text: ts });
-    const inner = wrap.createDiv({ cls: 'goal-dispatch-msg gd-answer-body' });
-    inner.createDiv({ cls: 'gd-answer-header', text: '◇ Answer' });
-    inner.createDiv({ cls: 'gd-answer-text', text: answer });
+    const wrap = this.outputEl.createDiv('sub-feed-line sub-card sub-card--answer');
+    wrap.createSpan({ cls: 'sub-feed-ts', text: this.feedTs() });
+    const inner = wrap.createDiv({ cls: 'sub-feed-msg sub-answer-body' });
+    inner.createDiv({ cls: 'sub-answer-header', text: '◇ Answer' });
+    inner.createDiv({ cls: 'sub-answer-text', text: answer });
     if (conceptId) {
-      inner.createDiv({ cls: 'gd-answer-attribution', text: `↳ stored as ${shortId(conceptId)}` });
+      inner.createDiv({
+        cls: 'sub-answer-attribution',
+        text: `↳ stored as ${shortId(conceptId)}`,
+        attr: { title: conceptId },
+      });
     }
-    this.outputEl.scrollTop = this.outputEl.scrollHeight;
+    this.scrollToBottom();
   }
 
   /**
@@ -882,16 +975,15 @@ export class GoalDispatchView extends ItemView {
     if (!this.outputEl) return;
     const text = `· ${this.suppressedCount} infrastructure event${this.suppressedCount === 1 ? '' : 's'} suppressed (binding / validators / scope)`;
     if (this.suppressedSummaryLine) {
-      const msgSpan = this.suppressedSummaryLine.querySelector('.goal-dispatch-msg');
+      const msgSpan = this.suppressedSummaryLine.querySelector('.sub-feed-msg');
       if (msgSpan) msgSpan.textContent = text;
       return;
     }
-    const line = this.outputEl.createDiv('goal-dispatch-line gd-suppressed');
-    const ts = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    line.createSpan({ cls: 'goal-dispatch-ts', text: ts });
-    line.createSpan({ cls: 'goal-dispatch-msg', text });
+    const line = this.outputEl.createDiv('sub-feed-line sub-t-suppressed');
+    line.createSpan({ cls: 'sub-feed-ts', text: this.feedTs() });
+    line.createSpan({ cls: 'sub-feed-msg', text });
     this.suppressedSummaryLine = line;
-    this.outputEl.scrollTop = this.outputEl.scrollHeight;
+    this.scrollToBottom();
   }
 
   private handleWSMessage(raw: string): void {

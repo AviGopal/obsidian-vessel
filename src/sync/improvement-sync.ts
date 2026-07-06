@@ -167,9 +167,9 @@ function buildNote(
   const traceCount = traces ? traces.length : 0;
   lines.push('## Data freshness');
   if (traces === null) {
-    lines.push('- (!) Trace store unavailable — all trace-derived numbers below are missing, not zero.');
+    lines.push('> [!warning] Trace store unavailable\n> All trace-derived numbers below are missing, not zero.');
   } else if (traceCount < LOW_TRACE_THRESHOLD) {
-    lines.push(`- (!) Only ${traceCount} trace(s) in the ${WINDOW_HOURS}h window. A known trace-persistence defect can starve the store — treat these numbers as floor estimates (under-reporting), not as low activity.`);
+    lines.push(`> [!warning] Only ${traceCount} trace(s) in the ${WINDOW_HOURS}h window\n> A known trace-persistence defect can starve the store — treat these numbers as floor estimates (under-reporting), not as low activity.`);
   } else {
     lines.push(`- ${traceCount} trace(s) in the ${WINDOW_HOURS}h window${traceCount >= TRACE_FETCH_LIMIT ? ` (capped at fetch limit ${TRACE_FETCH_LIMIT}; actual count may be higher)` : ''}. The store may still under-report while the trace-persistence defect is being fixed.`);
   }
