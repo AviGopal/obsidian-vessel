@@ -6,6 +6,7 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'http';
+import { touchModeForShape, extractTouchPaths, type VaultTouchLedger } from './vault-touch-ledger';
 
 /** Vessel manifest structure (matches vessel.json schema) */
 export interface VesselManifest {
@@ -68,6 +69,8 @@ export interface RouteContext {
   substrateProxy?: (
     pointer: { type: string; [k: string]: unknown }
   ) => Promise<{ success: boolean; content?: unknown; metadata?: unknown; error?: string } | null>;
+  /** Vault-touch ledger: when set, every resolve through this chokepoint records one VaultTouch. */
+  vaultTouches?: VaultTouchLedger;
 }
 
 /**
@@ -227,6 +230,22 @@ export async function handleResolve(
     // Execute resolution
     context.log(`Resolving impulse type: ${body.type}`, 'debug');
     const result = await resolver(body.pointer, body.options);
+
+    // Vault-touch ledger: emit one record per resolve. Never throws into the
+    // resolve path; records go to the in-memory ring buffer only (no vault writes).
+    try {
+      context.vaultTouches?.record({
+        shape: body.type,
+        paths: extractTouchPaths(body.pointer, result),
+        mode: touchModeForShape(body.type),
+        timestamp: new Date().toISOString(),
+        success: result.success,
+        dispatch_id: typeof body.pointer['dispatch_id'] === 'string' ? (body.pointer['dispatch_id'] as string) : undefined,
+        execution_id: typeof body.pointer['execution_id'] === 'string' ? (body.pointer['execution_id'] as string) : undefined,
+      });
+    } catch {
+      /* ledger must never break the resolve path */
+    }
 
     if (result.success) {
       sendJson(res, {
