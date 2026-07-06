@@ -287,6 +287,7 @@ export default class ObsidianVesselPlugin extends Plugin {
     // activities (`group-interaction-episodes`,
     // `probe-obsidian-action-effects`) have data to consume.
     this.initializeObservationLayer();
+    this.startPresenceAdvertiser();
 
     // Phase 8d: Goal verdict watcher — closes the human feedback loop from
     // goal notes into the oracle corpus (goal_verification_labels). When a
@@ -977,6 +978,57 @@ export default class ObsidianVesselPlugin extends Plugin {
     setPresenceRhythmContext(log);
     this.stopObservation = startObserveObsidianEvents();
     console.log('[Obsidian Vessel] Observation layer started (event log cap=10000)');
+  }
+
+  /**
+   * Presence-conditioned human-shape advertisement (WS4). NO static audience
+   * config: when a human is recently active in this vault, re-register with
+   * human_input / human_judgment in the discovery shape list; after a
+   * sustained idle window, withdraw them. Hysteresis: advertise fast
+   * (activity within 2 min), withdraw slow (idle 12 min). The advertised
+   * resolve_timeout_ms follows presence quality: actively interacting → 120s,
+   * present-but-quiet → 600s. The headless in-container instance never
+   * observes human events, so it never advertises human shapes — correct by
+   * construction.
+   */
+  startPresenceAdvertiser(): void {
+    const HUMAN_SHAPES = ['human_input', 'human_judgment'];
+    const ADVERTISE_WITHIN_MS = 2 * 60 * 1000;
+    const WITHDRAW_AFTER_MS = 12 * 60 * 1000;
+    const check = async (): Promise<void> => {
+      const log = this.obsidianEventLog;
+      if (!log || !this.vesselClient || !this.vesselClient.isRegistered()) return;
+      const events = log.read({ limit: 10_000 });
+      let lastTs = 0;
+      for (const e of events) {
+        const t = Date.parse(e.timestamp);
+        if (!isNaN(t) && t > lastTs) lastTs = t;
+      }
+      const idleMs = lastTs > 0 ? Date.now() - lastTs : Number.POSITIVE_INFINITY;
+      const advertised = HUMAN_SHAPES.every((s) => this.settings.shapes.includes(s));
+      const wantAdvertise = advertised ? idleMs < WITHDRAW_AFTER_MS : idleMs < ADVERTISE_WITHIN_MS;
+      const wantTimeout = idleMs < ADVERTISE_WITHIN_MS ? 120_000 : 600_000;
+      let nextShapes: string[] | null = null;
+      if (wantAdvertise && !advertised) {
+        nextShapes = [...this.settings.shapes.filter((s) => !HUMAN_SHAPES.includes(s)), ...HUMAN_SHAPES];
+      } else if (!wantAdvertise && advertised) {
+        nextShapes = this.settings.shapes.filter((s) => !HUMAN_SHAPES.includes(s));
+      }
+      const timeoutChanged = wantAdvertise && this.settings.resolveTimeoutMs !== wantTimeout;
+      if (!nextShapes && !timeoutChanged) return;
+      // Build a FRESH settings object: VesselClient holds a reference to the
+      // current one, so in-place mutation would defeat updateSettings' change
+      // detection and no re-registration would happen.
+      const next = {
+        ...this.settings,
+        shapes: nextShapes ?? [...this.settings.shapes],
+        ...(wantAdvertise ? { resolveTimeoutMs: wantTimeout } : {}),
+      };
+      this.settings = next;
+      console.log(`[Obsidian Vessel] presence advertiser: human shapes ${wantAdvertise ? 'ON' : 'OFF'} (idle ${Math.round(idleMs / 1000)}s, resolve_timeout_ms ${next.resolveTimeoutMs ?? 10000})`);
+      await this.vesselClient.updateSettings(next);
+    };
+    this.registerInterval(window.setInterval(() => { void check(); }, 60_000));
   }
 
   /**
