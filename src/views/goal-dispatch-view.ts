@@ -735,6 +735,14 @@ export class GoalDispatchView extends ItemView {
     for (const shape of pending) {
       chips.createSpan({ cls: 'sub-chip sub-chip--warn', text: `missing: ${shape}`, attr: { title: shape } });
     }
+    const events = (Array.isArray(body.poolEvents) ? body.poolEvents : []) as Array<{ shape: string; source: string; at: number }>;
+    if (events.length > 0) {
+      const timeline = detail.createDiv('sub-fleet-timeline');
+      for (const ev of events.slice(-8)) {
+        const src = ev.source.length > 60 ? ev.source.slice(0, 60) + '…' : ev.source;
+        timeline.createDiv({ cls: 'sub-feed-line', text: `${ev.shape} — ${src}`, attr: { title: ev.source } });
+      }
+    }
     if (step) {
       const stepText = step.replace('[goal-host-vessel] ', '');
       detail.createDiv({ text: stepText, attr: { title: stepText } });
