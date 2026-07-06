@@ -65,6 +65,13 @@ export interface ObsidianVesselSettings {
   /** Registration TTL in seconds (how long the registration is valid) */
   registrationTtl: number;
 
+  /**
+   * Advertised resolver timeout (ms) for the discovery resolve contract.
+   * Presence-conditioned: set dynamically by the presence advertiser
+   * (actively interacting → short; present-but-quiet → long). Undefined ⇒ 10000.
+   */
+  resolveTimeoutMs?: number;
+
   /** Impulse shapes this vessel can resolve */
   shapes: string[];
 
@@ -271,7 +278,7 @@ export const DEFAULT_SETTINGS: ObsidianVesselSettings = {
     'obsidian:dispatch_goal',
     'obsidian:concept_sync',
     'obsidian:concept_rebuild',
-    'obsidian:concept_status', 'obsidian:write_note', 'obsidian:ui_view', 'obsidian:presence_rhythm'],
+    'obsidian:concept_status', 'obsidian:write_note', 'obsidian:ui_view', 'obsidian:presence_rhythm', 'obsidian:vault_touches'],
 
   // Sync preferences
   executionNotesFolder: 'Obsidian/Executions',
