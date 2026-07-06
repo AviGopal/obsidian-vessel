@@ -204,7 +204,7 @@ export class VesselClient {
       resolve_endpoint: '/resolve',
       resolve_request_format: 'pointer',
       auth_scheme: 'ApiKey',
-      resolve_timeout_ms: 10000,
+      resolve_timeout_ms: this.settings.resolveTimeoutMs ?? 10000,
       metadata: { vaultPath, pluginVersion: '0.1.0' },
       ttl: this.settings.registrationTtl,
     };
@@ -394,7 +394,7 @@ export class VesselClient {
         resolve_endpoint: '/resolve',
         resolve_request_format: 'pointer',
         auth_scheme: 'ApiKey',
-        resolve_timeout_ms: 10000,
+        resolve_timeout_ms: this.settings.resolveTimeoutMs ?? 10000,
         metadata: { vaultPath: this.vaultPath, pluginVersion: '0.1.0' },
         ...(sidecarAddrs.length > 0 ? { libp2p_multiaddr: sidecarAddrs } : {}),
         ttl: this.settings.registrationTtl,
@@ -498,7 +498,8 @@ export class VesselClient {
       newSettings.vesselId !== this.settings.vesselId ||
       newSettings.vesselName !== this.settings.vesselName ||
       newSettings.activityApiUrl !== this.settings.activityApiUrl ||
-      JSON.stringify(newSettings.shapes) !== JSON.stringify(this.settings.shapes);
+      JSON.stringify(newSettings.shapes) !== JSON.stringify(this.settings.shapes) ||
+      newSettings.resolveTimeoutMs !== this.settings.resolveTimeoutMs;
 
     this.settings = newSettings;
 
