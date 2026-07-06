@@ -56,7 +56,16 @@ async function resolveUiView(_pointer: ImpulsePointer, app: App): Promise<Resolv
         if (v) effective_tokens[key] = v;
       }
     }
-    goal_dispatch = { open: true, event_lines, verdict_line, hollow, effective_tokens };
+    // Component counts for the legibility audit tick (chips-per-row rule).
+    const chip_rows = Array.from(container.querySelectorAll('.sub-fleet-chips'))
+      .map((row) => row.querySelectorAll('.sub-chip').length);
+    const component_counts = {
+      cards: container.querySelectorAll('.sub-card').length,
+      chips: container.querySelectorAll('.sub-chip').length,
+      feed_lines: container.querySelectorAll('.sub-feed-line').length,
+      max_chips_per_row: chip_rows.length ? Math.max(...chip_rows) : 0,
+    };
+    goal_dispatch = { open: true, event_lines, verdict_line, hollow, effective_tokens, component_counts };
   }
 
   const report = { activeFile, layout, goal_dispatch };
