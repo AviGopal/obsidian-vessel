@@ -3,6 +3,7 @@ import type { CachedMetadata } from 'obsidian';
 import { GoalDispatchView, VIEW_TYPE_GOAL_DISPATCH } from './views/goal-dispatch-view';
 import { GoalInputModal } from './views/goal-input-modal';
 import { THEME_TOKENS_NOTE_PATH, parseThemeTokens, applyThemeTokens } from './views/theme-token-override';
+import { UiFeedbackStore, forwardUiFeedbackToGapStore, UI_FEEDBACK_KINDS, type UiFeedback, type UiFeedbackKind, type UiFeedbackSurface } from './feedback/ui-feedback-store';
 import { ObsidianVesselSettings, DEFAULT_SETTINGS } from './settings';
 import { ObsidianVesselSettingTab } from './settings-tab';
 import { HTTPServer } from './server/index';
@@ -147,6 +148,11 @@ export default class ObsidianVesselPlugin extends Plugin {
   // Human-as-resolver (WS5): pending solicitations awaiting the human's answer,
   // rendered as cards in the goal-dispatch panel.
   solicitationManager: SolicitationManager | null = null;
+
+  // uiFeedback (Phase 2): captured legibility complaints about substrate UI
+  // surfaces, served as obsidian:ui_feedback and forwarded to the dev-vessel
+  // gap store so they enter the gap → scenario → drafter funnel.
+  uiFeedbackStore: UiFeedbackStore = new UiFeedbackStore(200);
 
   // Formatters
   executionFormatter: ExecutionFormatter | null = null;
@@ -302,6 +308,7 @@ export default class ObsidianVesselPlugin extends Plugin {
     this.registerEvent(
       this.app.metadataCache.on('changed', (file, _data, cache) => {
         void this.handleGoalVerdictChange(file, cache);
+        void this.handleUiFeedbackFrontmatter(file, cache);
       }),
     );
 
@@ -585,6 +592,44 @@ export default class ObsidianVesselPlugin extends Plugin {
       });
       ledger.subscribe((touch) => {
         this.statusBarManager?.showMessage(`⇅ substrate ${touch.mode}: ${touch.shape.replace('obsidian:', '')}`, 1500);
+      });
+
+      // uiFeedback read shape: captured complaints, filterable by surface/kind.
+      const fbStore = this.uiFeedbackStore;
+      resolvers.set('obsidian:ui_feedback', async (pointer) => {
+        const rows = fbStore.list({
+          limit: typeof pointer?.limit === 'number' ? pointer.limit : 100,
+          surface: typeof pointer?.surface === 'string' ? pointer.surface : undefined,
+          kind: typeof pointer?.kind === 'string' ? pointer.kind : undefined,
+        });
+        return {
+          success: true,
+          content: JSON.stringify(rows),
+          metadata: { shape: 'obsidian:ui_feedback', rowCount: rows.length, summary: `${rows.length} ui feedback item(s) (of ${fbStore.size()} captured)` },
+        };
+      });
+
+      // uiFeedback write shape: capture a complaint programmatically (also the
+      // path exercised by headless verification). Body: { region, kind,
+      // surface?, prose? }.
+      resolvers.set('obsidian:ui_feedback_write', async (pointer) => {
+        const region = typeof pointer?.region === 'string' ? pointer.region : '';
+        const kind = typeof pointer?.kind === 'string' ? pointer.kind : '';
+        if (!region || !UI_FEEDBACK_KINDS.has(kind)) {
+          return { success: false, error: 'ui_feedback_write requires region and kind ∈ {hard_to_see, hard_to_understand, cramped, wasted_space}' };
+        }
+        const surface = pointer?.surface === 'goal-note' || pointer?.surface === 'improvement-note' ? pointer.surface : 'panel';
+        const fb = await this.captureUiFeedback({
+          surface,
+          region,
+          kind: kind as UiFeedbackKind,
+          prose: typeof pointer?.prose === 'string' ? pointer.prose : undefined,
+        });
+        return {
+          success: true,
+          content: JSON.stringify(fb),
+          metadata: { shape: 'obsidian:ui_feedback_write', summary: `captured ${kind} on ${region}` },
+        };
       });
 
       // Human-as-resolver (WS5): accept human_input solicitations and hold them
@@ -1081,6 +1126,45 @@ export default class ObsidianVesselPlugin extends Plugin {
   }
 
   /**
+   * Development-vessel endpoint for gap-store forwarding. No dedicated
+   * setting: derived from the goal-host endpoint so the same build works
+   * in-container (:8210 → :8090) and on the host (:18210 → :18090).
+   */
+  private devVesselEndpoint(): string {
+    return this.settings.goalHostEndpoint.includes(':8210')
+      ? 'http://127.0.0.1:8090'
+      : 'http://127.0.0.1:18090';
+  }
+
+  /**
+   * Capture a uiFeedback complaint: store it (obsidian:ui_feedback read
+   * shape) and forward it to the dev-vessel gap store keyed
+   * ui-feedback-<region>-<kind> so it enters the drafter funnel.
+   */
+  async captureUiFeedback(input: {
+    surface: UiFeedbackSurface;
+    region: string;
+    kind: UiFeedbackKind;
+    prose?: string;
+  }): Promise<UiFeedback> {
+    const fb: UiFeedback = {
+      surface: input.surface,
+      region: input.region,
+      kind: input.kind,
+      prose: input.prose,
+      vessel_id: this.settings.vesselId || 'obsidian-vessel',
+      created_at: new Date().toISOString(),
+    };
+    this.uiFeedbackStore.add(fb);
+    void forwardUiFeedbackToGapStore(fb, this.devVesselEndpoint(), this.settings.apiKey)
+      .then((r) => {
+        if (!r.forwarded) console.warn('[Obsidian Vessel] uiFeedback gap forward failed:', r.status);
+      })
+      .catch((e) => console.warn('[Obsidian Vessel] uiFeedback gap forward error:', e));
+    return fb;
+  }
+
+  /**
    * Read Substrate/theme-tokens.md and apply whitelisted --sub-* overrides to
    * every open goal-dispatch panel root. Missing note → clears overrides back
    * to the styles.css defaults. Invalid/unknown keys are ignored and logged.
@@ -1422,6 +1506,47 @@ export default class ObsidianVesselPlugin extends Plugin {
       }
     } catch (error) {
       console.error('[Obsidian Vessel] Goal verdict handling failed:', error);
+    }
+  }
+
+  // uiFeedback frontmatter capture (same pattern as human_verdict): a
+  // `ui_feedback: <kind>[ - prose]` key on a substrate-written note maps to
+  // the uiFeedback shape with surface = the note type. Submits exactly once
+  // via ui_feedback_submitted.
+  private uiFeedbackInFlight = new Set<string>();
+
+  async handleUiFeedbackFrontmatter(file: TFile, cache: CachedMetadata | null): Promise<void> {
+    try {
+      if (!file.path.endsWith('.md')) return;
+      const fm = cache?.frontmatter as Record<string, unknown> | undefined;
+      if (!fm) return;
+      const raw = typeof fm.ui_feedback === 'string' ? fm.ui_feedback.trim() : '';
+      if (!raw || fm.ui_feedback_submitted === true || this.uiFeedbackInFlight.has(file.path)) return;
+      const m = raw.match(/^(hard_to_see|hard_to_understand|cramped|wasted_space)\s*(?:[-—:]\s*(.*))?$/);
+      if (!m) return;
+      this.uiFeedbackInFlight.add(file.path);
+      try {
+        const surface: UiFeedbackSurface = file.path.startsWith('Goals/')
+          ? 'goal-note'
+          : 'improvement-note';
+        const region = typeof fm.render_variant_id === 'string' && fm.render_variant_id
+          ? fm.render_variant_id
+          : file.path;
+        await this.captureUiFeedback({
+          surface,
+          region,
+          kind: m[1] as UiFeedbackKind,
+          prose: m[2] || undefined,
+        });
+        await this.app.fileManager.processFrontMatter(file, (f) => {
+          f.ui_feedback_submitted = true;
+        });
+        new Notice(`UI feedback recorded: ${m[1]} on ${region}`);
+      } finally {
+        this.uiFeedbackInFlight.delete(file.path);
+      }
+    } catch (error) {
+      console.error('[Obsidian Vessel] ui_feedback frontmatter handling failed:', error);
     }
   }
 

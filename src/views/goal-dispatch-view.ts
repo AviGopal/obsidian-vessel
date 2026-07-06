@@ -23,11 +23,12 @@
  * - Component grammar: sub-card / sub-chip / sub-feed-line (see styles.css)
  */
 
-import { ItemView, WorkspaceLeaf, TFile, Notice, MarkdownView, MarkdownRenderer } from 'obsidian';
+import { ItemView, WorkspaceLeaf, TFile, Notice, Menu, MarkdownView, MarkdownRenderer } from 'obsidian';
 import type ObsidianVesselPlugin from '../main';
 import { GoalHostClient, type VaultContext } from '../goals/goal-host-client';
 import { GoalNoteManager } from '../goals/goal-note-manager';
 import type { PendingSolicitation } from '../solicitations/solicitation-manager';
+import type { UiFeedbackKind } from '../feedback/ui-feedback-store';
 
 export const VIEW_TYPE_GOAL_DISPATCH = 'obsidian-goal-dispatch';
 
@@ -265,6 +266,43 @@ export class GoalDispatchView extends ItemView {
     this.outputEl = this.scrollEl.createDiv('sub-feed');
     // 4. Vault-touch feed (WS3) — last, collapsed by default.
     this.touchesEl = this.scrollEl.createDiv('sub-touches');
+
+    // uiFeedback capture affordance: right-click any sub-card / sub-chip /
+    // sub-feed-line → complaint menu. The component's class list gives the
+    // region automatically — the human never types a class name.
+    contentEl.addEventListener('contextmenu', (ev: MouseEvent) => {
+      const target = (ev.target as HTMLElement | null)?.closest?.(
+        '.sub-card, .sub-chip, .sub-feed-line',
+      ) as HTMLElement | null;
+      if (!target) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      const region = Array.from(target.classList)
+        .filter((c) => c.startsWith('sub-'))
+        .join(' ') || 'sub-unknown';
+      const menu = new Menu();
+      const kinds: Array<[UiFeedbackKind, string]> = [
+        ['hard_to_see', 'Hard to see'],
+        ['hard_to_understand', 'Hard to understand'],
+        ['cramped', 'Cramped'],
+        ['wasted_space', 'Wasted space'],
+      ];
+      for (const [kind, label] of kinds) {
+        menu.addItem((item) =>
+          item.setTitle(`UI feedback: ${label}`).setIcon('frown').onClick(async () => {
+            const prose = window.prompt(`${label} — optional detail (Cancel = none):`) ?? undefined;
+            await this.plugin.captureUiFeedback({
+              surface: 'panel',
+              region,
+              kind,
+              prose: prose?.trim() || undefined,
+            });
+            new Notice(`UI feedback recorded: ${kind} on ${region}`);
+          }),
+        );
+      }
+      menu.showAtMouseEvent(ev);
+    });
 
     this.appendMessage('Ready. Type a goal above (⌘↵ dispatches).', 'ready');
   }
