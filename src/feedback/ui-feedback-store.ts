@@ -8,6 +8,7 @@
  * (`substrateGap_write`) so it enters the gap → scenario → drafter funnel.
  */
 
+import { requestUrl } from 'obsidian';
 export type UiFeedbackSurface = 'panel' | 'goal-note' | 'improvement-note';
 
 export type UiFeedbackKind =
@@ -117,13 +118,14 @@ export async function forwardUiFeedbackToGapStore(
     },
   });
   try {
-    const resp = await fetch(url, {
+    const resp = await requestUrl({
+      url,
       method: 'POST',
       headers,
       body,
-      signal: AbortSignal.timeout(10000),
+      throw: false,
     });
-    return { forwarded: resp.ok, status: resp.status, gapId };
+    return { forwarded: resp.status < 300, status: resp.status, gapId };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     return { forwarded: false, status: message, gapId };
