@@ -18,10 +18,11 @@
  * - Reconnects WS on 3s backoff
  */
 
-import { ItemView, WorkspaceLeaf, TFile, Notice, MarkdownView } from 'obsidian';
+import { ItemView, WorkspaceLeaf, TFile, Notice, MarkdownView, MarkdownRenderer } from 'obsidian';
 import type ObsidianVesselPlugin from '../main';
 import { GoalHostClient, type VaultContext } from '../goals/goal-host-client';
 import { GoalNoteManager } from '../goals/goal-note-manager';
+import type { PendingSolicitation } from '../solicitations/solicitation-manager';
 
 export const VIEW_TYPE_GOAL_DISPATCH = 'obsidian-goal-dispatch';
 
@@ -130,6 +131,15 @@ export class GoalDispatchView extends ItemView {
   private suppressedCount = 0;
   private suppressedSummaryLine: HTMLElement | null = null;
 
+  // Fleet board (WS6): all in-flight dispatches from goal-host's activeDispatches shape.
+  private fleetEl: HTMLElement | null = null;
+  private fleetTimer: number | null = null;
+  // Solicitation cards (WS5) + substrate-activity feed (WS3).
+  private solicitationsEl: HTMLElement | null = null;
+  private unsubscribeSolicitations: (() => void) | null = null;
+  private touchesEl: HTMLElement | null = null;
+  private unsubscribeTouches: (() => void) | null = null;
+
   constructor(leaf: WorkspaceLeaf, plugin: ObsidianVesselPlugin) {
     super(leaf);
     this.plugin = plugin;
@@ -153,10 +163,18 @@ export class GoalDispatchView extends ItemView {
     if (this.plugin.settings.enableGoalDispatch) {
       this.connectWS();
     }
+    this.startFleetBoard();
+    this.startSolicitationCards();
+    this.startTouchFeed();
   }
 
   async onClose(): Promise<void> {
     this.disconnectWS();
+    this.stopFleetBoard();
+    this.unsubscribeSolicitations?.();
+    this.unsubscribeSolicitations = null;
+    this.unsubscribeTouches?.();
+    this.unsubscribeTouches = null;
   }
 
   // ---------------------------------------------------------------------------
@@ -201,12 +219,21 @@ export class GoalDispatchView extends ItemView {
     });
     clearBtn.addEventListener('click', () => this.clearOutput());
 
+    // Solicitation cards (WS5) — rendered when the substrate asks for input.
+    this.solicitationsEl = contentEl.createDiv('goal-solicitations-section');
+
+    // Fleet board (WS6) — every in-flight dispatch on this goal-host.
+    this.fleetEl = contentEl.createDiv('goal-fleet-section');
+
     // Divider
     contentEl.createEl('hr', { cls: 'goal-dispatch-divider' });
 
     // Output section
     const outputSection = contentEl.createDiv('goal-dispatch-output-section');
     this.outputEl = outputSection.createDiv('goal-dispatch-output');
+
+    // Substrate activity (WS3) — live vault-touch feed from the ledger.
+    this.touchesEl = outputSection.createDiv('goal-touches-section');
 
     this.appendMessage('Ready. Enter a goal and press Dispatch (or Ctrl+Enter).', 'ready');
   }
@@ -503,6 +530,204 @@ export class GoalDispatchView extends ItemView {
       line.createSpan({ cls: 'goal-dispatch-msg', text });
     }
     this.outputEl.scrollTop = this.outputEl.scrollHeight;
+  }
+
+
+  // ---------------------------------------------------------------------------
+  // Fleet board (WS6) + solicitation cards (WS5) + substrate activity (WS3)
+  // ---------------------------------------------------------------------------
+
+  private async goalHostResolve(body: Record<string, unknown>): Promise<Record<string, unknown> | null> {
+    try {
+      const base = this.plugin.settings.goalHostEndpoint.replace(/\/+$/, '');
+      const resp = await fetch(`${base}/resolve`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(this.plugin.settings.apiKey ? { Authorization: `ApiKey ${this.plugin.settings.apiKey}` } : {}),
+        },
+        body: JSON.stringify(body),
+      });
+      if (!resp.ok) return null;
+      return (await resp.json()) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  }
+
+  private startFleetBoard(): void {
+    const tick = async (): Promise<void> => {
+      if (!this.fleetEl) return;
+      const j = await this.goalHostResolve({ type: 'activeDispatches' });
+      if (!j) return;
+      const dispatches = ((j.body as Record<string, unknown> | undefined)?.dispatches ?? []) as Array<Record<string, unknown>>;
+      this.renderFleet(dispatches);
+    };
+    void tick();
+    this.fleetTimer = window.setInterval(() => void tick(), 7000);
+  }
+
+  private stopFleetBoard(): void {
+    if (this.fleetTimer !== null) {
+      window.clearInterval(this.fleetTimer);
+      this.fleetTimer = null;
+    }
+  }
+
+  private renderFleet(dispatches: Array<Record<string, unknown>>): void {
+    const el = this.fleetEl;
+    if (!el) return;
+    el.empty();
+    const running = dispatches.filter((d) => d.status === 'running');
+    const recent = dispatches.filter((d) => d.status !== 'running').slice(0, 5);
+    el.createDiv({ cls: 'goal-fleet-header', text: `Fleet — ${running.length} in flight` });
+    if (running.length === 0 && recent.length === 0) {
+      el.createDiv({ cls: 'goal-fleet-empty', text: 'No dispatches.' });
+      return;
+    }
+    for (const d of [...running, ...recent]) {
+      const row = el.createDiv('goal-fleet-row');
+      const isRunning = d.status === 'running';
+      const dot = isRunning ? '●' : d.reached === true ? '✓' : d.reached === false ? '✗' : '○';
+      const started = typeof d.startedAt === 'number' ? d.startedAt : 0;
+      const elapsed = started ? fmtDuration(Date.now() - started) : '';
+      const goalSnippet = typeof d.goal === 'string' ? (d.goal.length > 60 ? d.goal.slice(0, 60) + '…' : d.goal) : '(no goal)';
+      row.createSpan({
+        cls: `goal-fleet-status ${isRunning ? 'gf-running' : d.reached === true ? 'gf-reached' : 'gf-not-reached'}`,
+        text: `${dot} `,
+      });
+      row.createSpan({ cls: 'goal-fleet-goal', text: goalSnippet });
+      row.createSpan({ cls: 'goal-fleet-elapsed', text: ` ${elapsed}` });
+      row.addEventListener('click', () => void this.expandFleetRow(row, d));
+      if (isRunning) {
+        const ctxBtn = row.createEl('button', { cls: 'goal-fleet-ctx-btn', text: '+ctx' });
+        ctxBtn.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          void this.injectContext(String(d.dispatchId ?? ''));
+        });
+      }
+    }
+  }
+
+  private async expandFleetRow(row: HTMLElement, d: Record<string, unknown>): Promise<void> {
+    const existing = row.querySelector('.goal-fleet-detail');
+    if (existing) {
+      existing.remove();
+      return;
+    }
+    const detail = row.createDiv('goal-fleet-detail');
+    const j = await this.goalHostResolve({ type: 'goalWalkState', dispatchId: String(d.dispatchId ?? '') });
+    const body = ((j?.body ?? {}) as Record<string, unknown>);
+    const pool = (Array.isArray(body.poolShapes) ? body.poolShapes : []) as string[];
+    const pending = (Array.isArray(body.pendingTargets) ? body.pendingTargets : []) as string[];
+    const step = typeof body.currentStep === 'string' ? body.currentStep : null;
+    detail.createDiv({ cls: 'goal-fleet-pool', text: pool.length ? `pool: ${pool.join(', ')}` : 'pool: (empty)' });
+    if (pending.length) detail.createDiv({ cls: 'goal-fleet-missing', text: `missing: ${pending.join(', ')}` });
+    if (step) detail.createDiv({ cls: 'goal-fleet-step', text: step.replace('[goal-host-vessel] ', '') });
+    const execId = typeof d.executionId === 'string' && !d.executionId.startsWith('interrupted:') ? d.executionId : null;
+    if (execId) {
+      const attachBtn = detail.createEl('button', { cls: 'goal-fleet-attach-btn', text: 'attach' });
+      attachBtn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        this.activeDispatchId = String(d.dispatchId ?? '');
+        this.activeExecutionId = execId;
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) this.connectWS();
+        this.appendMessage(`⇢ attached to dispatch ${String(d.dispatchId ?? '').slice(0, 8)} (execution ${execId.slice(0, 12)}…)`);
+      });
+    }
+  }
+
+  /** "Add context" affordance: active note / selection / freeform → WS2 poolImpulse_write. */
+  private async injectContext(dispatchId: string): Promise<void> {
+    if (!dispatchId) return;
+    const app = this.plugin.app;
+    const activeFile = app.workspace.getActiveFile();
+    const view = app.workspace.getActiveViewOfType(MarkdownView);
+    const selection = view?.editor?.getSelection() ?? '';
+    let shape = 'human_note';
+    let content: string | null = null;
+    let summary = 'human-contributed context';
+    if (selection) {
+      shape = 'selection';
+      content = selection;
+      summary = `selection from ${activeFile?.path ?? 'editor'}`;
+    } else if (activeFile) {
+      shape = 'note';
+      content = await app.vault.cachedRead(activeFile);
+      summary = `active note ${activeFile.path}`;
+    } else {
+      content = window.prompt('Context to inject into this dispatch:') ?? null;
+      if (!content) return;
+    }
+    const j = await this.goalHostResolve({ type: 'poolImpulse_write', dispatchId, shape, content, summary });
+    if (j && j.resolved === true) {
+      new Notice(`Injected ${shape} into dispatch ${dispatchId.slice(0, 8)}`);
+      this.appendMessage(`⇡ injected ${shape} (${summary}) into ${dispatchId.slice(0, 8)}`, 'impulse');
+    } else {
+      new Notice('Injection failed (dispatch may have finished).');
+    }
+  }
+
+  private startSolicitationCards(): void {
+    const mgr = this.plugin.solicitationManager;
+    if (!mgr || !this.solicitationsEl) return;
+    this.renderSolicitations(mgr.list());
+    this.unsubscribeSolicitations = mgr.subscribe((list) => this.renderSolicitations(list));
+  }
+
+  private renderSolicitations(list: PendingSolicitation[]): void {
+    const el = this.solicitationsEl;
+    if (!el) return;
+    el.empty();
+    if (list.length === 0) return;
+    for (const sol of list) {
+      const card = el.createDiv('goal-solicitation-card');
+      card.createDiv({ cls: 'goal-solicitation-title', text: '⚑ The substrate needs your input' });
+      const bodyEl = card.createDiv('goal-solicitation-body');
+      void MarkdownRenderer.render(this.plugin.app, sol.questionMarkdown, bodyEl, '/', this);
+      const answerEl = card.createEl('textarea', {
+        cls: 'goal-solicitation-answer',
+        attr: { placeholder: 'Your answer… (typing keeps the door open)', rows: '3' },
+      });
+      answerEl.addEventListener('input', () => this.plugin.solicitationManager?.heartbeat(sol.solicitationId));
+      const btnRow = card.createDiv('goal-solicitation-btns');
+      const answerBtn = btnRow.createEl('button', { cls: 'mod-cta', text: 'Answer' });
+      answerBtn.addEventListener('click', () => {
+        const answer = answerEl.value.trim();
+        if (!answer) {
+          new Notice('Write an answer first (or use Not now).');
+          return;
+        }
+        void this.plugin.solicitationManager?.respond(sol.solicitationId, 'answered', answer);
+      });
+      const declineBtn = btnRow.createEl('button', { text: 'Not now' });
+      declineBtn.addEventListener('click', () => void this.plugin.solicitationManager?.respond(sol.solicitationId, 'declined'));
+      const insufficientBtn = btnRow.createEl('button', { text: 'Not enough context' });
+      insufficientBtn.addEventListener('click', () =>
+        void this.plugin.solicitationManager?.respond(sol.solicitationId, 'insufficient_context'));
+    }
+  }
+
+  private startTouchFeed(): void {
+    const ledger = this.plugin.vaultTouchLedger;
+    if (!ledger || !this.touchesEl) return;
+    const render = (): void => {
+      const el = this.touchesEl;
+      if (!el) return;
+      el.empty();
+      const rows = ledger.read({ limit: 8 });
+      el.createDiv({ cls: 'goal-touches-header', text: `Substrate activity (${ledger.size()} touches)` });
+      for (const t of [...rows].reverse()) {
+        const ts = new Date(t.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const paths = t.paths.length ? ` ${t.paths.join(', ')}` : '';
+        el.createDiv({
+          cls: `goal-touch-row gt-${t.mode}`,
+          text: `${ts} ${t.mode === 'write' ? '✎' : '◉'} ${t.shape.replace('obsidian:', '')}${paths}`,
+        });
+      }
+    };
+    render();
+    this.unsubscribeTouches = ledger.subscribe(() => render());
   }
 
   private async renderReachVerdict(): Promise<void> {

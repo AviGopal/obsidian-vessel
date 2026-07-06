@@ -850,5 +850,26 @@
     border-left: 3px solid rgb(80, 160, 220);
     background-color: rgba(80, 160, 220, 0.05);
 }
+
+/* ── WS3/WS5/WS6: fleet board, solicitation cards, substrate activity ── */
+.goal-fleet-section { margin: 6px 0; padding: 4px 6px; border: 1px solid var(--background-modifier-border); border-radius: 6px; font-size: 12px; }
+.goal-fleet-header { font-weight: 600; margin-bottom: 2px; }
+.goal-fleet-row { padding: 2px 4px; border-radius: 4px; cursor: pointer; display: flex; align-items: baseline; gap: 4px; flex-wrap: wrap; }
+.goal-fleet-row:hover { background: var(--background-modifier-hover); }
+.goal-fleet-status.gf-running { color: var(--color-yellow); }
+.goal-fleet-status.gf-reached { color: var(--color-green); }
+.goal-fleet-status.gf-not-reached { color: var(--color-red); }
+.goal-fleet-goal { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.goal-fleet-elapsed { color: var(--text-muted); }
+.goal-fleet-ctx-btn, .goal-fleet-attach-btn { font-size: 10px; padding: 0 6px; }
+.goal-fleet-detail { flex-basis: 100%; color: var(--text-muted); font-size: 11px; padding-left: 14px; }
+.goal-fleet-missing { color: var(--color-orange); }
+.goal-solicitation-card { margin: 6px 0; padding: 8px; border: 1px solid var(--color-orange); border-radius: 6px; background: rgba(255, 160, 60, 0.06); }
+.goal-solicitation-title { font-weight: 700; margin-bottom: 4px; }
+.goal-solicitation-answer { width: 100%; margin-top: 6px; }
+.goal-solicitation-btns { display: flex; gap: 6px; margin-top: 6px; }
+.goal-touches-section { margin-top: 6px; padding: 4px 6px; border-top: 1px dashed var(--background-modifier-border); font-size: 11px; color: var(--text-muted); }
+.goal-touches-header { font-weight: 600; }
+.goal-touch-row.gt-write { color: var(--color-orange); }
 /* end of styles */
 
