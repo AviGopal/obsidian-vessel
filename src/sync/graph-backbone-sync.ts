@@ -50,10 +50,12 @@ export class GraphBackboneSyncService {
     if (this.timer !== null) { window.clearInterval(this.timer); this.timer = null; }
   }
 
-  async syncAll(): Promise<{ vessels: number; shapes: number; activities: number }> {
+  async syncAll(): Promise<{ vessels: number; shapes: number; activities: number; dispatches: number }> {
     const vs = await this.syncVesselShapes();
     const acts = await this.syncComposition();
-    return { ...vs, activities: acts };
+    let dispatches = 0;
+    try { dispatches = await this.syncDispatches(); } catch { /* non-fatal */ }
+    return { ...vs, activities: acts, dispatches };
   }
 
   // ── discovery-routed network (requestUrl, never fetch) ────────────────────
@@ -154,6 +156,84 @@ export class GraphBackboneSyncService {
       await this.upsert(`${ROOT}/Activities/${slug(cleanId(id))}.md`, body);
     }
     return nodes.size;
+  }
+
+  // ── dispatch pool + provenance-by-relevancy (goal-host walk state) ────────
+  //
+  // Per dispatch: a #sub/dispatch note that links into the backbone —
+  //   Pool: every shape in the final pool, RANKED by relevancy = how many
+  //         walk decisions consumed it as context (poolBefore membership).
+  //         impulseRelevance resolves empty, so this per-dispatch consumption
+  //         count is the honest relevance signal (w:N + bar, like concepts).
+  //   Decisions: each step's selected activity → the shape(s) it produced
+  //         (satisfier steps show the resolved shape; real templates link the
+  //         backbone Activities/ note). Opening the dispatch note → local graph
+  //         = its compositional context (pool ↔ activities ↔ produced shapes).
+  private async syncDispatches(): Promise<number> {
+    const base = await this.resolveVesselBase('goal_execution'); // goal-host
+    if (!base) return 0;
+    const listJson = await this.postJson(`${base}/resolve`, { type: 'activeDispatches' });
+    const dispatches = ((listJson?.body as Record<string, unknown> | undefined)?.dispatches ?? []) as Array<Record<string, unknown>>;
+    if (dispatches.length === 0) return 0;
+    const recent = [...dispatches]
+      .sort((a, b) => Number(b.startedAt ?? 0) - Number(a.startedAt ?? 0))
+      .slice(0, 15);
+    let n = 0;
+    for (const d of recent) {
+      const did = String(d.dispatchId ?? '');
+      if (!did) continue;
+      const wsJson = await this.postJson(`${base}/resolve`, { type: 'goalWalkState', dispatchId: did });
+      const ws = (wsJson?.body ?? {}) as Record<string, unknown>;
+      const steps = (Array.isArray(ws.steps) ? ws.steps : []) as Array<Record<string, unknown>>;
+      const pool = (Array.isArray(ws.poolShapes) ? ws.poolShapes : []) as string[];
+      if (pool.length === 0 && steps.length === 0) continue;
+
+      // relevancy = # decisions that had the shape available as context
+      const useCount = new Map<string, number>();
+      for (const st of steps) {
+        for (const sh of (Array.isArray(st.poolBefore) ? st.poolBefore : []) as string[]) {
+          useCount.set(sh, (useCount.get(sh) ?? 0) + 1);
+        }
+      }
+      const maxUse = Math.max(1, ...[...useCount.values(), 1]);
+      const poolRanked = [...pool].sort((a, b) => (useCount.get(b) ?? 0) - (useCount.get(a) ?? 0));
+      const poolLinks = poolRanked.map((sh) => {
+        const c = useCount.get(sh) ?? 0;
+        const bar = '█'.repeat(Math.round((7 * c) / maxUse));
+        return `- [[${ROOT}/Shapes/${slug(sh)}|${sh}]] \`w:${c}\` ${bar}`;
+      });
+
+      const decisions = steps.map((st, i) => {
+        const sel = (st.selected ?? {}) as Record<string, unknown>;
+        const source = String(sel.source ?? '');
+        const tid = String(sel.templateId ?? '');
+        const produced = (Array.isArray(st.newShapes) ? st.newShapes : []) as string[];
+        const plinks = produced.map((p) => `[[${ROOT}/Shapes/${slug(p)}|${p}]]`).join(', ');
+        // satisfier steps have no real activity — show the resolved shape instead
+        const head = source === 'satisfier' || !tid || tid.startsWith('satisfier:')
+          ? `satisfier`
+          : `[[${ROOT}/Activities/${slug(cleanId(tid))}|${cleanId(tid)}]]`;
+        return `${i + 1}. ${head} \`${source || 'step'}\`${plinks ? ` → ${plinks}` : ''}`;
+      });
+
+      const goal = String(d.goal ?? '');
+      const reached = ws.reached === true ? 'yes' : ws.reached === false ? 'no' : 'pending';
+      const status = String(ws.status ?? d.status ?? 'unknown');
+      const body = [
+        '---', 'tags:', '  - sub/dispatch', 'cssclasses:', '  - substrate-authored',
+        `dispatch: ${did}`, `reached: ${reached}`, `status: ${status}`, '---',
+        `# ${did.slice(0, 8)} · ${status}${ws.reached === true ? ' · reached' : ''}`, '',
+        goal ? `> ${goal}` : '_(no goal text)_', '',
+        `## Pool — ${pool.length} shapes (ranked by relevancy)`, '',
+        ...(poolLinks.length ? poolLinks : ['_(empty pool)_']), '',
+        `## Decisions — ${steps.length}`, '',
+        ...(decisions.length ? decisions : ['_(no decisions recorded)_']), '',
+        '---', '*substrate graph · dispatch pool + provenance (walk state). Relevancy = decision-consumption count.*', '',
+      ].join('\n');
+      await this.upsert(`${ROOT}/Dispatches/${slug(did)}.md`, body);
+      n++;
+    }
+    return n;
   }
 
   // ── vault write helpers ───────────────────────────────────────────────────

@@ -505,7 +505,8 @@ export default class ObsidianVesselPlugin extends Plugin {
       { query: 'tag:#sub/vessel', color: { a: 1, rgb: 0x4c78e8 } },
       { query: 'tag:#sub/shape', color: { a: 1, rgb: 0xe8993a } },
       { query: 'tag:#sub/activity', color: { a: 1, rgb: 0x4caf50 } },
-      { query: 'tag:#sub/concept', color: { a: 1, rgb: 0x9c6ade } },
+      // concepts: match by path so existing (pre-tag) concept notes color too
+      { query: 'path:"Substrate/Concepts"', color: { a: 1, rgb: 0x9c6ade } },
       { query: 'tag:#sub/dispatch', color: { a: 1, rgb: 0x22b8cf } },
       { query: 'tag:#sub/gap', color: { a: 1, rgb: 0xe5484d } },
     ];

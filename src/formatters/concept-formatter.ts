@@ -582,7 +582,8 @@ export function renderConceptNote(
   // Tags for Obsidian's tag pane. Nested form `concept/<source>` and
   // `shape/<slug>` lets the operator filter the whole vault by category
   // with a single click.
-  const tags: string[] = [];
+  // sub/concept joins the substrate graph color-groups (native graph legibility).
+  const tags: string[] = ['sub/concept'];
   if (concept.source_type) tags.push(`concept/${slugifyShape(concept.source_type)}`);
   if (concept.shape) tags.push(`shape/${slugifyShape(concept.shape)}`);
   if (tags.length) {
