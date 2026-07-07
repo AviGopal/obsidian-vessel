@@ -24,36 +24,49 @@ import { resolveCapabilityCatalog } from './capability-catalog';
 // =============================================================================
 
 /**
- * Registry mapping pointer types to resolver functions
+ * Registry mapping pointer types to resolver functions.
+ *
+ * Lazily initialized inside registry() rather than a top-level
+ * `const resolvers = new Map()`: resolver modules sometimes self-register at
+ * module top level, and if such a module ends up in an import cycle with this
+ * one, the hoisted registerResolver() runs BEFORE this module's initializers —
+ * a top-level Map would still be undefined and `.set` would crash plugin load
+ * (exactly the 0.5.0 host-vault failure). The lazy guard makes registration
+ * safe regardless of module-evaluation order.
  */
-const resolvers = new Map<string, ResolverFunction>();
+let resolvers: Map<string, ResolverFunction> | undefined;
+
+function registry(): Map<string, ResolverFunction> {
+  if (!resolvers) resolvers = new Map<string, ResolverFunction>();
+  return resolvers;
+}
 
 /**
  * Register a resolver for an impulse pointer type
  */
 export function registerResolver(type: string, resolver: ResolverFunction): void {
-  resolvers.set(type, resolver);
+  registry().set(type, resolver);
 }
 
 /**
  * Get a resolver for a pointer type
  */
 export function getResolver(type: string): ResolverFunction | undefined {
-  return resolvers.get(type);
+  return registry().get(type);
 }
 
 /**
  * Check if a resolver exists for a type
  */
 export function hasResolver(type: string): boolean {
-  return resolvers.has(type);
+  return registry().has(type);
 }
 
 /**
  * List all registered resolver types
  */
 export function listResolverTypes(): string[] {
-  return Array.from(resolvers.keys());
+  return Array.from(registry().keys());
 }
 
 /**
@@ -77,7 +90,7 @@ export function setSubstrateProxy(fn: SubstrateProxy | null): void {
  * @throws Error if no resolver is registered AND no substrate proxy resolves it
  */
 export async function resolve(pointer: ImpulsePointer, app: App): Promise<ResolverResult> {
-  const resolver = resolvers.get(pointer.type);
+  const resolver = registry().get(pointer.type);
 
   if (!resolver) {
     // System-managed fallback: let the substrate resolve shapes this vault doesn't own.

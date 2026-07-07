@@ -14,7 +14,6 @@
  */
 
 import type { App } from 'obsidian';
-import { registerResolver } from './index';
 import type { ImpulsePointer, ResolverResult } from './types';
 import { classifyReversibility, isCommandAllowedForProbe } from './observation-types';
 import {
@@ -107,4 +106,7 @@ export async function resolveCommandCatalog(
   };
 }
 
-registerResolver('obsidian:command_catalog', resolveCommandCatalog);
+// NOTE: registered in ./index.ts — do NOT self-register here. A top-level
+// registerResolver() call in this file creates a circular import with
+// ./index.ts that crashes plugin load (registerResolver is hoisted and runs
+// before index.ts's `resolvers` Map is initialized).
