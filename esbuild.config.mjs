@@ -24,10 +24,10 @@ const context = await esbuild.context({
   entryPoints: ["src/main.ts"],
   define: {
     __SIDECAR_SOURCE__: JSON.stringify(
-      readFileSync(resolve(__dirname, 'src/federation-sidecar.ts'), 'utf8')
+      readFileSync(resolve(__dirname, 'sidecar/federation-sidecar.ts'), 'utf8')
     ),
     __SIDECAR_PACKAGE_JSON__: JSON.stringify(
-      readFileSync(resolve(__dirname, 'package.json'), 'utf8')
+      readFileSync(resolve(__dirname, 'sidecar/package.json'), 'utf8')
     ),
   },
   bundle: true,
