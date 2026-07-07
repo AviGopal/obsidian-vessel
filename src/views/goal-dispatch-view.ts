@@ -85,6 +85,100 @@ function preview(val: unknown, max = 70): string {
   return s.length > max ? s.slice(0, max) + '…' : s;
 }
 
+// ---------------------------------------------------------------------------
+// Decision-tree shapes (goalWalkState.steps — defensive; goal-host lands these
+// under this contract, and this renderer degrades to walkLog/poolEvents without
+// it so it works whether or not goal-host's `steps` has landed yet).
+// ---------------------------------------------------------------------------
+
+type WalkSource =
+  | 'thompson'
+  | 'satisfier'
+  | 'bridge'
+  | 'recovery'
+  | 'improvise'
+  | string;
+
+interface WalkSelected {
+  templateId?: string;
+  source?: WalkSource;
+  sampledScore?: number;
+  alpha?: number;
+  beta?: number;
+}
+
+interface WalkCandidate {
+  templateId?: string;
+  alpha?: number;
+  beta?: number;
+  sampledScore?: number;
+  rejectedBecause?: string;
+}
+
+interface WalkExcluded {
+  templateId?: string;
+  reason?: string;
+}
+
+interface WalkStep {
+  index?: number;
+  at?: number;
+  selected?: WalkSelected;
+  candidates?: WalkCandidate[];
+  excluded?: WalkExcluded[];
+  status?: string;
+  newShapes?: string[];
+  rationale?: string;
+  shadow?: boolean;
+  poolBefore?: string[];
+  poolAfter?: string[];
+}
+
+interface WalkLearning {
+  alphaBetaDelta?: Record<string, unknown> | number | string;
+  oracleLabelWritten?: boolean;
+  gapsFiled?: string[];
+}
+
+/** Short human label for a walk selection source. */
+function sourceLabel(source: string | undefined): string {
+  switch (source) {
+    case 'thompson': return 'thompson';
+    case 'satisfier': return 'satisfier';
+    case 'bridge': return 'bridge';
+    case 'recovery': return 'recovery';
+    case 'improvise': return 'improvise';
+    default: return source ?? 'step';
+  }
+}
+
+/** Compact α/β or sampled-score annotation for a template chip. */
+function scoreAnnot(s: { alpha?: number; beta?: number; sampledScore?: number }): string {
+  if (typeof s.sampledScore === 'number') return `θ${s.sampledScore.toFixed(2)}`;
+  if (typeof s.alpha === 'number' || typeof s.beta === 'number') {
+    return `α${(s.alpha ?? 0).toFixed(1)}/β${(s.beta ?? 0).toFixed(1)}`;
+  }
+  return '';
+}
+
+/**
+ * Extract the one-line reach rationale from a walkState body. Prefers the
+ * REACHED prose from currentStep ("… REACHED via N-step chain — <prose>.. "),
+ * falling back to the last walkLog line, then goalReachReason.
+ */
+function extractReachRationale(body: Record<string, unknown>): string {
+  const cur = typeof body.currentStep === 'string' ? body.currentStep : '';
+  const walk = Array.isArray(body.walkLog) ? (body.walkLog as unknown[]).map(String) : [];
+  const src = cur || (walk.length ? walk[walk.length - 1] : '');
+  if (src) {
+    const m = src.match(/—\s*(.+?)\.?\s*(?:completion_shapes=|$)/);
+    if (m && m[1]) return m[1].trim().replace(/\.\.$/, '.');
+    return src.replace(/^\[goal-host-vessel\]\s*/, '').replace(/^walk\([^)]*\):\s*/, '');
+  }
+  if (typeof body.goalReachReason === 'string') return body.goalReachReason as string;
+  return '';
+}
+
 /**
  * Sub-activity templates that are pure infrastructure — IAS Executor's
  * binding-layer, validator-dispatch, shape-provider escalation, and
@@ -671,6 +765,11 @@ export class GoalDispatchView extends ItemView {
     row.createSpan({ cls: `sub-fleet-status ${statusCls}`, text: dot });
     row.createSpan({ cls: 'sub-fleet-goal', text: goalSnippet, attr: { title: goal } });
     row.createSpan({ cls: 'sub-fleet-elapsed', text: elapsed });
+    // Reached-led: when steps failed but the goal was still reached, say so
+    // inline rather than letting the ✗-adjacent status imply failure.
+    if (!running && d.reached === true && d.status === 'failed') {
+      row.createSpan({ cls: 'sub-chip sub-chip--ok sub-fleet-note', text: 'goal reached', attr: { title: 'steps exited non-zero but the goal was reached' } });
+    }
     row.addEventListener('click', () => void this.expandFleetRow(row, d));
     if (this.expandedDispatches.has(String(d.dispatchId ?? ''))) void this.renderFleetDetail(row, d);
     if (running) {
@@ -730,16 +829,288 @@ export class GoalDispatchView extends ItemView {
   }
 
   /**
-   * Build (or rebuild) the expanded detail for a fleet row: pool chips, the
-   * live walk-decision trail ("why"), and the attach button. Idempotent — the
-   * fleet board re-renders every 7s, so a persisted expansion re-fetches fresh
-   * walkState and the running walk's trail updates in place.
+   * Build (or rebuild) the expanded detail for a fleet row.
+   *
+   * Leads with the reached verdict + rationale (status demoted to secondary).
+   * When goalWalkState carries a `steps` array it renders a full decision tree
+   * — per step: selected template (source badge + α/β/score), alternatives,
+   * exclusions, status/rationale, shadow/recovery styling, and the shape-pool
+   * delta between steps. When `steps` is absent it degrades to the existing
+   * pool chips + poolEvents timeline + walkLog "why" trail. Also renders the
+   * terminal `learning` consequence line and any authored `answerBody`.
+   *
+   * Idempotent — the fleet board re-renders every 7s, so a persisted expansion
+   * re-fetches fresh walkState and a running walk's tree updates in place.
    */
   private async renderFleetDetail(row: HTMLElement, d: Record<string, unknown>): Promise<void> {
     row.querySelector('.sub-fleet-detail')?.remove();
     const detail = row.createDiv('sub-fleet-detail');
     const j = await this.goalHostResolve({ type: 'goalWalkState', dispatchId: String(d.dispatchId ?? '') });
     const body = ((j?.body ?? {}) as Record<string, unknown>);
+
+    // 1. Reached-led headline (status demoted; failed-but-reached explained).
+    this.renderReachHeadline(detail, body, d);
+
+    // 2. Authored answer (question-goals): show it prominently up top.
+    const answerBody = typeof body.answerBody === 'string' ? body.answerBody.trim() : '';
+    if (answerBody) this.renderInlineAnswer(detail, answerBody);
+
+    // 3. Decision tree when steps are present; otherwise degrade gracefully.
+    const steps = Array.isArray(body.steps) ? (body.steps as WalkStep[]) : [];
+    if (steps.length > 0) {
+      this.renderDecisionTree(detail, steps);
+    } else {
+      this.renderWalkFallback(detail, body);
+    }
+
+    // 4. Learning consequence line (terminal only, when present).
+    const learning = (body.learning ?? null) as WalkLearning | null;
+    if (learning && typeof learning === 'object') this.renderLearningLine(detail, learning);
+
+    // 5. Attach to live WS feed.
+    const execId = typeof d.executionId === 'string' && !d.executionId.startsWith('interrupted:') ? d.executionId : null;
+    if (execId) {
+      const attachBtn = detail.createEl('button', { cls: 'sub-fleet-btn', text: 'attach' });
+      attachBtn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        this.activeDispatchId = String(d.dispatchId ?? '');
+        this.activeExecutionId = execId;
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) this.connectWS();
+        this.appendMessage(`⇢ attached to dispatch ${String(d.dispatchId ?? '').slice(0, 8)} (execution ${execId.slice(0, 12)}…)`);
+      });
+    }
+  }
+
+  /**
+   * Reached-led headline: verdict pill + one-line rationale. `status` is shown
+   * only as a small secondary chip; when status=failed but reached=true a single
+   * explanatory line replaces the misleading "failed" lead.
+   */
+  private renderReachHeadline(parent: HTMLElement, body: Record<string, unknown>, d: Record<string, unknown>): void {
+    const status = String(body.status ?? d.status ?? '');
+    const running = status === 'running';
+    const reached = (body.reached ?? d.reached) as boolean | null | undefined;
+    const head = parent.createDiv('sub-reach-head');
+    const label = running ? 'running' : reached === true ? 'reached: yes' : reached === false ? 'reached: no' : 'reached: unknown';
+    const cls = running ? 'is-running' : reached === true ? 'is-reached' : reached === false ? 'is-not-reached' : '';
+    head.createSpan({ cls: `sub-reach-verdict ${cls}`, text: label });
+    if (!running && status && !(reached === true && status !== 'failed')) {
+      head.createSpan({ cls: 'sub-chip sub-reach-status', text: status });
+    }
+    const rationale = extractReachRationale(body);
+    if (rationale) {
+      parent.createDiv({ cls: 'sub-reach-rationale', text: rationale, attr: { title: rationale } });
+    }
+    // Explain the failed-but-reached case in one plain line.
+    if (!running && reached === true && status === 'failed') {
+      parent.createDiv({
+        cls: 'sub-reach-note',
+        text: 'steps exited non-zero but the goal was reached',
+      });
+    }
+  }
+
+  /** Render the authored answer body as a distinct callout-style block. */
+  private renderInlineAnswer(parent: HTMLElement, answer: string): void {
+    const card = parent.createDiv('sub-card sub-card--answer sub-answer-inline');
+    const inner = card.createDiv('sub-answer-body');
+    inner.createDiv({ cls: 'sub-answer-header', text: '◇ Answer' });
+    inner.createDiv({ cls: 'sub-answer-text', text: answer });
+  }
+
+  /**
+   * Full decision tree: one node per walk step, with the shape-pool delta
+   * rendered between consecutive steps. Each node shows the selected template
+   * (source badge + α/β or sampled score), a collapsed list of alternatives
+   * considered, exclusions with reasons, and step status + rationale prose.
+   * Shadow / recovery steps are visually distinct.
+   */
+  private renderDecisionTree(parent: HTMLElement, steps: WalkStep[]): void {
+    const tree = parent.createDiv('sub-tree');
+    tree.createDiv({ cls: 'sub-section-header', text: `Decision tree — ${steps.length} step${steps.length === 1 ? '' : 's'}` });
+    let prevPool: string[] | null = null;
+    steps.forEach((step, i) => {
+      // Pool delta going INTO this step (poolAfter[prev] → poolBefore[this]).
+      const before = Array.isArray(step.poolBefore) ? step.poolBefore : (prevPool ?? []);
+      this.renderStepNode(tree, step, i);
+      const after = Array.isArray(step.poolAfter) ? step.poolAfter : before;
+      this.renderPoolDelta(tree, before, after, step.newShapes);
+      prevPool = after;
+    });
+  }
+
+  private renderStepNode(parent: HTMLElement, step: WalkStep, i: number): void {
+    const shadow = step.shadow === true || step.selected?.source === 'recovery';
+    const node = parent.createDiv(`sub-card sub-step${shadow ? ' sub-step--shadow' : ''}`);
+
+    // Header: step index + selected template chip + source badge + score.
+    const header = node.createDiv('sub-step-head');
+    const idx = typeof step.index === 'number' ? step.index : i;
+    header.createSpan({ cls: 'sub-step-idx', text: `${idx + 1}` });
+    const sel = step.selected ?? {};
+    const selChip = header.createSpan({ cls: 'sub-chip sub-chip--sel' });
+    selChip.setText(sel.templateId ? shortId(sel.templateId) : '(no template)');
+    if (sel.templateId) selChip.setAttr('title', sel.templateId);
+    const src = sourceLabel(sel.source);
+    header.createSpan({ cls: `sub-badge sub-badge--${(sel.source ?? 'step').replace(/[^a-z]/gi, '')}`, text: src });
+    const annot = scoreAnnot(sel);
+    if (annot) header.createSpan({ cls: 'sub-step-score', text: annot });
+    if (shadow) header.createSpan({ cls: 'sub-badge sub-badge--shadow', text: 'shadow' });
+    if (step.status) {
+      const ok = /complete|success|reached|ok/i.test(step.status);
+      header.createSpan({ cls: `sub-chip ${ok ? 'sub-chip--ok' : 'sub-chip--warn'} sub-step-status`, text: step.status });
+    }
+
+    // Rationale prose.
+    if (step.rationale) {
+      node.createDiv({ cls: 'sub-step-rationale', text: step.rationale, attr: { title: step.rationale } });
+    }
+
+    // Alternatives considered (collapsed).
+    const cands = Array.isArray(step.candidates) ? step.candidates : [];
+    const alts = cands.filter((c) => c.templateId && c.templateId !== sel.templateId);
+    if (alts.length > 0) {
+      this.renderCollapsible(node, `alternatives (${alts.length})`, (host) => {
+        for (const c of alts) {
+          const line = host.createDiv('sub-alt-line');
+          const chip = line.createSpan({ cls: 'sub-chip', text: shortId(c.templateId ?? '?') });
+          if (c.templateId) chip.setAttr('title', c.templateId);
+          const a = scoreAnnot(c);
+          if (a) line.createSpan({ cls: 'sub-step-score', text: a });
+          if (c.rejectedBecause) {
+            line.createSpan({ cls: 'sub-alt-reason', text: c.rejectedBecause, attr: { title: c.rejectedBecause } });
+          }
+        }
+      });
+    }
+
+    // Exclusions with reasons (collapsed).
+    const excl = Array.isArray(step.excluded) ? step.excluded.filter((e) => e.templateId) : [];
+    if (excl.length > 0) {
+      this.renderCollapsible(node, `excluded (${excl.length})`, (host) => {
+        for (const e of excl) {
+          const line = host.createDiv('sub-alt-line sub-alt-line--excluded');
+          const chip = line.createSpan({ cls: 'sub-chip sub-chip--fail', text: shortId(e.templateId ?? '?') });
+          if (e.templateId) chip.setAttr('title', e.templateId);
+          if (e.reason) line.createSpan({ cls: 'sub-alt-reason', text: e.reason, attr: { title: e.reason } });
+        }
+      });
+    }
+  }
+
+  /**
+   * Pool delta between two steps: chips for the shapes added (poolAfter minus
+   * poolBefore, highlighted as new), plus a collapsed "pool: N shapes"
+   * affordance expanding the full pool at that point.
+   */
+  private renderPoolDelta(parent: HTMLElement, before: string[], after: string[], newShapes?: string[]): void {
+    const beforeSet = new Set(before);
+    const added = (Array.isArray(newShapes) && newShapes.length > 0)
+      ? newShapes
+      : after.filter((s) => !beforeSet.has(s));
+    if (after.length === 0 && added.length === 0) return;
+    const wrap = parent.createDiv('sub-pool-delta');
+    if (added.length > 0) {
+      const chips = wrap.createDiv('sub-fleet-chips');
+      chips.createSpan({ cls: 'sub-pool-arrow', text: '+' });
+      for (const s of added) {
+        chips.createSpan({ cls: 'sub-chip sub-chip--new', text: s, attr: { title: s } });
+      }
+    }
+    if (after.length > 0) {
+      this.renderCollapsible(wrap, `pool: ${after.length} shape${after.length === 1 ? '' : 's'}`, (host) => {
+        const chips = host.createDiv('sub-fleet-chips');
+        for (const s of after) {
+          const isNew = added.includes(s);
+          chips.createSpan({ cls: `sub-chip${isNew ? ' sub-chip--new' : ''}`, text: s, attr: { title: s } });
+        }
+      });
+    }
+  }
+
+  /**
+   * Learning consequence line: "taught: Δα/β on <template>, oracle label
+   * written, gap filed: <id>". Gap ids wikilink only when a note exists
+   * (materialize-or-omit — never a dead link).
+   */
+  private renderLearningLine(parent: HTMLElement, learning: WalkLearning): void {
+    const parts: string[] = [];
+    const delta = learning.alphaBetaDelta;
+    if (delta !== undefined && delta !== null) {
+      if (typeof delta === 'object') {
+        const tid = (delta as Record<string, unknown>).templateId ?? (delta as Record<string, unknown>).template;
+        const da = (delta as Record<string, unknown>).alpha ?? (delta as Record<string, unknown>).dAlpha ?? (delta as Record<string, unknown>).deltaAlpha;
+        const db = (delta as Record<string, unknown>).beta ?? (delta as Record<string, unknown>).dBeta ?? (delta as Record<string, unknown>).deltaBeta;
+        const bits: string[] = [];
+        if (typeof da === 'number') bits.push(`Δα ${da >= 0 ? '+' : ''}${da.toFixed(2)}`);
+        if (typeof db === 'number') bits.push(`Δβ ${db >= 0 ? '+' : ''}${db.toFixed(2)}`);
+        const on = typeof tid === 'string' ? ` on ${shortId(tid)}` : '';
+        if (bits.length) parts.push(`${bits.join(' ')}${on}`);
+      } else {
+        parts.push(`Δα/β ${String(delta)}`);
+      }
+    }
+    if (learning.oracleLabelWritten) parts.push('oracle label written');
+    const gaps = Array.isArray(learning.gapsFiled) ? learning.gapsFiled.filter(Boolean).map(String) : [];
+    if (parts.length === 0 && gaps.length === 0) return;
+    const line = parent.createDiv('sub-learning');
+    line.createSpan({ cls: 'sub-learning-label', text: 'taught: ' });
+    if (parts.length) line.createSpan({ cls: 'sub-learning-body', text: parts.join(', ') });
+    for (const g of gaps) {
+      const noteExists = this.gapNoteExists(g);
+      const sep = line.createSpan({ text: parts.length || line.querySelector('.sub-learning-gap') ? ', gap filed: ' : 'gap filed: ' });
+      void sep;
+      const gapEl = line.createSpan({ cls: 'sub-learning-gap' });
+      if (noteExists) {
+        gapEl.setText(`[[${g}]]`);
+        gapEl.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          void this.plugin.app.workspace.openLinkText(g, '', false);
+        });
+        gapEl.addClass('sub-wikilink');
+      } else {
+        gapEl.setText(g);
+        gapEl.setAttr('title', g);
+      }
+    }
+  }
+
+  /** True when a vault note plausibly corresponds to a gap id (basename match). */
+  private gapNoteExists(gapId: string): boolean {
+    try {
+      const files = this.plugin.app.vault.getMarkdownFiles();
+      return files.some((f) => f.basename === gapId || f.path.includes(gapId));
+    } catch {
+      return false;
+    }
+  }
+
+  /** A collapsed-by-default toggle whose body is built lazily on first open. */
+  private renderCollapsible(parent: HTMLElement, label: string, build: (host: HTMLElement) => void): void {
+    const wrap = parent.createDiv('sub-collapsible');
+    const header = wrap.createDiv({ cls: 'sub-section-header is-toggle', text: `▸ ${label}` });
+    const host = wrap.createDiv('sub-collapsible-body');
+    host.hide();
+    let open = false;
+    header.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      open = !open;
+      header.setText(`${open ? '▾' : '▸'} ${label}`);
+      if (open) {
+        if (!host.hasChildNodes()) build(host);
+        host.show();
+      } else {
+        host.hide();
+      }
+    });
+  }
+
+  /**
+   * Legacy walk rendering when goalWalkState has no `steps` array: pool chips +
+   * missing-target chips + poolEvents timeline + walkLog "why" trail. Preserves
+   * the 0.4.0 behaviour so older goal-host builds still render usefully.
+   */
+  private renderWalkFallback(detail: HTMLElement, body: Record<string, unknown>): void {
     const pool = (Array.isArray(body.poolShapes) ? body.poolShapes : []) as string[];
     const pending = (Array.isArray(body.pendingTargets) ? body.pendingTargets : []) as string[];
     const step = typeof body.currentStep === 'string' ? body.currentStep : null;
@@ -762,10 +1133,6 @@ export class GoalDispatchView extends ItemView {
         timeline.createDiv({ cls: 'sub-feed-line', text: `${ev.shape} — ${src}`, attr: { title: ev.source } });
       }
     }
-    // Live "why": the walk's decision trail (backward-chain targets, template
-    // picks, satisfier/bridge/recovery/exclusion decisions) streamed WHILE the
-    // dispatch runs — not only on the terminal note. Falls back to the single
-    // currentStep line when talking to an older goal-host without walkLog.
     if (walk.length > 0) {
       const why = detail.createDiv('sub-why');
       why.createDiv({ cls: 'sub-section-header', text: `Why — ${walk.length} walk decisions` });
@@ -778,17 +1145,6 @@ export class GoalDispatchView extends ItemView {
     } else if (step) {
       const stepText = step.replace('[goal-host-vessel] ', '');
       detail.createDiv({ cls: 'sub-why-line', text: stepText, attr: { title: stepText } });
-    }
-    const execId = typeof d.executionId === 'string' && !d.executionId.startsWith('interrupted:') ? d.executionId : null;
-    if (execId) {
-      const attachBtn = detail.createEl('button', { cls: 'sub-fleet-btn', text: 'attach' });
-      attachBtn.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        this.activeDispatchId = String(d.dispatchId ?? '');
-        this.activeExecutionId = execId;
-        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) this.connectWS();
-        this.appendMessage(`⇢ attached to dispatch ${String(d.dispatchId ?? '').slice(0, 8)} (execution ${execId.slice(0, 12)}…)`);
-      });
     }
   }
 

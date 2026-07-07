@@ -1090,4 +1090,173 @@ body {
   font-weight: 500;
 }
 
+/* ── Decision tree (fleet-row expand): reached headline, steps, pool deltas ── */
+
+/* Reached-led headline: verdict pill leads, status demoted to a small chip. */
+.sub-reach-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--sub-space-1);
+  margin-bottom: var(--sub-space-1);
+}
+.sub-reach-verdict {
+  font-size: var(--sub-font-s);
+  font-weight: 600;
+  padding: 0 var(--sub-space-2);
+  border-radius: var(--sub-radius-s);
+  color: var(--sub-text);
+}
+.sub-reach-verdict.is-running { color: var(--sub-run); }
+.sub-reach-verdict.is-reached { color: var(--sub-ok); }
+.sub-reach-verdict.is-not-reached { color: var(--sub-fail); }
+.sub-reach-status {
+  font-size: var(--sub-font-s);
+  color: var(--sub-text-faint);
+  opacity: 0.8;
+}
+.sub-reach-rationale {
+  font-size: var(--sub-font-s);
+  color: var(--sub-text-muted);
+  line-height: 1.5;
+  margin-bottom: var(--sub-space-1);
+}
+.sub-reach-note {
+  font-size: var(--sub-font-s);
+  color: var(--sub-text-faint);
+  font-style: italic;
+  margin-bottom: var(--sub-space-1);
+}
+.sub-fleet-note {
+  font-size: var(--sub-font-s);
+  flex-shrink: 0;
+}
+.sub-answer-inline {
+  margin: var(--sub-space-1) 0 var(--sub-space-2) 0;
+}
+
+/* Tree container + per-step nodes. */
+.sub-tree {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sub-space-1);
+  margin-top: var(--sub-space-1);
+}
+.sub-step {
+  padding: var(--sub-space-1) var(--sub-space-2);
+  border-left: 2px solid var(--sub-accent);
+}
+/* Shadow / recovery steps: dashed, dimmed, distinct from the main chain. */
+.sub-step--shadow {
+  border-left: 2px dashed var(--sub-warn);
+  opacity: 0.72;
+  background: color-mix(in srgb, var(--sub-warn) 5%, var(--sub-bg-card));
+}
+.sub-step-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--sub-space-1);
+}
+.sub-step-idx {
+  font-family: var(--font-monospace);
+  font-size: var(--sub-font-s);
+  color: var(--sub-text-faint);
+  min-width: 1.4em;
+  text-align: right;
+}
+.sub-chip--sel {
+  color: var(--sub-text);
+  border-color: var(--sub-accent);
+  font-weight: 500;
+}
+.sub-step-score {
+  font-family: var(--font-monospace);
+  font-size: var(--sub-font-s);
+  color: var(--sub-text-faint);
+}
+.sub-step-status { font-size: var(--sub-font-s); }
+.sub-step-rationale {
+  font-size: var(--sub-font-s);
+  color: var(--sub-text-muted);
+  line-height: 1.5;
+  margin: 2px 0 2px var(--sub-space-3);
+}
+
+/* Source badges (thompson / satisfier / bridge / recovery / improvise / shadow). */
+.sub-badge {
+  font-size: var(--sub-font-s);
+  padding: 0 var(--sub-space-1);
+  border-radius: var(--sub-radius-s);
+  border: 1px solid var(--sub-border);
+  color: var(--sub-text-muted);
+  text-transform: lowercase;
+}
+.sub-badge--thompson { color: var(--sub-info); border-color: var(--sub-info); }
+.sub-badge--satisfier { color: var(--sub-ok); border-color: var(--sub-ok); }
+.sub-badge--bridge { color: var(--sub-accent); border-color: var(--sub-accent); }
+.sub-badge--recovery { color: var(--sub-warn); border-color: var(--sub-warn); }
+.sub-badge--improvise { color: var(--sub-run); border-color: var(--sub-run); }
+.sub-badge--shadow { color: var(--sub-warn); border-color: var(--sub-warn); font-style: italic; }
+
+/* Alternatives + exclusions lines inside a collapsible. */
+.sub-alt-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sub-space-1);
+  flex-wrap: wrap;
+  padding: 1px 0;
+}
+.sub-alt-reason {
+  font-size: var(--sub-font-s);
+  color: var(--sub-text-faint);
+  font-style: italic;
+}
+.sub-alt-line--excluded { opacity: 0.85; }
+
+/* Pool delta between steps. */
+.sub-pool-delta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 2px 0 2px var(--sub-space-3);
+}
+.sub-pool-arrow {
+  font-family: var(--font-monospace);
+  font-size: var(--sub-font-s);
+  color: var(--sub-ok);
+}
+.sub-chip--new {
+  color: var(--sub-ok);
+  border-color: var(--sub-ok);
+  background: color-mix(in srgb, var(--sub-ok) 8%, var(--sub-bg-alt));
+}
+
+/* Generic lazy collapsible (alternatives / exclusions / full pool). */
+.sub-collapsible {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sub-collapsible-body {
+  padding-left: var(--sub-space-2);
+}
+
+/* Learning consequence line (terminal). */
+.sub-learning {
+  font-size: var(--sub-font-s);
+  color: var(--sub-text-muted);
+  margin-top: var(--sub-space-1);
+  padding-top: var(--sub-space-1);
+  border-top: 1px dashed var(--sub-border);
+  line-height: 1.5;
+}
+.sub-learning-label { color: var(--sub-text-faint); }
+.sub-learning-gap { color: var(--sub-text-muted); font-family: var(--font-monospace); }
+.sub-wikilink {
+  color: var(--sub-accent);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
 /* end of styles */
