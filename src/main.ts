@@ -507,6 +507,8 @@ export default class ObsidianVesselPlugin extends Plugin {
       { query: 'tag:#sub/activity', color: { a: 1, rgb: 0x4caf50 } },
       // concepts: match by path so existing (pre-tag) concept notes color too
       { query: 'path:"Substrate/Concepts"', color: { a: 1, rgb: 0x9c6ade } },
+      // concept-db synced notes live under conceptDbSyncRoot, not Substrate/ — match by tag
+      { query: 'tag:#sub/concept', color: { a: 1, rgb: 0x9c6ade } },
       { query: 'tag:#sub/dispatch', color: { a: 1, rgb: 0x22b8cf } },
       { query: 'tag:#sub/gap', color: { a: 1, rgb: 0xe5484d } },
     ];
@@ -823,6 +825,38 @@ export default class ObsidianVesselPlugin extends Plugin {
         const msg = err instanceof Error ? err.message : String(err);
         sendJson(res, { success: false, synced: 0, errors: [msg] });
       }
+    });
+
+    // ── GET /observations/electron-probe ── workstream-C feasibility ────
+    // Read-only diagnostic: can the plugin sandbox reach Electron
+    // webContents (screenshot via capturePage / synthetic input via
+    // sendInputEvent)? Reports capability booleans only; performs no
+    // capture and no input injection.
+    server.addRoute('GET', '/observations/electron-probe', (_req, res) => {
+      const report: Record<string, unknown> = {};
+      const req0 = (window as unknown as { require?: (m: string) => unknown }).require;
+      const tryRequire = (m: string): unknown => {
+        try { return req0 ? req0(m) : require(m); } catch (err) {
+          report[`${m}_error`] = err instanceof Error ? err.message : String(err);
+          return null;
+        }
+      };
+      const electron = tryRequire('electron') as Record<string, unknown> | null;
+      report.electron_keys = electron ? Object.keys(electron) : null;
+      const remote = tryRequire('@electron/remote') as {
+        getCurrentWebContents?: () => { capturePage?: unknown; sendInputEvent?: unknown };
+        getCurrentWindow?: () => unknown;
+      } | null;
+      report.remote_available = !!remote;
+      try {
+        const wc = remote?.getCurrentWebContents?.();
+        report.webContents_available = !!wc;
+        report.capturePage_available = typeof wc?.capturePage === 'function';
+        report.sendInputEvent_available = typeof wc?.sendInputEvent === 'function';
+      } catch (err) {
+        report.webContents_error = err instanceof Error ? err.message : String(err);
+      }
+      sendJson(res, report);
     });
 
     // ── POST /actions/rebuild ── delegate → obsidian:concept_rebuild ────

@@ -208,8 +208,6 @@ export class ConceptSyncService {
     let pulled = 0;
     try {
       const allow = this.settings.conceptDbSyncSourceTypes ?? [];
-      const sourceTypeFilter =
-        allow.length === 1 ? allow[0] : undefined; // single-value optimization: server-side filter
 
       // Pre-scan: collect every concept that will be materialized
       // BEFORE we start writing files, so we can build the collision
@@ -217,22 +215,30 @@ export class ConceptSyncService {
       // basename → disambiguator suffix needed). Without this pre-scan
       // the first concept of a colliding set would write a bare-title
       // file and the second would silently overwrite it.
+      //
+      // With an allow-list, run one server-side source_type query per
+      // allowed type — paging the whole corpus client-side takes minutes
+      // once the org holds thousands of concepts.
       const collected: ConceptRecord[] = [];
-      let offset = 0;
-      while (collected.length < this.maxConceptsPerTick) {
-        const page = await this.client.searchConcepts({
-          sourceType: sourceTypeFilter,
-          limit: this.pageSize,
-          offset,
-        });
-        if (!page.concepts.length) break;
-        for (const concept of page.concepts) {
-          if (collected.length >= this.maxConceptsPerTick) break;
-          if (!shouldInclude(concept, allow)) continue;
-          collected.push(concept);
+      const passes: Array<string | undefined> = allow.length > 0 ? allow : [undefined];
+      for (const sourceTypeFilter of passes) {
+        if (collected.length >= this.maxConceptsPerTick) break;
+        let offset = 0;
+        while (collected.length < this.maxConceptsPerTick) {
+          const page = await this.client.searchConcepts({
+            sourceType: sourceTypeFilter,
+            limit: this.pageSize,
+            offset,
+          });
+          if (!page.concepts.length) break;
+          for (const concept of page.concepts) {
+            if (collected.length >= this.maxConceptsPerTick) break;
+            if (!shouldInclude(concept, allow)) continue;
+            collected.push(concept);
+          }
+          if (page.concepts.length < this.pageSize) break;
+          offset += this.pageSize;
         }
-        if (page.concepts.length < this.pageSize) break;
-        offset += this.pageSize;
       }
       const collisions = buildCollisionMap(collected);
 
@@ -240,7 +246,9 @@ export class ConceptSyncService {
       // collision-aware path resolver. Bounded by PULL_BUDGET_MS so a large
       // stale backlog is drained incrementally across ticks instead of
       // overrunning the interval and wedging the running flag.
-      const deadline = (this.pullStartedAt ?? Date.now()) + ConceptSyncService.PULL_BUDGET_MS;
+      // Budget the WRITE phase from here, not from pull start — a slow
+      // collection phase must not starve writes to zero on every tick.
+      const deadline = Date.now() + ConceptSyncService.PULL_BUDGET_MS;
       for (const concept of collected) {
         if (Date.now() > deadline) {
           this.logger('info', 'pull budget reached; remaining concepts deferred to next tick', {

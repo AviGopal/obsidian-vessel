@@ -72,9 +72,12 @@ async function resolveWriteNote(
     // Existing (co-inhabited) notes are never reclassified whole-note; block-level
     // provenance there stays the callout convention.
     if (!app.vault.getAbstractFileByPath(path)) {
-      body = /^---\n/.test(body)
-        ? body.replace(/^---\n/, '---\ncssclasses:\n  - substrate-authored\n')
-        : '---\ncssclasses:\n  - substrate-authored\n---\n' + body;
+      const fmHasCssclasses = /^---\n[\s\S]*?^cssclasses:/m.test(body.match(/^---\n[\s\S]*?\n---/)?.[0] ?? '');
+      if (!fmHasCssclasses) {
+        body = /^---\n/.test(body)
+          ? body.replace(/^---\n/, '---\ncssclasses:\n  - substrate-authored\n')
+          : '---\ncssclasses:\n  - substrate-authored\n---\n' + body;
+      }
     }
     if (p.dispatch_id || p.goal) {
       body += '\n\n---\n' + 'provenance: substrate-authored\n';

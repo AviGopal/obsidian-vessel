@@ -1,7 +1,7 @@
 {
   "id": "obsidian-vessel",
   "name": "Obsidian Vessel",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "minAppVersion": "1.0.0",
   "description": "Connects Obsidian to the substrate activity system as a knowledge vessel",
   "author": "AviGopal",
