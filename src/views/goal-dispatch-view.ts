@@ -141,6 +141,39 @@ interface WalkLearning {
 }
 
 /** Short human label for a walk selection source. */
+/**
+ * Why did this gap close? Prefer the most causal signal available:
+ * a landed commit from the decision→outcome join, then lifecycle
+ * auto-close reasons, then operator closure evidence, then the
+ * closure summary itself.
+ */
+function gapClosureCause(g: Record<string, unknown>, meta: Record<string, unknown>): { badge: string; detail: string } {
+  const decisions = Array.isArray(meta.approach_decisions)
+    ? (meta.approach_decisions as Array<Record<string, unknown>>)
+    : [];
+  for (let i = decisions.length - 1; i >= 0; i--) {
+    const o = decisions[i]?.outcome as Record<string, unknown> | undefined;
+    if (o?.landed) {
+      const commit = typeof o.commit === 'string' && o.commit ? String(o.commit).slice(0, 7) : '';
+      return { badge: commit ? `landed @ ${commit}` : 'fix landed', detail: `authoring attempt landed${commit ? ` in commit ${commit}` : ''}${o.verdict ? ` (${String(o.verdict)})` : ''}` };
+    }
+  }
+  const reason = typeof meta.closed_reason === 'string' ? meta.closed_reason : '';
+  if (reason) {
+    const by = typeof meta.closed_by === 'string' ? ` by ${meta.closed_by}` : '';
+    return { badge: reason.replace(/_/g, ' '), detail: `auto-closed${by}: ${reason.replace(/_/g, ' ')}` };
+  }
+  const ev = (g as Record<string, unknown>).closure_evidence ?? meta.closure_evidence;
+  if (ev && typeof ev === 'object') {
+    const e = ev as Record<string, unknown>;
+    const commit = typeof e.commit === 'string' ? e.commit : '';
+    return { badge: 'verified closed', detail: commit ? `closed with evidence: ${commit}` : 'closed with recorded evidence' };
+  }
+  const summary = typeof g.summary === 'string' ? g.summary : '';
+  const m = summary.match(/^\[([^\]]*)\]/);
+  return { badge: m ? m[1]!.slice(0, 24) : 'closed', detail: summary.slice(0, 200) };
+}
+
 function sourceLabel(source: string | undefined): string {
   switch (source) {
     case 'thompson': return 'thompson';
@@ -275,6 +308,8 @@ export class GoalDispatchView extends ItemView {
   private gapsEl: HTMLElement | null = null;
   private projectsEl: HTMLElement | null = null;
   private gapsExpanded = false;
+  // per-gap causal-thread expansion (gap id -> expanded)
+  private gapDetailExpanded: Set<string> = new Set();
   private projectsExpanded = false;
   private workBoardTimer: number | null = null;
   // shape -> resolved host-reachable resolve URL, via discovery (the one fixed
@@ -893,6 +928,11 @@ export class GoalDispatchView extends ItemView {
       const label = String(g.category ?? g.id ?? '(gap)');
       row.createSpan({ cls: 'sub-gap-cat', text: label.length > 42 ? label.slice(0, 42) + '…' : label, attr: { title: String(g.id ?? label) } });
       row.createSpan({ cls: `sub-badge sub-badge--${src.replace(/[^a-z]/gi, '')}`, text: sourceLabel(src), attr: { title: `source: ${src}` } });
+      const meta = (g.classification_metadata ?? {}) as Record<string, unknown>;
+      const fails = Number(meta.failed_attempts ?? 0);
+      if (fails > 0) {
+        row.createSpan({ cls: 'sub-badge sub-badge--fails', text: `✗${fails}`, attr: { title: `${fails} authoring attempt(s) did not land` } });
+      }
       const t = ts(g);
       if (t) row.createSpan({ cls: 'sub-fleet-elapsed', text: fmtRel(Date.now() - t) });
       const summary = typeof g.summary === 'string' ? g.summary : '';
@@ -900,9 +940,74 @@ export class GoalDispatchView extends ItemView {
         const clean = summary.replace(/^\[[^\]]*\]\s*/, '');
         row.createDiv({ cls: 'sub-gap-summary', text: clean.length > 110 ? clean.slice(0, 110) + '…' : clean, attr: { title: summary } });
       }
+      this.renderGapThread(row, g, meta);
     }
     if (open.length > recent.length) {
       el.createDiv({ cls: 'sub-fleet-note', text: `+${open.length - recent.length} more open (newest 15 shown)` });
+    }
+    // Recently closed — the "behavior changed because of X" half of the loop.
+    // Each closed gap states its closure cause (landed commit, auto-close
+    // reason, or operator evidence) instead of silently vanishing.
+    const closedRecent = [...closed].sort((a, b) => ts(b) - ts(a)).slice(0, 6);
+    if (closedRecent.length > 0) {
+      el.createDiv({ cls: 'sub-section-header', text: 'Recently closed — why' });
+      for (const g of closedRecent) {
+        const row = el.createDiv('sub-card sub-gap-row is-closed');
+        const label = String(g.category ?? g.id ?? '(gap)');
+        row.createSpan({ cls: 'sub-gap-cat', text: label.length > 42 ? label.slice(0, 42) + '…' : label, attr: { title: String(g.id ?? label) } });
+        const meta = (g.classification_metadata ?? {}) as Record<string, unknown>;
+        const cause = gapClosureCause(g, meta);
+        row.createSpan({ cls: 'sub-badge sub-badge--closed', text: cause.badge, attr: { title: cause.detail } });
+        const t = ts(g);
+        if (t) row.createSpan({ cls: 'sub-fleet-elapsed', text: fmtRel(Date.now() - t) });
+        if (cause.detail) {
+          row.createDiv({ cls: 'sub-gap-summary', text: cause.detail.length > 110 ? cause.detail.slice(0, 110) + '…' : cause.detail, attr: { title: cause.detail } });
+        }
+        this.renderGapThread(row, g, meta);
+      }
+    }
+  }
+
+  /**
+   * Causal thread for one gap: the recorded approach decisions and their
+   * joined outcomes (predicted land probability → landed/failed → commit).
+   * This is the gap → fix-attempt → behavior-change link, rendered from the
+   * decision→outcome join gap_to_feature writes into classification_metadata.
+   * Rows with a thread get a "▸ N attempts" toggle; rows without stay plain.
+   */
+  private renderGapThread(row: HTMLElement, g: Record<string, unknown>, meta: Record<string, unknown>): void {
+    const decisions = Array.isArray(meta.approach_decisions)
+      ? (meta.approach_decisions as Array<Record<string, unknown>>)
+      : [];
+    if (decisions.length === 0) return;
+    const id = String(g.id ?? '');
+    const expanded = this.gapDetailExpanded.has(id);
+    const toggle = row.createDiv({
+      cls: 'sub-fleet-note is-toggle',
+      text: `${expanded ? '▾' : '▸'} ${decisions.length} fix attempt${decisions.length === 1 ? '' : 's'}`,
+    });
+    toggle.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      if (expanded) this.gapDetailExpanded.delete(id); else this.gapDetailExpanded.add(id);
+      void this.renderGaps();
+    });
+    if (!expanded) return;
+    const list = row.createDiv('sub-gap-thread');
+    for (const d of decisions.slice(-5)) {
+      const line = list.createDiv('sub-fleet-note');
+      const at = typeof d.at === 'string' ? d.at.slice(0, 16).replace('T', ' ') : '';
+      const p = typeof d.predicted_p === 'number' ? `predicted ${(Number(d.predicted_p) * 100).toFixed(0)}%` : 'no prediction';
+      const outcome = (d.outcome ?? null) as Record<string, unknown> | null;
+      let result = '⋯ outcome pending';
+      if (outcome) {
+        const commit = typeof outcome.commit === 'string' && outcome.commit ? ` @ ${String(outcome.commit).slice(0, 7)}` : '';
+        result = outcome.landed
+          ? `✓ landed${outcome.verdict ? ` ${String(outcome.verdict)}` : ''}${commit}`
+          : `✗ did not land${d.predicted_land ? ' (mispredicted)' : ''}`;
+      }
+      const site = typeof d.edit_site === 'string' && d.edit_site ? ` · ${String(d.edit_site).split('/').pop()}` : '';
+      line.setText(`${at} · ${p} → ${result}${site}`);
+      line.setAttr('title', JSON.stringify(d, null, 1).slice(0, 600));
     }
   }
 

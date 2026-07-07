@@ -1290,6 +1290,10 @@ body {
   white-space: nowrap;
 }
 /* Gap source badges — the "why it's being worked on" signal. */
+.sub-badge--fails { color: var(--sub-err); border-color: var(--sub-err); }
+.sub-badge--closed { color: var(--sub-ok); border-color: var(--sub-ok); }
+.sub-gap-row.is-closed { opacity: 0.75; }
+.sub-gap-thread { margin: 2px 0 2px 10px; padding-left: 8px; border-left: 1px solid var(--sub-border, var(--background-modifier-border)); }
 .sub-badge--substratedetected { color: var(--sub-info); border-color: var(--sub-info); }
 .sub-badge--goalhostautodraft { color: var(--sub-accent); border-color: var(--sub-accent); }
 .sub-badge--operatornarration { color: var(--sub-warn); border-color: var(--sub-warn); }
