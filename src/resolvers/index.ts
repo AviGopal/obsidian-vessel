@@ -16,6 +16,8 @@ import { resolveBacklinks } from './backlinks-resolver';
 import { resolveFrontmatter } from './frontmatter-resolver';
 import { resolveDailyNote } from './daily-note-resolver';
 import { resolveGraphQuery } from './graph-resolver';
+import { resolveCommandCatalog } from './command-catalog';
+import { resolveCapabilityCatalog } from './capability-catalog';
 
 // =============================================================================
 // RESOLVER REGISTRY
@@ -135,6 +137,10 @@ registerResolver('obsidian:daily_note', resolveDailyNote);
 
 // Graph query resolver - obsidian:graph_query
 registerResolver('obsidian:graph_query', resolveGraphQuery);
+
+// Capability catalog resolvers - obsidian:command_catalog, obsidian:capability_catalog
+registerResolver('obsidian:command_catalog', resolveCommandCatalog);
+registerResolver('obsidian:capability_catalog', resolveCapabilityCatalog);
 
 // Phase 1 observation resolvers (`obsidian:event_observed`,
 // `obsidian:interaction_episode`, `obsidian:action_effect_model`) are

@@ -39,7 +39,7 @@ interface CatalogEntry {
   requires_content_observation: boolean;
 }
 
-async function resolveCommandCatalog(
+export async function resolveCommandCatalog(
   pointer: ImpulsePointer,
   app: App,
 ): Promise<ResolverResult> {
