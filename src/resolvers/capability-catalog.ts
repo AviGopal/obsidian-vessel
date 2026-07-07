@@ -1,4 +1,3 @@
-import { registerResolver } from './index';
 import type { ImpulsePointer, ResolverResult } from './types';
 
 interface CapabilityEntry {
