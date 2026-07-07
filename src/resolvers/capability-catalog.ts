@@ -149,4 +149,3 @@ export async function resolveCapabilityCatalog(
   return { content };
 }
 
-registerResolver('obsidian:capability_catalog', resolveCapabilityCatalog);
