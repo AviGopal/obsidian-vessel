@@ -213,6 +213,14 @@ export interface ObsidianVesselSettings {
   discoveryVesselEndpoint: string;
 
   /**
+   * Development-vessel HTTP endpoint — the authoritative store for the
+   * substrate's self-improvement gaps (`substrateGap`) and memory/project
+   * notes (`memoryNote`). The dispatch panel reads these to show what the
+   * system is working on beyond in-flight goals.
+   */
+  devVesselEndpoint: string;
+
+  /**
    * Hostname the SUBSTRATE (in the container) uses to reach this host-side
    * plugin. Inside the container `localhost` is the container itself, so the
    * advertised endpoint must be the container->host gateway.
@@ -352,6 +360,8 @@ export const DEFAULT_SETTINGS: ObsidianVesselSettings = {
   vesselFolder: 'substrate/vessels',
   // Host-mapped discovery port (in-container :8100 is published on host :18100).
   discoveryVesselEndpoint: 'http://127.0.0.1:18100',
+  // Host-mapped development-vessel port (in-container :8090 → host :18090).
+  devVesselEndpoint: 'http://127.0.0.1:18090',
   advertisedHost: 'host.docker.internal',
 
   // Federation Sidecar

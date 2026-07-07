@@ -148,6 +148,12 @@ function sourceLabel(source: string | undefined): string {
     case 'bridge': return 'bridge';
     case 'recovery': return 'recovery';
     case 'improvise': return 'improvise';
+    // Gap sources (substrateGap.source) — the "why it's being worked on" signal.
+    case 'substrate_detected': return 'detected';
+    case 'goal_host_auto_draft': return 'auto-draft';
+    case 'operator_narration': return 'operator';
+    case 'operator_verified': return 'op-verified';
+    case 'gap_decompose': return 'decomposed';
     default: return source ?? 'step';
   }
 }
@@ -262,6 +268,15 @@ export class GoalDispatchView extends ItemView {
   private touchesEl: HTMLElement | null = null;
   private touchesExpanded = false;
   private unsubscribeTouches: (() => void) | null = null;
+  // Work board: what the system is working on beyond in-flight goals —
+  // self-improvement gaps (substrateGap) and longer-lived project threads
+  // (memoryNote type=project), both from development-vessel. Collapsed by
+  // default; polled on a slow cadence (they change far less than dispatches).
+  private gapsEl: HTMLElement | null = null;
+  private projectsEl: HTMLElement | null = null;
+  private gapsExpanded = false;
+  private projectsExpanded = false;
+  private workBoardTimer: number | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: ObsidianVesselPlugin) {
     super(leaf);
@@ -289,6 +304,7 @@ export class GoalDispatchView extends ItemView {
       this.connectWS();
     }
     this.startFleetBoard();
+    this.startWorkBoard();
     this.startSolicitationCards();
     this.startTouchFeed();
   }
@@ -296,6 +312,7 @@ export class GoalDispatchView extends ItemView {
   async onClose(): Promise<void> {
     this.disconnectWS();
     this.stopFleetBoard();
+    this.stopWorkBoard();
     this.unsubscribeSolicitations?.();
     this.unsubscribeSolicitations = null;
     this.unsubscribeTouches?.();
@@ -357,6 +374,11 @@ export class GoalDispatchView extends ItemView {
     this.fleetEl = contentEl.createDiv('sub-section sub-fleet');
     // 3. Completed goals — one-line count, expandable.
     this.completedEl = contentEl.createDiv('sub-section sub-completed');
+    // 4. Gaps — the substrate's self-improvement backlog (what it's working
+    //    on fixing in itself), collapsed to a count.
+    this.gapsEl = contentEl.createDiv('sub-section sub-gaps');
+    // 5. Projects — longer-lived work threads, collapsed to a count.
+    this.projectsEl = contentEl.createDiv('sub-section sub-projects');
 
     // ── ONE scroll container: event feed + collapsed vault-touch feed ──
     this.scrollEl = contentEl.createDiv('sub-scroll');
@@ -746,6 +768,138 @@ export class GoalDispatchView extends ItemView {
     if (this.fleetTimer !== null) {
       window.clearInterval(this.fleetTimer);
       this.fleetTimer = null;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Work board (goals + GAPS + PROJECTS): what the system is working on beyond
+  // in-flight dispatches. Gaps = the substrate's self-improvement backlog
+  // (substrateGap); projects = longer-lived threads (memoryNote type=project).
+  // Both live on development-vessel and change slowly, so poll on a 30s cadence.
+  // ---------------------------------------------------------------------------
+
+  /** Resolve a development-vessel shape via its impulse endpoint. */
+  private async devVesselResolve(
+    shape: string,
+    extra: Record<string, unknown> = {},
+  ): Promise<Record<string, unknown> | null> {
+    const ep = (this.plugin.settings.devVesselEndpoint || '').replace(/\/+$/, '');
+    if (!ep) return null;
+    try {
+      const resp = await fetch(`${ep}/v2/impulses/resolve`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(this.plugin.settings.apiKey ? { Authorization: `ApiKey ${this.plugin.settings.apiKey}` } : {}),
+        },
+        body: JSON.stringify({ impulse: { type: shape, ...extra } }),
+      });
+      if (!resp.ok) return null;
+      return (await resp.json()) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  }
+
+  private startWorkBoard(): void {
+    const tick = (): void => {
+      void this.renderGaps();
+      void this.renderProjects();
+    };
+    tick();
+    this.workBoardTimer = window.setInterval(tick, 30000);
+  }
+
+  private stopWorkBoard(): void {
+    if (this.workBoardTimer !== null) {
+      window.clearInterval(this.workBoardTimer);
+      this.workBoardTimer = null;
+    }
+  }
+
+  /**
+   * Gaps section: the substrate's self-improvement backlog. Each gap's SOURCE
+   * badge is the "why it's being worked on" signal — substrate_detected (a
+   * detector found it), goal_host_auto_draft (the walk chose to draft a fix),
+   * operator_narration (a human filed it), gap_decompose (split from a bigger
+   * gap). Collapsed to an open/closed count; expands to the recent open gaps.
+   */
+  private async renderGaps(): Promise<void> {
+    const el = this.gapsEl;
+    if (!el) return;
+    const j = await this.devVesselResolve('substrateGap', { limit: 200 });
+    const gaps = ((j?.body as Record<string, unknown> | undefined)?.gaps ?? []) as Array<Record<string, unknown>>;
+    el.empty();
+    if (gaps.length === 0) return;
+    const open = gaps.filter((g) => g.status === 'open');
+    const closed = gaps.filter((g) => g.status === 'closed');
+    const header = el.createDiv({
+      cls: 'sub-section-header is-toggle',
+      text: `${this.gapsExpanded ? '▾' : '▸'} Gaps — ${open.length} open · ${closed.length} closed`,
+    });
+    header.addEventListener('click', () => {
+      this.gapsExpanded = !this.gapsExpanded;
+      void this.renderGaps();
+    });
+    if (!this.gapsExpanded) return;
+    const ts = (g: Record<string, unknown>): number => {
+      const v = g.updated_at ?? g.detected_at ?? g.created_at;
+      const n = typeof v === 'string' ? Date.parse(v) : 0;
+      return Number.isFinite(n) ? n : 0;
+    };
+    const recent = [...open].sort((a, b) => ts(b) - ts(a)).slice(0, 15);
+    for (const g of recent) {
+      const row = el.createDiv('sub-card sub-gap-row');
+      const src = String(g.source ?? 'unknown');
+      const label = String(g.category ?? g.id ?? '(gap)');
+      row.createSpan({ cls: 'sub-gap-cat', text: label.length > 42 ? label.slice(0, 42) + '…' : label, attr: { title: String(g.id ?? label) } });
+      row.createSpan({ cls: `sub-badge sub-badge--${src.replace(/[^a-z]/gi, '')}`, text: sourceLabel(src), attr: { title: `source: ${src}` } });
+      const t = ts(g);
+      if (t) row.createSpan({ cls: 'sub-fleet-elapsed', text: fmtRel(Date.now() - t) });
+      const summary = typeof g.summary === 'string' ? g.summary : '';
+      if (summary) {
+        const clean = summary.replace(/^\[[^\]]*\]\s*/, '');
+        row.createDiv({ cls: 'sub-gap-summary', text: clean.length > 110 ? clean.slice(0, 110) + '…' : clean, attr: { title: summary } });
+      }
+    }
+    if (open.length > recent.length) {
+      el.createDiv({ cls: 'sub-fleet-note', text: `+${open.length - recent.length} more open (newest 15 shown)` });
+    }
+  }
+
+  /**
+   * Projects section: longer-lived work threads, from memoryNote type=project.
+   * Read-only list of the most recent threads (title + age) — the "what has the
+   * system been building toward" context behind the immediate goals.
+   */
+  private async renderProjects(): Promise<void> {
+    const el = this.projectsEl;
+    if (!el) return;
+    const j = await this.devVesselResolve('memoryNote', { note_type: 'project', limit: 40 });
+    const notes = ((j?.body as Record<string, unknown> | undefined)?.notes ?? []) as Array<Record<string, unknown>>;
+    el.empty();
+    if (notes.length === 0) return;
+    const ts = (n: Record<string, unknown>): number => {
+      const v = n.updated_at ?? n.created_at ?? n.detected_at;
+      const num = typeof v === 'string' ? Date.parse(v) : (typeof v === 'number' ? v : 0);
+      return Number.isFinite(num) ? num : 0;
+    };
+    const recent = [...notes].sort((a, b) => ts(b) - ts(a)).slice(0, 8);
+    const header = el.createDiv({
+      cls: 'sub-section-header is-toggle',
+      text: `${this.projectsExpanded ? '▾' : '▸'} Projects — ${notes.length}`,
+    });
+    header.addEventListener('click', () => {
+      this.projectsExpanded = !this.projectsExpanded;
+      void this.renderProjects();
+    });
+    if (!this.projectsExpanded) return;
+    for (const n of recent) {
+      const row = el.createDiv('sub-card sub-project-row');
+      const title = String(n.title ?? n.id ?? '(project)');
+      row.createSpan({ cls: 'sub-project-title', text: title, attr: { title } });
+      const t = ts(n);
+      if (t) row.createSpan({ cls: 'sub-fleet-elapsed', text: fmtRel(Date.now() - t) });
     }
   }
 

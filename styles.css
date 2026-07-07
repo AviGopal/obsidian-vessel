@@ -1259,4 +1259,41 @@ body {
   text-decoration: underline;
 }
 
+
+/* ── Work board: gaps (self-improvement backlog) + projects (threads) ── */
+.sub-gap-row,
+.sub-project-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sub-space-1) var(--sub-space-2);
+}
+.sub-gap-cat {
+  font-size: var(--sub-font-m);
+  color: var(--sub-text);
+  font-weight: 500;
+}
+.sub-gap-summary {
+  flex-basis: 100%;
+  font-size: var(--sub-font-s);
+  color: var(--sub-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sub-project-title {
+  font-size: var(--sub-font-m);
+  color: var(--sub-text);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Gap source badges — the "why it's being worked on" signal. */
+.sub-badge--substratedetected { color: var(--sub-info); border-color: var(--sub-info); }
+.sub-badge--goalhostautodraft { color: var(--sub-accent); border-color: var(--sub-accent); }
+.sub-badge--operatornarration { color: var(--sub-warn); border-color: var(--sub-warn); }
+.sub-badge--operatorverified { color: var(--sub-ok); border-color: var(--sub-ok); }
+.sub-badge--gapdecompose { color: var(--sub-text-muted); border-color: var(--sub-border); }
+
 /* end of styles */

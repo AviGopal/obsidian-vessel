@@ -672,7 +672,11 @@ export default class ObsidianVesselPlugin extends Plugin {
         manifest: {
           vesselId: this.settings.vesselId || 'obsidian-vessel',
           vesselName: this.settings.vesselName,
-          version: '0.1.2',
+          // Real plugin version from manifest.json (Obsidian-provided), not a
+          // hardcoded literal — /health and /manifest are the only signal of
+          // which build is actually loaded, so this must not drift from the
+          // shipped build (it was stuck at 0.1.2 while the build was 0.5.x).
+          version: this.manifest.version,
           shapes: this.settings.shapes,
           // Instance-proof markers surfaced on GET /health (host vs container).
           vaultPath: vaultPathForHealth,
