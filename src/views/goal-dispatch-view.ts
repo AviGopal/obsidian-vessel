@@ -277,6 +277,11 @@ export class GoalDispatchView extends ItemView {
   private gapsExpanded = false;
   private projectsExpanded = false;
   private workBoardTimer: number | null = null;
+  // shape -> resolved host-reachable resolve URL, via discovery (the one fixed
+  // point). Cached briefly so the 30s work-board poll doesn't re-hit discovery
+  // every tick. Connections flow through discovery shapes, never hardcoded
+  // vessel endpoints (discovery derives host-reachable public_endpoints).
+  private shapeRouteCache = new Map<string, { url: string; at: number }>();
 
   constructor(leaf: WorkspaceLeaf, plugin: ObsidianVesselPlugin) {
     super(leaf);
@@ -778,15 +783,58 @@ export class GoalDispatchView extends ItemView {
   // Both live on development-vessel and change slowly, so poll on a 30s cadence.
   // ---------------------------------------------------------------------------
 
-  /** Resolve a development-vessel shape via its impulse endpoint. */
+  /**
+   * Resolve which host-reachable URL serves a shape, by asking discovery (the
+   * ONE fixed point). Prefers the vessel's `public_endpoint` (discovery derives
+   * a host-reachable one for in-container vessels) and appends the vessel's
+   * advertised resolve path. No hardcoded per-shape endpoints — if a vessel
+   * moves, discovery reflects it and the panel follows. Cached ~60s.
+   */
+  private async resolveShapeRoute(shape: string): Promise<string | null> {
+    const cached = this.shapeRouteCache.get(shape);
+    if (cached && Date.now() - cached.at < 60000) return cached.url;
+    const disco = (this.plugin.settings.discoveryVesselEndpoint || '').replace(/\/+$/, '');
+    if (!disco) return null;
+    try {
+      const resp = await fetch(`${disco}/resolve`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(this.plugin.settings.apiKey ? { Authorization: `ApiKey ${this.plugin.settings.apiKey}` } : {}),
+        },
+        body: JSON.stringify({ pointer: { type: 'vesselCapability', shape } }),
+      });
+      if (!resp.ok) return null;
+      const j = (await resp.json()) as Record<string, unknown>;
+      const vessels = ((j.content as Record<string, unknown> | undefined)?.vessels ?? []) as Array<Record<string, unknown>>;
+      const v = vessels[0];
+      if (!v) return null;
+      const base = String(v.public_endpoint || v.endpoint || '').replace(/\/+$/, '');
+      if (!base) return null;
+      // resolve_endpoint may be a path ("/v2/impulses/resolve") or an absolute
+      // (in-container) URL — take just its path and hang it off the reachable base.
+      const rawResolve = String(v.resolve_endpoint || '/resolve');
+      let path = rawResolve;
+      if (/^https?:\/\//.test(rawResolve)) {
+        try { const u = new URL(rawResolve); path = u.pathname + u.search; } catch { path = '/resolve'; }
+      }
+      const url = base + (path.startsWith('/') ? path : `/${path}`);
+      this.shapeRouteCache.set(shape, { url, at: Date.now() });
+      return url;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Resolve a shape through discovery (never a hardcoded endpoint). */
   private async devVesselResolve(
     shape: string,
     extra: Record<string, unknown> = {},
   ): Promise<Record<string, unknown> | null> {
-    const ep = (this.plugin.settings.devVesselEndpoint || '').replace(/\/+$/, '');
-    if (!ep) return null;
+    const url = await this.resolveShapeRoute(shape);
+    if (!url) return null;
     try {
-      const resp = await fetch(`${ep}/v2/impulses/resolve`, {
+      const resp = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
