@@ -112,6 +112,30 @@ export class GoalHostClient {
     return r.json as Record<string, unknown>;
   }
 
+  /**
+   * Fetch the goal-host walk state for a dispatch via POST /resolve
+   * ({"impulse":{"pointer":{"type":"goalWalkState",...}}}). Carries the
+   * decision-tree `steps`, terminal `learning` block, and authored `answerBody`
+   * when goal-host has landed them. Returns the `body` object, or {} on failure.
+   */
+  async getWalkState(dispatchId: string): Promise<Record<string, unknown>> {
+    try {
+      const r = await requestUrl({
+        url: this.endpoint.replace(/\/+$/, '') + '/resolve',
+        method: 'POST',
+        headers: {
+          'Authorization': 'ApiKey ' + this.apiKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ impulse: { pointer: { type: 'goalWalkState', dispatchId } } }),
+      });
+      const j = r.json as Record<string, unknown>;
+      return (j.body as Record<string, unknown>) ?? {};
+    } catch {
+      return {};
+    }
+  }
+
   async dispatchGoal(goal: string, ctx?: VaultContext): Promise<GoalDispatchResult> {
     const variables: Record<string, unknown> = ctx ? { ...ctx } : {};
     const expectedOutputShapes = ctx?.available_shapes?.length

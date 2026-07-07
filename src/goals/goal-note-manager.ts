@@ -166,7 +166,15 @@ export class GoalNoteManager {
 
         const status = String(record.status ?? 'running');
         if (status !== 'running') {
-          await this.writeReachVerdict(file, record);
+          // The decision-ready extras (authored answerBody, terminal learning
+          // block) live on goalWalkState, not the dispatch record — fetch both.
+          let walkState: Record<string, unknown> = {};
+          try {
+            walkState = await client.getWalkState(dispatchId);
+          } catch {
+            // best-effort — the verdict still renders from the record alone
+          }
+          await this.writeReachVerdict(file, record, walkState);
           return;
         }
       }
@@ -178,15 +186,25 @@ export class GoalNoteManager {
    * Mirror the goal-reach verdict into frontmatter and insert a verdict
    * callout above the Events section.
    */
-  private async writeReachVerdict(file: TFile, record: Record<string, unknown>): Promise<void> {
+  private async writeReachVerdict(
+    file: TFile,
+    record: Record<string, unknown>,
+    walkState: Record<string, unknown> = {},
+  ): Promise<void> {
     const reached = record.reached === true;
+    const status = String(record.status ?? 'completed');
     const reason = typeof record.goalReachReason === 'string' ? record.goalReachReason : '';
     const shapes = Array.isArray(record.completionShapes)
       ? (record.completionShapes as unknown[]).map(String)
       : [];
+    // answerBody / learning are carried by goalWalkState (fall back to record).
+    const answerBody = typeof walkState.answerBody === 'string'
+      ? (walkState.answerBody as string).trim()
+      : (typeof record.answerBody === 'string' ? (record.answerBody as string).trim() : '');
+    const learning = (walkState.learning ?? record.learning ?? null) as Record<string, unknown> | null;
     try {
       await this.app.fileManager.processFrontMatter(file, (fm) => {
-        fm.status = String(record.status ?? 'completed');
+        fm.status = status;
         fm.reached = reached;
         if (reason) fm.goalReachReason = reason;
         fm.completedAt = new Date().toISOString();
@@ -199,14 +217,23 @@ export class GoalNoteManager {
       const selectedTemplate = typeof record.selectedTemplateId === 'string'
         ? record.selectedTemplateId
         : '';
+      // Learning-consequence line (materialize-or-omit gap wikilinks).
+      const learningLine = this.formatLearningLine(learning);
       const verdict = [
         '',
         `> [!${reached ? 'success' : 'failure'}] ${reached ? 'Goal reached' : 'Goal NOT reached'}`,
         ...(reason ? [`> ${reason}`] : []),
+        ...(reached && status === 'failed'
+          ? ['> _steps exited non-zero but the goal was reached_']
+          : []),
         ...(shapes.length
           ? ['> **Completion shapes:** ' + shapes.map(x => '`' + x + '`').join(', ')]
           : []),
+        ...(learningLine ? ['> **Taught:** ' + learningLine] : []),
         '',
+        ...(answerBody
+          ? ['> [!answer] Answer', ...answerBody.split('\n').map(l => '> ' + l), '']
+          : []),
         '> [!info]- Why',
         ...(selectedTemplate ? ['> **Selected approach:** `' + selectedTemplate + '`'] : []),
         ...(walkLog.length
@@ -223,6 +250,40 @@ export class GoalNoteManager {
     } catch (error) {
       console.error('[GoalNoteManager] Failed to write reach verdict:', error);
     }
+  }
+
+  /**
+   * Format the terminal learning block into a one-line consequence string,
+   * wikilinking gap ids only when a corresponding vault note exists
+   * (materialize-or-omit — never a dead link). Returns '' when empty.
+   */
+  private formatLearningLine(learning: Record<string, unknown> | null): string {
+    if (!learning || typeof learning !== 'object') return '';
+    const parts: string[] = [];
+    const delta = learning.alphaBetaDelta;
+    if (delta && typeof delta === 'object') {
+      const d = delta as Record<string, unknown>;
+      const tid = d.templateId ?? d.template;
+      const da = d.alpha ?? d.dAlpha ?? d.deltaAlpha;
+      const db = d.beta ?? d.dBeta ?? d.deltaBeta;
+      const bits: string[] = [];
+      if (typeof da === 'number') bits.push('Δα ' + (da >= 0 ? '+' : '') + da.toFixed(2));
+      if (typeof db === 'number') bits.push('Δβ ' + (db >= 0 ? '+' : '') + db.toFixed(2));
+      const on = typeof tid === 'string' ? ' on `' + tid + '`' : '';
+      if (bits.length) parts.push(bits.join(' ') + on);
+    } else if (delta !== undefined && delta !== null) {
+      parts.push('Δα/β ' + String(delta));
+    }
+    if (learning.oracleLabelWritten) parts.push('oracle label written');
+    const gaps = Array.isArray(learning.gapsFiled)
+      ? (learning.gapsFiled as unknown[]).map(String).filter(Boolean)
+      : [];
+    for (const g of gaps) {
+      const files = this.app.vault.getMarkdownFiles();
+      const exists = files.some(f => f.basename === g || f.path.includes(g));
+      parts.push('gap filed: ' + (exists ? '[[' + g + ']]' : '`' + g + '`'));
+    }
+    return parts.join(', ');
   }
 
   /**
