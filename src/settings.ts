@@ -209,6 +209,10 @@ export interface ObsidianVesselSettings {
   /** Vault folder for vessel notes. */
   vesselFolder: string;
 
+  /** Materialize the substrate STRUCTURE (vessel↔shape topology + activity
+   * composition graph) as tagged, wikilinked notes for Obsidian's native graph. */
+  enableGraphBackbone: boolean;
+
   /** Discovery-vessel HTTP endpoint. */
   discoveryVesselEndpoint: string;
 
@@ -351,6 +355,7 @@ export const DEFAULT_SETTINGS: ObsidianVesselSettings = {
   // Vessel Sync
   enableVesselSync: false,
   vesselFolder: 'substrate/vessels',
+  enableGraphBackbone: true,
   // Host-mapped discovery port (in-container :8100 is published on host :18100).
   discoveryVesselEndpoint: 'http://127.0.0.1:18100',
   advertisedHost: 'host.docker.internal',

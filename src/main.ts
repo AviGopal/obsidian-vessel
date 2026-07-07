@@ -16,6 +16,7 @@ import { ConceptSyncService, makeObsidianNoteWriter } from './sync/concept-sync'
 import { ConceptWritebackService } from './sync/concept-writeback';
 import { ConceptBusListener } from './sync/concept-bus-listener';
 import { ActivityFamilySyncService } from './sync/activity-family-sync';
+import { GraphBackboneSyncService } from './sync/graph-backbone-sync';
 import { VesselSyncService } from './sync/vessel-sync';
 import { syncImprovements } from './sync/improvement-sync';
 import { ConceptDbClient } from './concept-db-client';
@@ -133,6 +134,7 @@ export default class ObsidianVesselPlugin extends Plugin {
 
   // Activity Family and Vessel sync services
   activityFamilySync: ActivityFamilySyncService | null = null;
+  graphBackboneSync: GraphBackboneSyncService | null = null;
   vesselSync: VesselSyncService | null = null;
 
   // Phase 1 observation layer — shared event log + workspace observer.
@@ -289,6 +291,16 @@ export default class ObsidianVesselPlugin extends Plugin {
       this.vesselSync = new VesselSyncService(this.app, this.settings);
       await this.vesselSync.start();
     }
+    // Substrate graph backbone: vessel↔shape topology + activity composition
+    // graph as native-graph notes (data via discovery). Also ship graph colors.
+    if (this.settings.enableGraphBackbone) {
+      this.graphBackboneSync = new GraphBackboneSyncService(this.app, this.settings);
+      // Fire-and-forget with caught errors — MUST NOT block/throw in onload
+      // (this runs before the HTTP server inits; an unhandled throw here would
+      // reject onload and leave the plugin's HTTP surface dead / bricked).
+      void this.configureGraphColors().catch((e) => console.warn('[graph-backbone] colors failed', e));
+      void this.graphBackboneSync.start().catch((e) => console.warn('[graph-backbone] start failed', e));
+    }
 
     // Substrate-improvement note (see sync/improvement-sync.ts)
     this.scheduleImprovementSync();
@@ -355,6 +367,32 @@ export default class ObsidianVesselPlugin extends Plugin {
         },
       });
     }
+
+    // Substrate graph backbone commands
+    this.addCommand({
+      id: 'rebuild-graph-backbone',
+      name: 'Rebuild substrate graph backbone',
+      callback: async () => {
+        if (!this.graphBackboneSync) {
+          this.graphBackboneSync = new GraphBackboneSyncService(this.app, this.settings);
+        }
+        try {
+          await this.configureGraphColors();
+          const r = await this.graphBackboneSync.syncAll();
+          new Notice(`Graph backbone: ${r.vessels} vessels · ${r.shapes} shapes · ${r.activities} activities`);
+        } catch (err) {
+          new Notice(`Graph backbone failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      },
+    });
+    this.addCommand({
+      id: 'configure-graph-colors',
+      name: 'Configure substrate graph colors',
+      callback: async () => {
+        await this.configureGraphColors();
+        new Notice('Substrate graph color groups applied (reopen Graph view)');
+      },
+    });
 
     // Commands for activity family and vessel sync
     this.addCommand({
@@ -455,6 +493,39 @@ export default class ObsidianVesselPlugin extends Plugin {
    * 3. Cleanup sync service (close WebSocket, etc.)
    * 4. Stop HTTP server
    */
+  /**
+   * Ship Obsidian graph color-groups so the native graph is legible by node
+   * type (#sub/vessel, #sub/shape, #sub/activity, #sub/concept, #sub/dispatch,
+   * #sub/gap). Additive merge into .obsidian/graph.json — existing user groups
+   * with other queries are preserved; ours are keyed by query and upserted.
+   */
+  private async configureGraphColors(): Promise<void> {
+    const path = '.obsidian/graph.json';
+    const groups: Array<{ query: string; color: { a: number; rgb: number } }> = [
+      { query: 'tag:#sub/vessel', color: { a: 1, rgb: 0x4c78e8 } },
+      { query: 'tag:#sub/shape', color: { a: 1, rgb: 0xe8993a } },
+      { query: 'tag:#sub/activity', color: { a: 1, rgb: 0x4caf50 } },
+      { query: 'tag:#sub/concept', color: { a: 1, rgb: 0x9c6ade } },
+      { query: 'tag:#sub/dispatch', color: { a: 1, rgb: 0x22b8cf } },
+      { query: 'tag:#sub/gap', color: { a: 1, rgb: 0xe5484d } },
+    ];
+    try {
+      let cfg: Record<string, unknown> = {};
+      if (await this.app.vault.adapter.exists(path)) {
+        try { cfg = JSON.parse(await this.app.vault.adapter.read(path)) as Record<string, unknown>; } catch { cfg = {}; }
+      }
+      const existing = (Array.isArray(cfg.colorGroups) ? cfg.colorGroups : []) as Array<{ query?: string }>;
+      const byQuery = new Map<string, unknown>();
+      for (const g of existing) if (g && typeof g.query === 'string') byQuery.set(g.query, g);
+      for (const g of groups) byQuery.set(g.query, g);
+      cfg.colorGroups = [...byQuery.values()];
+      if (!('showArrow' in cfg)) cfg.showArrow = true;
+      await this.app.vault.adapter.write(path, JSON.stringify(cfg, null, 2));
+    } catch (err) {
+      console.warn('[graph-backbone] configureGraphColors failed', err);
+    }
+  }
+
   async onunload() {
     if (this.improvementSyncTimer !== null) {
       clearInterval(this.improvementSyncTimer);
@@ -480,6 +551,7 @@ export default class ObsidianVesselPlugin extends Plugin {
     this.conceptBusListener?.stop();
     this.conceptWriteback?.stop();
     this.conceptSync?.stop();
+    this.graphBackboneSync?.stop();
 
     // Stop activity family and vessel sync services
     this.activityFamilySync?.stop();
