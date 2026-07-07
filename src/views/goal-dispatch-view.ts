@@ -23,7 +23,7 @@
  * - Component grammar: sub-card / sub-chip / sub-feed-line (see styles.css)
  */
 
-import { ItemView, WorkspaceLeaf, TFile, Notice, Menu, MarkdownView, MarkdownRenderer } from 'obsidian';
+import { ItemView, WorkspaceLeaf, TFile, Notice, Menu, MarkdownView, MarkdownRenderer, requestUrl } from 'obsidian';
 import type ObsidianVesselPlugin from '../main';
 import { GoalHostClient, type VaultContext } from '../goals/goal-host-client';
 import { GoalNoteManager } from '../goals/goal-note-manager';
@@ -739,22 +739,34 @@ export class GoalDispatchView extends ItemView {
   // Fleet board (WS6) + solicitation cards (WS5) + substrate activity (WS3)
   // ---------------------------------------------------------------------------
 
-  private async goalHostResolve(body: Record<string, unknown>): Promise<Record<string, unknown> | null> {
+  /**
+   * POST JSON via Obsidian's requestUrl (NOT fetch) — the Electron renderer
+   * blocks cross-origin fetch with CORS, so every panel network call must go
+   * through requestUrl like the rest of the plugin (see GoalHostClient). Returns
+   * parsed JSON or null on any non-2xx / transport error.
+   */
+  private async postJson(url: string, body: unknown): Promise<Record<string, unknown> | null> {
     try {
-      const base = this.plugin.settings.goalHostEndpoint.replace(/\/+$/, '');
-      const resp = await fetch(`${base}/resolve`, {
+      const r = await requestUrl({
+        url,
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...(this.plugin.settings.apiKey ? { Authorization: `ApiKey ${this.plugin.settings.apiKey}` } : {}),
         },
         body: JSON.stringify(body),
+        throw: false,
       });
-      if (!resp.ok) return null;
-      return (await resp.json()) as Record<string, unknown>;
+      if (r.status < 200 || r.status >= 300) return null;
+      return r.json as Record<string, unknown>;
     } catch {
       return null;
     }
+  }
+
+  private async goalHostResolve(body: Record<string, unknown>): Promise<Record<string, unknown> | null> {
+    const base = this.plugin.settings.goalHostEndpoint.replace(/\/+$/, '');
+    return this.postJson(`${base}/resolve`, body);
   }
 
   private startFleetBoard(): void {
@@ -796,16 +808,8 @@ export class GoalDispatchView extends ItemView {
     const disco = (this.plugin.settings.discoveryVesselEndpoint || '').replace(/\/+$/, '');
     if (!disco) return null;
     try {
-      const resp = await fetch(`${disco}/resolve`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(this.plugin.settings.apiKey ? { Authorization: `ApiKey ${this.plugin.settings.apiKey}` } : {}),
-        },
-        body: JSON.stringify({ pointer: { type: 'vesselCapability', shape } }),
-      });
-      if (!resp.ok) return null;
-      const j = (await resp.json()) as Record<string, unknown>;
+      const j = await this.postJson(`${disco}/resolve`, { pointer: { type: 'vesselCapability', shape } });
+      if (!j) return null;
       const vessels = ((j.content as Record<string, unknown> | undefined)?.vessels ?? []) as Array<Record<string, unknown>>;
       const v = vessels[0];
       if (!v) return null;
@@ -833,20 +837,7 @@ export class GoalDispatchView extends ItemView {
   ): Promise<Record<string, unknown> | null> {
     const url = await this.resolveShapeRoute(shape);
     if (!url) return null;
-    try {
-      const resp = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(this.plugin.settings.apiKey ? { Authorization: `ApiKey ${this.plugin.settings.apiKey}` } : {}),
-        },
-        body: JSON.stringify({ impulse: { type: shape, ...extra } }),
-      });
-      if (!resp.ok) return null;
-      return (await resp.json()) as Record<string, unknown>;
-    } catch {
-      return null;
-    }
+    return this.postJson(url, { impulse: { type: shape, ...extra } });
   }
 
   private startWorkBoard(): void {
