@@ -662,6 +662,8 @@ export default class ObsidianVesselPlugin extends Plugin {
       resolvers.set('human_input', acceptSolicitation);
       resolvers.set('human_judgment', acceptSolicitation);
 
+      const healthAdapter = this.app.vault.adapter as { basePath?: string };
+      const vaultPathForHealth = healthAdapter.basePath || '';
       this.httpServer = new HTTPServer({
         port: this.settings.serverPort,
         cors: {
@@ -672,6 +674,9 @@ export default class ObsidianVesselPlugin extends Plugin {
           vesselName: this.settings.vesselName,
           version: '0.1.2',
           shapes: this.settings.shapes,
+          // Instance-proof markers surfaced on GET /health (host vs container).
+          vaultPath: vaultPathForHealth,
+          isHumanVessel: this.settings.isHumanVessel !== false,
         },
         resolvers,
         vaultTouches: this.vaultTouchLedger,
@@ -1090,8 +1095,24 @@ export default class ObsidianVesselPlugin extends Plugin {
     const ADVERTISE_WITHIN_MS = 2 * 60 * 1000;
     const WITHDRAW_AFTER_MS = 12 * 60 * 1000;
     const check = async (): Promise<void> => {
+      if (!this.vesselClient || !this.vesselClient.isRegistered()) return;
+      // Non-human instance (headless in-container): NEVER advertise human
+      // shapes, and actively withdraw them if a prior state left them on —
+      // synthetic events from an automated Obsidian must not masquerade as
+      // human presence. This is the deterministic guarantee behind
+      // "human_input is served only by the host vault".
+      if (this.settings.isHumanVessel === false) {
+        const stillOn = HUMAN_SHAPES.some((s) => this.settings.shapes.includes(s));
+        if (stillOn) {
+          const cleaned = { ...this.settings, shapes: this.settings.shapes.filter((s) => !HUMAN_SHAPES.includes(s)) };
+          this.settings = cleaned;
+          console.log('[Obsidian Vessel] presence advertiser: non-human vessel — human shapes withdrawn');
+          await this.vesselClient.updateSettings(cleaned);
+        }
+        return;
+      }
       const log = this.obsidianEventLog;
-      if (!log || !this.vesselClient || !this.vesselClient.isRegistered()) return;
+      if (!log) return;
       const events = log.read({ limit: 10_000 });
       let lastTs = 0;
       for (const e of events) {

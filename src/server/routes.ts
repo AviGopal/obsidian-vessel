@@ -148,11 +148,24 @@ export function sendError(
 export function handleHealth(
   _req: IncomingMessage,
   res: ServerResponse,
-  _context: RouteContext
+  context: RouteContext
 ): void {
+  const m = context.manifest as VesselManifest & { vaultPath?: string; isHumanVessel?: boolean };
+  const shapes = m.shapes ?? [];
   sendJson(res, {
     status: 'ok',
     vessel: 'obsidian-vessel',
+    // Instance-proof markers: distinguish the HOST vault instance from the
+    // headless in-container instance when both bind :27182. vaultPath is the
+    // definitive discriminator (host: /home/projects/vaults/syzygy;
+    // container: /vaults/substrate-vault).
+    vesselId: m.vesselId,
+    vesselName: m.vesselName,
+    version: m.version,
+    vaultPath: m.vaultPath ?? null,
+    isHumanVessel: m.isHumanVessel ?? null,
+    shapeCount: shapes.length,
+    advertisesHumanInput: shapes.includes('human_input'),
     timestamp: new Date().toISOString(),
   });
 }

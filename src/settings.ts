@@ -75,6 +75,17 @@ export interface ObsidianVesselSettings {
   /** Impulse shapes this vessel can resolve */
   shapes: string[];
 
+  /**
+   * Whether this instance sits in front of a real human (a monitored,
+   * interactively-used vault). Only a human vessel advertises the
+   * `human_input` / `human_judgment` shapes to discovery — the headless
+   * in-container instance sets this false so solicitations route ONLY to the
+   * host vault the human actually reads, regardless of synthetic event
+   * activity a headless/automated Obsidian may generate. Default true: a
+   * normal desktop Obsidian user is a human.
+   */
+  isHumanVessel: boolean;
+
   // ==========================================================================
   // HTTP Server Settings
   // ==========================================================================
@@ -280,6 +291,10 @@ export const DEFAULT_SETTINGS: ObsidianVesselSettings = {
     'obsidian:concept_sync',
     'obsidian:concept_rebuild',
     'obsidian:concept_status', 'obsidian:write_note', 'obsidian:ui_view', 'obsidian:presence_rhythm', 'obsidian:vault_touches'],
+
+  // A normal desktop Obsidian user is a human; the headless in-container
+  // instance overrides this to false in its data.json.
+  isHumanVessel: true,
 
   // Sync preferences
   executionNotesFolder: 'Obsidian/Executions',
