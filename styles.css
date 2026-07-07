@@ -1061,4 +1061,33 @@ body {
   border-left: 3px solid var(--sub-provenance-substrate);
   background-color: color-mix(in srgb, var(--sub-provenance-substrate) 5%, transparent);
 }
+
+/* ── Live "why": the walk decision trail inside an expanded fleet row ── */
+.sub-why {
+  margin-top: var(--sub-space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sub-space-1);
+}
+.sub-why-trail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sub-space-1);
+  max-height: 220px;
+  overflow-y: auto;
+  padding: var(--sub-space-1) var(--sub-space-2);
+  border-left: 2px solid var(--sub-border);
+}
+.sub-why-line {
+  font-size: var(--sub-font-s);
+  color: var(--sub-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sub-why-line:last-child {
+  color: var(--sub-text);
+  font-weight: 500;
+}
+
 /* end of styles */

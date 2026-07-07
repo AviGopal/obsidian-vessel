@@ -159,6 +159,9 @@ export class GoalDispatchView extends ItemView {
   private completedDispatches: Array<Record<string, unknown>> = [];
   private completedExpanded = false;
   private fleetTimer: number | null = null;
+  // Dispatch rows the user has expanded — persisted across the 7s fleet
+  // re-render so a running walk's live "why" trail stays open and refreshes.
+  private expandedDispatches = new Set<string>();
   // Solicitation cards (WS5) + substrate-activity feed (WS3).
   private solicitationsEl: HTMLElement | null = null;
   private unsubscribeSolicitations: (() => void) | null = null;
@@ -669,6 +672,7 @@ export class GoalDispatchView extends ItemView {
     row.createSpan({ cls: 'sub-fleet-goal', text: goalSnippet, attr: { title: goal } });
     row.createSpan({ cls: 'sub-fleet-elapsed', text: elapsed });
     row.addEventListener('click', () => void this.expandFleetRow(row, d));
+    if (this.expandedDispatches.has(String(d.dispatchId ?? ''))) void this.renderFleetDetail(row, d);
     if (running) {
       const ctxBtn = row.createEl('button', { cls: 'sub-fleet-btn', text: '+ctx' });
       ctxBtn.addEventListener('click', (ev) => {
@@ -714,17 +718,32 @@ export class GoalDispatchView extends ItemView {
   }
 
   private async expandFleetRow(row: HTMLElement, d: Record<string, unknown>): Promise<void> {
+    const id = String(d.dispatchId ?? '');
     const existing = row.querySelector('.sub-fleet-detail');
     if (existing) {
       existing.remove();
+      this.expandedDispatches.delete(id);
       return;
     }
+    this.expandedDispatches.add(id);
+    await this.renderFleetDetail(row, d);
+  }
+
+  /**
+   * Build (or rebuild) the expanded detail for a fleet row: pool chips, the
+   * live walk-decision trail ("why"), and the attach button. Idempotent — the
+   * fleet board re-renders every 7s, so a persisted expansion re-fetches fresh
+   * walkState and the running walk's trail updates in place.
+   */
+  private async renderFleetDetail(row: HTMLElement, d: Record<string, unknown>): Promise<void> {
+    row.querySelector('.sub-fleet-detail')?.remove();
     const detail = row.createDiv('sub-fleet-detail');
     const j = await this.goalHostResolve({ type: 'goalWalkState', dispatchId: String(d.dispatchId ?? '') });
     const body = ((j?.body ?? {}) as Record<string, unknown>);
     const pool = (Array.isArray(body.poolShapes) ? body.poolShapes : []) as string[];
     const pending = (Array.isArray(body.pendingTargets) ? body.pendingTargets : []) as string[];
     const step = typeof body.currentStep === 'string' ? body.currentStep : null;
+    const walk = (Array.isArray(body.walkLog) ? body.walkLog : []) as string[];
     const chips = detail.createDiv('sub-fleet-chips');
     if (pool.length === 0 && pending.length === 0) {
       chips.createSpan({ cls: 'sub-chip', text: 'pool: empty' });
@@ -743,9 +762,22 @@ export class GoalDispatchView extends ItemView {
         timeline.createDiv({ cls: 'sub-feed-line', text: `${ev.shape} — ${src}`, attr: { title: ev.source } });
       }
     }
-    if (step) {
+    // Live "why": the walk's decision trail (backward-chain targets, template
+    // picks, satisfier/bridge/recovery/exclusion decisions) streamed WHILE the
+    // dispatch runs — not only on the terminal note. Falls back to the single
+    // currentStep line when talking to an older goal-host without walkLog.
+    if (walk.length > 0) {
+      const why = detail.createDiv('sub-why');
+      why.createDiv({ cls: 'sub-section-header', text: `Why — ${walk.length} walk decisions` });
+      const trail = why.createDiv('sub-why-trail');
+      for (const line of walk) {
+        const clean = line.replace('[goal-host-vessel] ', '');
+        trail.createDiv({ cls: 'sub-feed-line sub-why-line', text: clean, attr: { title: clean } });
+      }
+      trail.scrollTop = trail.scrollHeight;
+    } else if (step) {
       const stepText = step.replace('[goal-host-vessel] ', '');
-      detail.createDiv({ text: stepText, attr: { title: stepText } });
+      detail.createDiv({ cls: 'sub-why-line', text: stepText, attr: { title: stepText } });
     }
     const execId = typeof d.executionId === 'string' && !d.executionId.startsWith('interrupted:') ? d.executionId : null;
     if (execId) {
