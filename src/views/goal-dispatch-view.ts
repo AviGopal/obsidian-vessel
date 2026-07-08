@@ -813,6 +813,8 @@ export class GoalDispatchView extends ItemView {
   }
 
   private async goalHostResolve(body: Record<string, unknown>): Promise<Record<string, unknown> | null> {
+    const via = await this.sidecarResolve(body);
+    if (via) return via;
     const base = this.plugin.settings.goalHostEndpoint.replace(/\/+$/, '');
     return this.postJson(`${base}/resolve`, body);
   }
