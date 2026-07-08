@@ -195,6 +195,7 @@ export class SidecarManager {
       return;
     }
     this.child = child;
+    try { fs.writeFileSync(path.join(sidecarDir, 'sidecar.pid'), String(child.pid)); } catch { /* best effort */ }
 
     child.stdout?.on('data', (chunk: Buffer) => this.logger('info', chunk.toString().trimEnd()));
     child.stderr?.on('data', (chunk: Buffer) => this.logger('warn', chunk.toString().trimEnd()));
