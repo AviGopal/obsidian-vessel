@@ -33,7 +33,7 @@
 //   API_KEY                         ApiKey for the discovery registration
 //   OBSIDIAN_URL                    the plugin's own HTTP server base URL
 //   OBSIDIAN_PASSTHROUGH_HEALTH_PORT  plain-HTTP /health port (default 8402)
-import { createVesselLibp2p, serveResolveHttp, resolveViaHttp, type VesselLibp2p } from '@avigopal/libp2p-federation-transport';
+import { createVesselLibp2p, serveResolve, serveResolveHttp, resolveViaLibp2p, resolveViaHttp, type VesselLibp2p } from '@avigopal/libp2p-federation-transport';
 
 const VESSEL_ID = process.env.OBSIDIAN_VESSEL_ID || 'obsidian-host-vessel';
 const RELAY = process.env.RELAY_MULTIADDR || '';
@@ -90,7 +90,7 @@ async function fetchManifestShapes(): Promise<string[]> {
 
 const vl: VesselLibp2p = await createVesselLibp2p({ vesselId: VESSEL_ID, relayMultiaddr: RELAY, enableHttp: true });
 
-await serveResolveHttp(vl, async (pointer: any) => {
+const obsidianResolveHandler = async (pointer: any): Promise<any> => {
   const t = String(pointer?.type ?? '');
 
   // 1. Named action/observation route.
@@ -129,7 +129,11 @@ await serveResolveHttp(vl, async (pointer: any) => {
   }
 
   return { error: 'unknown obsidian shape: ' + t };
-});
+};
+// Serve the plugin's shapes over BOTH transports: lpStream (serveResolve — large
+// bodies like concept views survive after the sendAll fix) and legacy HTTP.
+await serveResolve(vl, obsidianResolveHandler);
+await serveResolveHttp(vl, obsidianResolveHandler);
 
 // Wait for the relay reservation -> advertisable circuit multiaddr.
 let circuit = '';
@@ -159,7 +163,11 @@ try {
           const target = String(body?.target || INGRESS || '');
           if (!target) return Response.json({ error: 'no ingress target: set FEDERATION_INGRESS_MULTIADDR' }, { status: 503 });
           if (!pointer || !pointer.type) return Response.json({ error: 'missing pointer.type' }, { status: 400 });
-          const res = await resolveViaHttp(vl, target, pointer);
+          // lpStream first (carries multi-KB hub responses reliably after the sendAll
+          // fix); fall back to legacy HTTP if the target hasn't migrated yet.
+          let res;
+          try { res = await resolveViaLibp2p(vl, target, pointer); }
+          catch { res = await resolveViaHttp(vl, target, pointer); }
           return Response.json(res);
         } catch (e) {
           return Response.json({ error: 'outbound resolve failed: ' + String((e as Error)?.message ?? e) }, { status: 502 });
