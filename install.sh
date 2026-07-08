@@ -116,20 +116,26 @@ if [ "$FEDERATION" = "1" ]; then
   fi
 fi
 
-# ── 4. Relay multiaddr (libp2p-first) ───────────────────────────────────────
-# Derive it from discovery: any vessel registered over libp2p advertises a
-# circuit multiaddr /ip4/<relay>/tcp/30333/p2p/<relayPeer>/p2p-circuit/p2p/<peer>;
-# stripping the /p2p-circuit suffix recovers the relay's own multiaddr.
-if [ "$FEDERATION" = "1" ] && [ -z "$RELAY" ]; then
-  echo "[relay] deriving relay multiaddr from $DISCOVERY_URL ..."
-  RELAY=$(curl -sf --max-time 8 -X POST "$DISCOVERY_URL/resolve" \
+# ── 4. Relay + ingress multiaddrs (libp2p-first) ────────────────────────────
+# The hub's federation-transport advertises a full circuit multiaddr
+# /ip4/<relay>/tcp/30333/p2p/<relayPeer>/p2p-circuit/p2p/<transportPeer> under
+# shape federation_probe. Two things come from it:
+#   RELAY   = the prefix before /p2p-circuit — where the sidecar reserves.
+#   INGRESS = the FULL multiaddr — the hub ingress the sidecar dials outbound to
+#             (its proxyToLocalOwner resolves any hub-local shape internally, so
+#             the plugin reaches every hub vessel over the overlay, no host:port).
+INGRESS="${INGRESS:-}"
+if [ "$FEDERATION" = "1" ] && { [ -z "$RELAY" ] || [ -z "$INGRESS" ]; }; then
+  echo "[relay] deriving relay + ingress multiaddrs from $DISCOVERY_URL ..."
+  INGRESS=$(curl -sf --max-time 8 -X POST "$DISCOVERY_URL/resolve" \
       -H "Content-Type: application/json" -H "Authorization: ApiKey $API_KEY" \
       -d '{"pointer":{"type":"vesselCapability","shape":"federation_probe"}}' \
     | jq -r '[.content.vessels[]?.libp2p_multiaddr[]? // empty
-              | select(contains("/p2p-circuit"))][0] // empty
-              | split("/p2p-circuit")[0]' 2>/dev/null || true)
+              | select(contains("/p2p-circuit"))][0] // empty' 2>/dev/null || true)
+  [ -n "$INGRESS" ] && RELAY="${INGRESS%%/p2p-circuit*}"
   if [ -n "$RELAY" ]; then
-    echo "[relay] $RELAY"
+    echo "[relay]   $RELAY"
+    echo "[ingress] $INGRESS"
   else
     echo "[relay] could not derive it automatically (no libp2p vessel registered?)."
     read -rp "Relay multiaddr (/ip4/<ip>/tcp/$RELAY_PORT/p2p/<peerId>), empty to skip: " RELAY
@@ -157,7 +163,7 @@ NEW_SETTINGS=$(jq -n \
   --arg apiKey "$API_KEY" --arg act "$ACTIVITY_URL" --arg disc "$DISCOVERY_URL" \
   --arg cdb "http://$HOST:18260" --arg gh "http://$HOST:18210" \
   --arg ws "ws://$HOST:18080/ws" --arg relay "$RELAY" --arg fvid "$FED_VESSEL_ID" \
-  --arg vid "$VESSEL_ID" --arg bun "${BUN_PATH:-bun}" \
+  --arg vid "$VESSEL_ID" --arg bun "${BUN_PATH:-bun}" --arg ingress "$INGRESS" \
   --argjson fed "$([ "$FEDERATION" = "1" ] && echo true || echo false)" '{
     vesselId: $vid,
     apiKey: $apiKey,
@@ -169,6 +175,7 @@ NEW_SETTINGS=$(jq -n \
     serverEnabled: true,
     enableFederationSidecar: $fed,
     federationRelayMultiaddr: $relay,
+    federationIngressMultiaddr: $ingress,
     federationDiscoveryUrl: $disc,
     federationVesselId: $fvid,
     federationBunPath: $bun

@@ -33,7 +33,7 @@
 //   API_KEY                         ApiKey for the discovery registration
 //   OBSIDIAN_URL                    the plugin's own HTTP server base URL
 //   OBSIDIAN_PASSTHROUGH_HEALTH_PORT  plain-HTTP /health port (default 8402)
-import { createVesselLibp2p, serveResolveHttp, type VesselLibp2p } from '@avigopal/libp2p-federation-transport';
+import { createVesselLibp2p, serveResolveHttp, resolveViaHttp, type VesselLibp2p } from '@avigopal/libp2p-federation-transport';
 
 const VESSEL_ID = process.env.OBSIDIAN_VESSEL_ID || 'obsidian-host-vessel';
 const RELAY = process.env.RELAY_MULTIADDR || '';
@@ -41,6 +41,13 @@ const DISCOVERY = (process.env.DISCOVERY_URL || '').replace(/\/+$/, '');
 const API_KEY = process.env.API_KEY || process.env.METABOB_API_KEY || '';
 const OBSIDIAN = (process.env.OBSIDIAN_URL || 'http://127.0.0.1:27182').replace(/\/+$/, '');
 const HEALTH_PORT = parseInt(process.env.OBSIDIAN_PASSTHROUGH_HEALTH_PORT || '8402', 10);
+// The hub's federation-transport ingress circuit multiaddr — the target every
+// OUTBOUND resolve is dialled to over libp2p. The hub ingress (proxyToLocalOwner)
+// looks up the shape's owner in the hub's own discovery and forwards internally,
+// so from here the plugin reaches ANY hub-local vessel over the relay without the
+// hub exposing its ports. This is what makes a remote vault behave like a co-located
+// one: outbound rides the overlay, not config-driven host:port dialling.
+const INGRESS = process.env.FEDERATION_INGRESS_MULTIADDR || '';
 
 if (!RELAY || !DISCOVERY) {
   console.error('[federation-sidecar] set RELAY_MULTIADDR and DISCOVERY_URL');
@@ -136,10 +143,27 @@ if (!circuit) console.warn('[federation-sidecar] no circuit multiaddr yet — re
 try {
   Bun.serve({
     port: HEALTH_PORT,
-    fetch(req) {
+    async fetch(req) {
       const u = new URL(req.url);
       if (u.pathname === '/health') {
-        return Response.json({ status: 'ok', service: VESSEL_ID, obsidian: OBSIDIAN, transport: vl.health(), libp2p_peer_id: vl.peerId, libp2p_multiaddr: circuit, advertised_shapes: [...Object.keys(ROUTES), ...manifestShapes] });
+        return Response.json({ status: 'ok', service: VESSEL_ID, obsidian: OBSIDIAN, transport: vl.health(), libp2p_peer_id: vl.peerId, libp2p_multiaddr: circuit, ingress: INGRESS || null, advertised_shapes: [...Object.keys(ROUTES), ...manifestShapes] });
+      }
+      // OUTBOUND: the plugin POSTs { pointer } (optionally { target }) and the
+      // sidecar dials the hub ingress over libp2p, returning the resolved payload.
+      // Loopback-only surface (the health port binds 127.0.0.1), so no auth here —
+      // the container/process boundary is the trust boundary, same as the health port.
+      if (u.pathname === '/outbound/resolve' && req.method === 'POST') {
+        try {
+          const body: any = await req.json().catch(() => ({}));
+          const pointer = body?.pointer ?? body;
+          const target = String(body?.target || INGRESS || '');
+          if (!target) return Response.json({ error: 'no ingress target: set FEDERATION_INGRESS_MULTIADDR' }, { status: 503 });
+          if (!pointer || !pointer.type) return Response.json({ error: 'missing pointer.type' }, { status: 400 });
+          const res = await resolveViaHttp(vl, target, pointer);
+          return Response.json(res);
+        } catch (e) {
+          return Response.json({ error: 'outbound resolve failed: ' + String((e as Error)?.message ?? e) }, { status: 502 });
+        }
       }
       return new Response('not found', { status: 404 });
     },
