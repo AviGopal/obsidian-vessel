@@ -609,6 +609,7 @@ export default class ObsidianVesselPlugin extends Plugin {
     const data = await this.loadData();
     this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
     this.settings.shapes = Array.from(new Set([...DEFAULT_SETTINGS.shapes, ...(this.settings.shapes ?? [])]));
+    if (!this.settings.vesselId) { this.settings.vesselId = 'obsidian-vessel-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8); await this.saveData(this.settings); }
   }
 
   /**
