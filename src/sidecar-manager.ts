@@ -184,7 +184,20 @@ export class SidecarManager {
       OBSIDIAN_PASSTHROUGH_HEALTH_PORT: String(this.settings.federationHealthPort || 8402),
     };
 
-    this.logger('info', `spawning sidecar: ${bunPath} ${scriptPath} (cwd=${sidecarDir})`);
+    try {
+        const pidPath = path.join(sidecarDir, 'sidecar.pid');
+        const stalePid = parseInt(fs.readFileSync(pidPath, 'utf8'), 10);
+        if (stalePid > 1) {
+          const held = await fetch(`http://127.0.0.1:${this.settings.federationHealthPort || 8402}/health`).then(r => r.ok).catch(() => false);
+          if (held) {
+            process.kill(stalePid, 'SIGKILL');
+            this.logger('info', `killed stale sidecar (pid ${stalePid}) holding the health port`);
+            await new Promise(r => setTimeout(r, 300));
+          }
+          fs.unlinkSync(pidPath);
+        }
+      } catch { /* no stale sidecar */ }
+      this.logger('info', `spawning sidecar: ${bunPath} ${scriptPath} (cwd=${sidecarDir})`);
 
     let child: ChildProcessWithoutNullStreams;
     try {
