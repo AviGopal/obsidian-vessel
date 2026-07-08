@@ -601,18 +601,16 @@ export class ActivityAPIClient {
     const maxAttempts = noRetry ? 1 : this.maxRetries;
     let lastError: Error | null = null;
 
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { requestUrl } = require('obsidian');
+
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+        const timeoutId = setTimeout(() => { throw new ActivityAPIError('Request timed out', 408); }, this.timeout);
 
         try {
-          const response = await fetch(url, {
-            method,
-            headers,
-            body: body ? JSON.stringify(body) : undefined,
-            signal: controller.signal,
-          });
+          const r = await requestUrl({ url, method, headers, body: body ? JSON.stringify(body) : undefined, throw: false });
+          const response = { ok: r.status >= 200 && r.status < 300, status: r.status, json: async () => r.json, text: async () => r.text };
 
           clearTimeout(timeoutId);
 
