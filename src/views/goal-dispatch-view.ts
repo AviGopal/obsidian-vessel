@@ -885,6 +885,8 @@ export class GoalDispatchView extends ItemView {
     shape: string,
     extra: Record<string, unknown> = {},
   ): Promise<Record<string, unknown> | null> {
+    const via = await this.sidecarResolve({ type: shape, ...extra });
+    if (via) return via;
     const url = await this.resolveShapeRoute(shape);
     if (!url) return null;
     return this.postJson(url, { impulse: { type: shape, ...extra } });
