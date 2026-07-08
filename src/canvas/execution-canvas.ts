@@ -413,7 +413,7 @@ export class ExecutionCanvasBuilder {
    * Get the note path for an execution trace.
    */
   private getNotePath(exec: ExecutionTrace): string {
-    const date = new Date(exec.executed_at).toISOString().split('T')[0];
+    const d = new Date(exec.executed_at); const date = (isNaN(d.getTime()) ? new Date() : d).toISOString().split('T')[0];
     return `${this.settings.executionNotesFolder}/${date}/${exec.execution_id}.md`;
   }
 
