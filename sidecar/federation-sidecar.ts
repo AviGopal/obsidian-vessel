@@ -133,16 +133,24 @@ for (let i = 0; i < 40; i++) {
 }
 if (!circuit) console.warn('[federation-sidecar] no circuit multiaddr yet — registration will advertise none');
 
-Bun.serve({
-  port: HEALTH_PORT,
-  fetch(req) {
-    const u = new URL(req.url);
-    if (u.pathname === '/health') {
-      return Response.json({ status: 'ok', service: VESSEL_ID, obsidian: OBSIDIAN, transport: vl.health(), libp2p_peer_id: vl.peerId, libp2p_multiaddr: circuit, advertised_shapes: [...Object.keys(ROUTES), ...manifestShapes] });
-    }
-    return new Response('not found', { status: 404 });
-  },
-});
+try {
+  Bun.serve({
+    port: HEALTH_PORT,
+    fetch(req) {
+      const u = new URL(req.url);
+      if (u.pathname === '/health') {
+        return Response.json({ status: 'ok', service: VESSEL_ID, obsidian: OBSIDIAN, transport: vl.health(), libp2p_peer_id: vl.peerId, libp2p_multiaddr: circuit, advertised_shapes: [...Object.keys(ROUTES), ...manifestShapes] });
+      }
+      return new Response('not found', { status: 404 });
+    },
+  });
+} catch (err) {
+  const msg = err instanceof Error ? err.message : String(err);
+  console.error(`[federation-sidecar] FATAL: cannot bind health port ${HEALTH_PORT} (${msg}). ` +
+    `Another sidecar instance is likely holding it (orphan from a previous session, or a second vault). ` +
+    `Kill the stale process or set a different federationHealthPort in the plugin settings.`);
+  process.exit(3);
+}
 
 async function register() {
   const resolverShapes = await fetchManifestShapes();
