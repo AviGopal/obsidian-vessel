@@ -143,11 +143,23 @@ fi
 # ── 5. data.json (merge over any existing settings, preserve vesselId) ──────
 HOST_LABEL="$( (hostname -s 2>/dev/null || uname -n) | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-' | sed 's/-*$//')"
 FED_VESSEL_ID="obsidian-${HOST_LABEL:-host}-vessel"
+
+# vesselId must be non-empty at registration time or discovery rejects with
+# "Missing required fields". Reuse an existing one; generate otherwise.
+VESSEL_ID=$(jq -r '.vesselId // empty' "$PLUGIN_DIR/data.json" 2>/dev/null || true)
+[ -n "$VESSEL_ID" ] || VESSEL_ID="obsidian-vessel-$(date +%s)-$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')"
+
+# GUI-launched Obsidian does not inherit the shell PATH (spawn('bun') ENOENT on
+# macOS), so persist bun's ABSOLUTE path for the sidecar.
+BUN_PATH="$(command -v bun || true)"
+
 NEW_SETTINGS=$(jq -n \
   --arg apiKey "$API_KEY" --arg act "$ACTIVITY_URL" --arg disc "$DISCOVERY_URL" \
   --arg cdb "http://$HOST:18260" --arg gh "http://$HOST:18210" \
   --arg ws "ws://$HOST:18080/ws" --arg relay "$RELAY" --arg fvid "$FED_VESSEL_ID" \
+  --arg vid "$VESSEL_ID" --arg bun "${BUN_PATH:-bun}" \
   --argjson fed "$([ "$FEDERATION" = "1" ] && echo true || echo false)" '{
+    vesselId: $vid,
     apiKey: $apiKey,
     activityApiUrl: $act,
     discoveryVesselEndpoint: $disc,
@@ -158,7 +170,8 @@ NEW_SETTINGS=$(jq -n \
     enableFederationSidecar: $fed,
     federationRelayMultiaddr: $relay,
     federationDiscoveryUrl: $disc,
-    federationVesselId: $fvid
+    federationVesselId: $fvid,
+    federationBunPath: $bun
   }')
 if [ -f "$PLUGIN_DIR/data.json" ]; then
   echo "[settings] merging into existing data.json (vesselId preserved)"
