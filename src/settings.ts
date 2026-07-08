@@ -239,6 +239,8 @@ export interface ObsidianVesselSettings {
 
   /** Circuit Relay v2 multiaddr to reserve on, e.g. `/ip4/<host>/tcp/30333/p2p/<relay-peer-id>`. */
   federationRelayMultiaddr: string;
+  /** The hub federation-transport ingress circuit multiaddr; when set with the sidecar on, all outbound resolve/dispatch routes over libp2p to the hub instead of dialing host:ports. */
+  federationIngressMultiaddr: string;
 
   /** Discovery-vessel base URL to register with (typically the remote hub). */
   federationDiscoveryUrl: string;
@@ -363,6 +365,7 @@ export const DEFAULT_SETTINGS: ObsidianVesselSettings = {
   // Federation Sidecar
   enableFederationSidecar: false,
   federationRelayMultiaddr: '',
+  federationIngressMultiaddr: '',
   federationDiscoveryUrl: '',
   federationApiKey: '',
   federationVesselId: 'obsidian-host-vessel',
