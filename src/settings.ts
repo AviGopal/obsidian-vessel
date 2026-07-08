@@ -345,7 +345,7 @@ export const DEFAULT_SETTINGS: ObsidianVesselSettings = {
   conceptDbSyncSourceTypes: [],
 
   // Goal Dispatch
-  goalHostEndpoint: 'http://127.0.0.1:8210',
+  goalHostEndpoint: 'http://127.0.0.1:18210',
   enableGoalDispatch: true,
 
   // Activity Family Sync
