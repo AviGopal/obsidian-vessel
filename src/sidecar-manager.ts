@@ -181,7 +181,8 @@ export class SidecarManager {
       DISCOVERY_URL: this.settings.federationDiscoveryUrl,
       API_KEY: this.settings.federationApiKey || this.settings.apiKey || '',
       OBSIDIAN_URL: `http://127.0.0.1:${this.opts.serverPort}`,
-      OBSIDIAN_PASSTHROUGH_HEALTH_PORT: String(this.settings.federationHealthPort || 8402),
+      FEDERATION_INGRESS_MULTIADDR: this.settings.federationIngressMultiaddr || '',
+              OBSIDIAN_PASSTHROUGH_HEALTH_PORT: String(this.settings.federationHealthPort || 8402),
     };
 
     try {
