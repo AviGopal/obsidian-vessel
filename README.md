@@ -27,7 +27,7 @@ the direct HTTP endpoints are written only as same-host fallback. Host needs `cu
 `jq`; `bun` for the sidecar. Then open the vault in Obsidian and allow community
 plugins once.
 
-## Installation (manual)
+## Installation (manual fallback)
 
 The plugin ships three files — `manifest.json`, `main.js`, `styles.css` — that go in
 a folder whose name **must equal the plugin id** (`obsidian-vessel`):
@@ -53,13 +53,15 @@ local substrate:
 | Discovery endpoint | `http://localhost:18100` |
 | Goal-host endpoint | `http://localhost:18210` |
 | Concept-DB endpoint | `http://localhost:18260` |
-| API key | from `make -C scripts/substrate seed-live` |
+| API key | `make -C scripts/substrate show-key` (operator key) or `issue-key NAME=<you>` |
 | Server port | `27182` |
 | Advertised host | `host.docker.internal` (same machine) — or a routable IP / the libp2p sidecar for remote |
 
-**Remote / behind NAT:** run the `@avigopal/libp2p-federation-transport` **sidecar** next
-to the plugin (pointed at `LOCAL_RESOLVE_URL=http://127.0.0.1:27182/resolve`). The plugin
-stays a plain HTTP server; the sidecar makes it discovery-reachable over the relay.
+**Remote / behind NAT:** the libp2p **federation sidecar** makes the plugin
+discovery-reachable over the relay while it stays a plain local HTTP server.
+`install.sh` configures this automatically (it derives the relay multiaddr from your
+discovery host and enables the sidecar); after a manual install, set the Federation
+settings (relay multiaddr, discovery URL, enable sidecar) in the plugin settings tab.
 
 ## Concept-db frontend
 
