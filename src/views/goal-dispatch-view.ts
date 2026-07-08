@@ -799,6 +799,19 @@ export class GoalDispatchView extends ItemView {
     }
   }
 
+  /** Route a resolve through the federation sidecar (libp2p to the hub ingress) when
+   *  it is enabled. Returns null when the sidecar is off or the call fails/errors so
+   *  callers transparently fall back to the direct host:port path. */
+  private async sidecarResolve(pointer: Record<string, unknown>): Promise<Record<string, unknown> | null> {
+    const s = this.plugin.settings;
+    if (!s.enableFederationSidecar || !s.federationIngressMultiaddr) return null;
+    const port = s.federationHealthPort || 8402;
+    const j = await this.postJson(`http://127.0.0.1:${port}/outbound/resolve`, { pointer });
+    const inner = (j?.content ?? null) as Record<string, unknown> | null;
+    if (!inner || inner.error) return null;
+    return inner;
+  }
+
   private async goalHostResolve(body: Record<string, unknown>): Promise<Record<string, unknown> | null> {
     const base = this.plugin.settings.goalHostEndpoint.replace(/\/+$/, '');
     return this.postJson(`${base}/resolve`, body);
