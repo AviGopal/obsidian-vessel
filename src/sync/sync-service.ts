@@ -362,7 +362,7 @@ export class SyncService {
    */
   private getNotePath(execution: ExecutionTrace): string {
     const date = new Date(execution.executed_at);
-    const dateFolder = date.toISOString().split('T')[0];
+    const dateFolder = (isNaN(date.getTime()) ? new Date() : date).toISOString().split('T')[0];
     const safeId = execution.execution_id.replace(/[^a-zA-Z0-9_-]/g, '_');
     return `${this.settings.executionNotesFolder}/${dateFolder}/${safeId}.md`;
   }
