@@ -223,8 +223,7 @@ export class SidecarManager {
     child.on('error', (err) => {
       this.logger('error', `sidecar process error: ${err.message}`);
     });
-
-    this.restartAttempt = 0;
+    setTimeout(() => { if (this.child === child && !this.stopped) this.restartAttempt = 0; }, 60_000);
   }
 
   private scheduleRestart(): void {
