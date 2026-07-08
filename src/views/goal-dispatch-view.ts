@@ -616,7 +616,18 @@ export class GoalDispatchView extends ItemView {
       }
 
       // Step 1: dispatch → 202 with dispatchId
-      const result = await client.dispatchGoal(goal, ctx);
+      // Route dispatch over the federation sidecar (libp2p -> hub ingress) via the fast
+      // async-dispatch shape when the sidecar is on; results stream back over WS. Falls
+      // back to the direct /run-goal client when the sidecar is off or the call fails.
+      let result: { executionId: string; status: string; selectedTemplateId?: string };
+      const viaSidecar = await this.sidecarResolve({ type: 'goalDispatchAsync', goal, variables: ctx as unknown as Record<string, unknown>, tags: ['dispatcher:obsidian-vessel'] });
+      const dr = (viaSidecar?.body ?? viaSidecar) as Record<string, unknown> | null;
+      const did = dr && (dr.dispatchId ?? dr.executionId);
+      if (did) {
+        result = { executionId: String(did), status: String(dr.status ?? 'running') };
+      } else {
+        result = await client.dispatchGoal(goal, ctx);
+      }
       const dispatchId = result.executionId; // holds dispatchId from 202 body
       this.activeDispatchId = dispatchId;
 
