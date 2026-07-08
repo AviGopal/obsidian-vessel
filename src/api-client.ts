@@ -606,7 +606,7 @@ export class ActivityAPIClient {
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
-        const timeoutId = setTimeout(() => { throw new ActivityAPIError('Request timed out', 408); }, this.timeout);
+        const timeoutId = setTimeout(() => { this.logger('warn', 'request exceeded timeout; requestUrl is not cancellable', { path }); }, this.timeout);
 
         try {
           const r = await requestUrl({ url, method, headers, body: body ? JSON.stringify(body) : undefined, throw: false });
