@@ -264,6 +264,7 @@ export class GoalDispatchView extends ItemView {
   private goalFile: TFile | null = null;
   private goalNoteManager: GoalNoteManager;
   private dispatching = false;
+  private elapsedTimer: number | null = null;
   private dispatchStartedAt: number | null = null;
 
   // Execution context: tracks activity name + task descriptions per execId
@@ -623,7 +624,7 @@ export class GoalDispatchView extends ItemView {
       // Show elapsed time while the auto-draft LLM selects/authors an activity.
       // This can take 30-120s; without feedback the UI looks frozen.
       const selectStart = Date.now();
-      const elapsedTimer = window.setInterval(() => {
+      this.elapsedTimer = window.setInterval(() => {
         const secs = Math.floor((Date.now() - selectStart) / 1000);
         this.updateSelectingMessage(secs);
       }, 5000);
@@ -632,7 +633,7 @@ export class GoalDispatchView extends ItemView {
       // Step 2: poll until the real execution_id is known, then replay buffer.
       // Throws with a descriptive message on persistent failure.
       const { executionId, variantId: dispatchVariantId } = await client.pollExecutionId(dispatchId);
-      window.clearInterval(elapsedTimer);
+      if (this.elapsedTimer !== null) { window.clearInterval(this.elapsedTimer); this.elapsedTimer = null; }
 
       // Step 3: replay buffered events for this execution_id, then switch to live
       // (elapsedTimer is cleared above on success; catch block clears on failure)
@@ -679,6 +680,7 @@ export class GoalDispatchView extends ItemView {
         void this.goalNoteManager.trackProgress(this.goalFile, dispatchId, client);
       }
     } catch (error) {
+      if (this.elapsedTimer !== null) { window.clearInterval(this.elapsedTimer); this.elapsedTimer = null; }
       const msg = error instanceof Error ? error.message : String(error);
       this.appendMessage(`Error dispatching goal: ${msg}`, 'error');
       new Notice(`Goal dispatch failed: ${msg}`);
@@ -819,6 +821,7 @@ export class GoalDispatchView extends ItemView {
             (d.status === 'completed' || d.status === 'failed')
         )
       ) {
+        if (this.elapsedTimer !== null) { window.clearInterval(this.elapsedTimer); this.elapsedTimer = null; }
         this.dispatching = false;
         this.setDispatchBtnState(false);
         this.activeDispatchId = null;
