@@ -1,8 +1,8 @@
 # Obsidian Vessel — Human ↔ Substrate Interaction Model
 
 > How a human interacts with the substrate through Obsidian, and the functionality
-> obsidian-vessel provides to enable it. Status as of 2026-06-15: the full
-> observe → learn → respond → develop loop is live and verified.
+> obsidian-vessel provides to enable it. The model is **multi-instance**: any
+> number of obsidian-vessels may be registered at once.
 
 ## 1. The model: a co-inhabited workspace
 
@@ -11,6 +11,26 @@ Not "a human uses a tool." Two **vessels** share one surface:
 - the **human** is a vessel (human-tier, the operator-vessel),
 - the **substrate** is a vessel,
 - **Obsidian is the medium they co-inhabit.**
+
+### 1.1 Multiple instances, one substrate
+
+There is no singleton assumption. Each running Obsidian+plugin is a **distinct
+vessel instance**: its own vault (its own local information), its own vessel id,
+its own endpoint, potentially its own human. Expectations:
+
+- **Vessel id is unique per instance.** Identity in discovery is the vessel id;
+  reusing one across instances collides in the registry.
+- **Advertisement is presence-conditioned.** An instance advertises
+  `human_input` / `human_judgment` only while its human is present; the shapes
+  are withdrawn when the human is idle, and resolve timeouts follow presence
+  quality. A discovery query for `human_input` therefore answers "which surfaces
+  have a human behind them right now."
+- **Resolution is local.** Each instance resolves only its own vault.
+  Cross-instance work composes through discovery routing, never by assuming
+  "the vault."
+
+State about an instance (behaviour models, presence rhythm, ui feedback,
+solicitation history) is keyed by vessel id, never stored globally.
 
 Each models the other with **expectations**. The substrate maintains a forward
 model of the human — `P(next-action | workspace-state)` (live; e.g.
@@ -27,10 +47,16 @@ refines. The transient state is the steady state.
 
 | # | Channel | Mode | Who initiates | What happens |
 |---|---|---|---|---|
-| 1 | **Goal dispatch** | explicit, synchronous | human | Human types a NL goal in the goal-dispatch panel → goal-host executes → task/impulse events stream back live. The "ask the substrate to do something" surface. |
+| 1 | **Goal dispatch** | explicit, **asynchronous** | human | Human types a NL goal in the goal-dispatch panel → `POST /run-goal` returns a `dispatchId` immediately → the fleet board tracks the walk live (decision tree, pool deltas, reach verdict) and the goal note records the durable outcome. Mid-flight the human can inject context into the running walk's pool (`+ctx` → `poolImpulse_write`). |
 | 2 | **Observation** | implicit, continuous | human (passively) | Human just *works*; `event_observed` captures it (flood-free); the substrate learns the operator's behaviour with zero effort from the human. The most novel channel. |
-| 3 | **Proactive delivery** | asynchronous | substrate | Substrate writes value into `Substrate/` on its own schedule; the human reads it whenever. Reflection (`Substrate/Workflow.md`) and assists (`Substrate/Assists/`). |
+| 3 | **Proactive delivery** | asynchronous | substrate | Substrate writes value into `Substrate/` — reflections (`Substrate/Workflow.md`), assists (`Substrate/Assists/`), responses (`Substrate/Responses/`), the improvement digest, the graph backbone. The human reads it whenever. |
 | 4 | **Capability-gated control** | governance | human | Human sets how far the substrate may reach (`granted_classes`, the `Substrate/`-only write boundary). The trust dial. |
+| 5 | **Solicitation (human-as-resolver)** | explicit, substrate-initiated | substrate | Goal-host resolves `human_input`/`human_judgment` through discovery to a *present* instance; the panel pins an answer card (Answer / Not now / Not enough context); typing heartbeats extend the deadline. The human is a resolver the walk can call. |
+| 6 | **Structured feedback** | explicit, human | human | `Substrate/Inbox.md` tasks (classified DEVELOP / ACTION / ANSWER and picked up exactly-once), `human_verdict:` frontmatter on goal notes (→ oracle corpus, same surface as MCP `provide_feedback`), and `ui_feedback` complaints (right-click any panel component or frontmatter) that converge on the same gap keys the substrate's own legibility audit files. |
+
+> Cadence: substrate-initiated channels are event-driven in intent — triggered by
+> vault events, presence signals, and lifecycle events, with cadence learned from
+> engagement. Fixed schedules are transitional scaffolding, not the pattern to copy.
 
 ## 3. Functionality / surface inventory (the concrete "what it entails")
 
@@ -46,7 +72,7 @@ Every shape obsidian-vessel exposes, mapped to the interaction it enables.
 | `obsidian:graph_query` | graph-neighbourhood queries | live |
 | `obsidian:frontmatter` | note metadata | live |
 | `obsidian:canvas`, `obsidian:daily_note` | canvas structure / daily note | live |
-| `obsidian:command_catalog` | the controllable action space (every command + permission/reversibility class) | live (204 learned) |
+| `obsidian:command_catalog` | the controllable action space (every command + permission/reversibility class) | live |
 
 ### Observe — the substrate learns the human (channel 2)
 | Shape | Enables | Status |
@@ -101,11 +127,28 @@ observe (behaviour model + command surface)
   → observe the human's reaction → Thompson grades it → keep useful, prune useless
 ```
 
-This loop is **live and verified end-to-end** (2026-06-15): the substrate authored
-`proposed_pattern_authored_obsidian_assist_active_note` composing `obsidian_deliver_assist`,
-and executing it delivered a real suggestion into the vault. So "what functionality it
-entails" is open-ended: the substrate keeps authoring new ways to assist as it learns
-the operator.
+Because this loop runs end-to-end — the substrate authors assist activities and
+executing them delivers real suggestions into the vault — "what functionality it
+entails" is open-ended: the substrate keeps authoring new ways to assist as it
+learns the operator.
+
+## 6. Keeping instances current — what's hot, what needs a rebuild
+
+With multiple instances, version skew is a first-class concern. Expectations:
+
+- **The advertised shape list is the version signal.** Obsidian may cache the
+  plugin manifest across reloads, so version strings can lag; comparing
+  instances' advertised shapes in discovery is the trustworthy way to detect
+  divergence.
+- **Note-mediated behavior changes apply immediately, without a rebuild:**
+  design-token overrides (`Substrate/theme-tokens.md`, whitelist-validated), all
+  rendered vault content, and panel data — panels re-render from live resolves.
+- **Code changes require a bundle rebuild and plugin reload:** the plugin runs a
+  built bundle, never TypeScript source. Reload is exposed as a resolvable action
+  (`obsidian:reload_plugin`), so instances can be brought current remotely.
+- **The HTTP surface responding is the load signal.** Renderer errors do not
+  reach host logs; a reader should treat "the instance answers on its port and
+  advertises its shapes" as the only reliable evidence that a build loaded.
 
 ## What the human actually gets
 

@@ -6,6 +6,15 @@ daily notes, graph queries) as impulse resolvers on a local HTTP server
 and registers with discovery-vessel so other vessels can route shape
 queries here.
 
+**Multi-instance:** several obsidian-vessels can be registered at once — each
+vault+human is a distinct vessel instance with its own **unique vessel id**
+(settings; never reuse an id across instances), endpoint, and local information.
+Only an instance with a present human advertises `human_input`/`human_judgment`,
+so discovery distinguishes which surfaces have a live human resolver. See
+`docs/INTERACTION_MODEL.md` §1.1 and §6 (identity, presence, and keeping
+instance versions in line — the advertised shape list, not the manifest version,
+is the trustworthy version signal).
+
 ## Installation (one command)
 
 The plugin is distributed outside the community marketplace (it runs an HTTP server
