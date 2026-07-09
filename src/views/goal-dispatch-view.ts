@@ -616,18 +616,7 @@ export class GoalDispatchView extends ItemView {
       }
 
       // Step 1: dispatch → 202 with dispatchId
-      // Route dispatch over the federation sidecar (libp2p -> hub ingress) via the fast
-      // async-dispatch shape when the sidecar is on; results stream back over WS. Falls
-      // back to the direct /run-goal client when the sidecar is off or the call fails.
-      let result: { executionId: string; status: string; selectedTemplateId?: string };
-      const viaSidecar = await this.sidecarResolve({ type: 'goalDispatchAsync', goal, variables: ctx as unknown as Record<string, unknown>, tags: ['dispatcher:obsidian-vessel'] });
-      const dr = (viaSidecar?.body ?? viaSidecar) as Record<string, unknown> | null;
-      const did = dr && (dr.dispatchId ?? dr.executionId);
-      if (did) {
-        result = { executionId: String(did), status: String(dr.status ?? 'running') };
-      } else {
-        result = await client.dispatchGoal(goal, ctx);
-      }
+      const result = await client.dispatchGoal(goal, ctx);
       const dispatchId = result.executionId; // holds dispatchId from 202 body
       this.activeDispatchId = dispatchId;
 
@@ -646,6 +635,7 @@ export class GoalDispatchView extends ItemView {
       window.clearInterval(elapsedTimer);
 
       // Step 3: replay buffered events for this execution_id, then switch to live
+      // (elapsedTimer is cleared above on success; catch block clears on failure)
       this.buffering = false;
       this.activeExecutionId = executionId;
 
@@ -810,22 +800,7 @@ export class GoalDispatchView extends ItemView {
     }
   }
 
-  /** Route a resolve through the federation sidecar (libp2p to the hub ingress) when
-   *  it is enabled. Returns null when the sidecar is off or the call fails/errors so
-   *  callers transparently fall back to the direct host:port path. */
-  private async sidecarResolve(pointer: Record<string, unknown>): Promise<Record<string, unknown> | null> {
-    const s = this.plugin.settings;
-    if (!s.enableFederationSidecar || !s.federationIngressMultiaddr) return null;
-    const port = s.federationHealthPort || 8402;
-    const j = await this.postJson(`http://127.0.0.1:${port}/outbound/resolve`, { pointer });
-    const inner = (j?.content ?? null) as Record<string, unknown> | null;
-    if (!inner || inner.error) return null;
-    return inner;
-  }
-
   private async goalHostResolve(body: Record<string, unknown>): Promise<Record<string, unknown> | null> {
-    const via = await this.sidecarResolve(body);
-    if (via) return via;
     const base = this.plugin.settings.goalHostEndpoint.replace(/\/+$/, '');
     return this.postJson(`${base}/resolve`, body);
   }
@@ -836,6 +811,18 @@ export class GoalDispatchView extends ItemView {
       const j = await this.goalHostResolve({ type: 'activeDispatches' });
       if (!j) return;
       const dispatches = ((j.body as Record<string, unknown> | undefined)?.dispatches ?? []) as Array<Record<string, unknown>>;
+      if (
+        this.activeDispatchId &&
+        dispatches.some(
+          (d: Record<string, unknown>) =>
+            d.id === this.activeDispatchId &&
+            (d.status === 'completed' || d.status === 'failed')
+        )
+      ) {
+        this.dispatching = false;
+        this.setDispatchBtnState(false);
+        this.activeDispatchId = null;
+      }
       this.renderFleet(dispatches);
     };
     void tick();
@@ -896,8 +883,6 @@ export class GoalDispatchView extends ItemView {
     shape: string,
     extra: Record<string, unknown> = {},
   ): Promise<Record<string, unknown> | null> {
-    const via = await this.sidecarResolve({ type: shape, ...extra });
-    if (via) return via;
     const url = await this.resolveShapeRoute(shape);
     if (!url) return null;
     return this.postJson(url, { impulse: { type: shape, ...extra } });
