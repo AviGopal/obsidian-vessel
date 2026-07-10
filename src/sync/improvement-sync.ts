@@ -77,16 +77,8 @@ async function fetchTraces(settings: ObsidianVesselSettings): Promise<TraceRow[]
   if (viaSidecar && viaSidecar.ok && Array.isArray(viaSidecar.body?.executions)) {
     return viaSidecar.body.executions as TraceRow[];
   }
-  try {
-    const base = settings.activityApiUrl.replace(/\/$/, '');
-    const resp = await fetch(base + path, { headers: authHeaders(settings) });
-    if (!resp.ok) return null;
-    const data = await resp.json();
-    return Array.isArray(data.executions) ? (data.executions as TraceRow[]) : null;
-  } catch (err) {
-    log('trace fetch failed', { error: String(err) });
-    return null;
-  }
+  log('trace fetch unavailable (sidecar conduit unreachable)');
+  return null;
 }
 
 async function fetchLabels(settings: ObsidianVesselSettings): Promise<LabelRow[] | null> {
@@ -115,19 +107,8 @@ async function fetchLabels(settings: ObsidianVesselSettings): Promise<LabelRow[]
     const rows = parse(viaSidecar.body);
     if (rows) return rows;
   }
-  try {
-    const base = settings.activityApiUrl.replace(/\/$/, '');
-    const resp = await fetch(`${base}/v2/impulses/resolve`, {
-      method: 'POST',
-      headers: authHeaders(settings),
-      body: JSON.stringify(payload),
-    });
-    if (!resp.ok) return null;
-    return parse(await resp.json());
-  } catch (err) {
-    log('label fetch failed', { error: String(err) });
-    return null;
-  }
+  log('label fetch unavailable (sidecar conduit unreachable or unauthorized)');
+  return null;
 }
 
 async function fetchGaps(settings: ObsidianVesselSettings): Promise<GapRow[] | null> {
@@ -151,15 +132,8 @@ async function fetchGaps(settings: ObsidianVesselSettings): Promise<GapRow[] | n
 async function fetchGoalPathStats(settings: ObsidianVesselSettings): Promise<GoalPathStats | null> {
   const viaSidecar = await sidecarHttp(settings, { shape: 'activityExecutionTrace', path: '/v2/goal-paths/stats' });
   if (viaSidecar && viaSidecar.ok && viaSidecar.body) return viaSidecar.body as GoalPathStats;
-  try {
-    const base = settings.activityApiUrl.replace(/\/$/, '');
-    const resp = await fetch(`${base}/v2/goal-paths/stats`, { headers: authHeaders(settings) });
-    if (!resp.ok) return null;
-    return (await resp.json()) as GoalPathStats;
-  } catch (err) {
-    log('goal-path stats fetch failed', { error: String(err) });
-    return null;
-  }
+  log('goal-path stats unavailable (sidecar conduit unreachable)');
+  return null;
 }
 
 function funnelLine(traces: TraceRow[], needle: string): string {
