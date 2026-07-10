@@ -252,26 +252,31 @@ const obsidianResolveHandler = async (pointer: any): Promise<any> => {
   return { error: 'unknown obsidian shape: ' + t };
 };
 
-// Loaded lazily so LOCAL mode never touches libp2p at all.
+// Loaded lazily so LOCAL mode never touches libp2p at all. Assigned by
+// initLibp2p() AFTER the loopback API is already serving \u2014 the conduit must be
+// reachable the moment the process starts (the plugin's on-load syncs race the
+// relay reservation otherwise); overlay-dependent paths just see vl=null until
+// the transport is up and fall back to discovery-routed HTTP in the meantime.
 let vl: any = null;
 let circuit = '';
 let resolveViaLibp2pFn: any = null;
 let resolveViaHttpFn: any = null;
 
-if (!LOCAL_MODE) {
+async function initLibp2p(): Promise<void> {
   const { createVesselLibp2p, serveResolve, serveResolveHttp, resolveViaLibp2p, resolveViaHttp } =
     await import('@avigopal/libp2p-federation-transport');
   resolveViaLibp2pFn = resolveViaLibp2p;
   resolveViaHttpFn = resolveViaHttp;
-  vl = await createVesselLibp2p({ vesselId: VESSEL_ID, relayMultiaddr: RELAY, enableHttp: true });
+  const node = await createVesselLibp2p({ vesselId: VESSEL_ID, relayMultiaddr: RELAY, enableHttp: true });
   // Serve the plugin's shapes over BOTH transports: lpStream (serveResolve \u2014 large
   // bodies like concept views survive after the sendAll fix) and legacy HTTP.
-  await serveResolve(vl, obsidianResolveHandler);
-  await serveResolveHttp(vl, obsidianResolveHandler);
+  await serveResolve(node, obsidianResolveHandler);
+  await serveResolveHttp(node, obsidianResolveHandler);
+  vl = node;
 
   // Wait for the relay reservation -> advertisable circuit multiaddr.
   for (let i = 0; i < 40; i++) {
-    const c = vl.advertiseMultiaddrs().find((m: string) => m.includes('p2p-circuit'));
+    const c = node.advertiseMultiaddrs().find((m: string) => m.includes('p2p-circuit'));
     if (c) { circuit = c; break; }
     await new Promise((r) => setTimeout(r, 500));
   }
@@ -396,7 +401,7 @@ try {
   process.exit(3);
 }
 
-// \u2500\u2500 Discovery registration (federated mode only) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// \u2500\u2500 libp2p init + discovery registration \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 // In LOCAL mode the plugin registers itself with discovery directly (its HTTP
 // server is reachable from the substrate via the advertised host); registering
 // here too would double-register the same vessel.
@@ -431,6 +436,7 @@ async function register() {
   }
 }
 if (!LOCAL_MODE) {
+  await initLibp2p();
   await register();
   setInterval(register, 120_000);
 } else {
@@ -658,26 +664,31 @@ const obsidianResolveHandler = async (pointer: any): Promise<any> => {
   return { error: 'unknown obsidian shape: ' + t };
 };
 
-// Loaded lazily so LOCAL mode never touches libp2p at all.
+// Loaded lazily so LOCAL mode never touches libp2p at all. Assigned by
+// initLibp2p() AFTER the loopback API is already serving \u2014 the conduit must be
+// reachable the moment the process starts (the plugin's on-load syncs race the
+// relay reservation otherwise); overlay-dependent paths just see vl=null until
+// the transport is up and fall back to discovery-routed HTTP in the meantime.
 let vl: any = null;
 let circuit = '';
 let resolveViaLibp2pFn: any = null;
 let resolveViaHttpFn: any = null;
 
-if (!LOCAL_MODE) {
+async function initLibp2p(): Promise<void> {
   const { createVesselLibp2p, serveResolve, serveResolveHttp, resolveViaLibp2p, resolveViaHttp } =
     await import('@avigopal/libp2p-federation-transport');
   resolveViaLibp2pFn = resolveViaLibp2p;
   resolveViaHttpFn = resolveViaHttp;
-  vl = await createVesselLibp2p({ vesselId: VESSEL_ID, relayMultiaddr: RELAY, enableHttp: true });
+  const node = await createVesselLibp2p({ vesselId: VESSEL_ID, relayMultiaddr: RELAY, enableHttp: true });
   // Serve the plugin's shapes over BOTH transports: lpStream (serveResolve \u2014 large
   // bodies like concept views survive after the sendAll fix) and legacy HTTP.
-  await serveResolve(vl, obsidianResolveHandler);
-  await serveResolveHttp(vl, obsidianResolveHandler);
+  await serveResolve(node, obsidianResolveHandler);
+  await serveResolveHttp(node, obsidianResolveHandler);
+  vl = node;
 
   // Wait for the relay reservation -> advertisable circuit multiaddr.
   for (let i = 0; i < 40; i++) {
-    const c = vl.advertiseMultiaddrs().find((m: string) => m.includes('p2p-circuit'));
+    const c = node.advertiseMultiaddrs().find((m: string) => m.includes('p2p-circuit'));
     if (c) { circuit = c; break; }
     await new Promise((r) => setTimeout(r, 500));
   }
@@ -802,7 +813,7 @@ try {
   process.exit(3);
 }
 
-// \u2500\u2500 Discovery registration (federated mode only) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// \u2500\u2500 libp2p init + discovery registration \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 // In LOCAL mode the plugin registers itself with discovery directly (its HTTP
 // server is reachable from the substrate via the advertised host); registering
 // here too would double-register the same vessel.
@@ -837,6 +848,7 @@ async function register() {
   }
 }
 if (!LOCAL_MODE) {
+  await initLibp2p();
   await register();
   setInterval(register, 120_000);
 } else {
