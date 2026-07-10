@@ -1,39 +1,42 @@
-// federation-sidecar.ts — libp2p Circuit Relay v2 passthrough for the
-// operator-host Obsidian plugin. Spawned and supervised by the plugin itself
-// (see ../src/sidecar-manager.ts) as a separate child process, so the plugin's
-// own esbuild bundle never has to carry libp2p as a dependency.
+// federation-sidecar.ts — the plugin's single substrate conduit, spawned and
+// supervised by the plugin itself (see ../src/sidecar-manager.ts) as a separate
+// child process, so the plugin's own esbuild bundle never has to carry libp2p.
 //
-// Makes the plugin's local HTTP server (http://127.0.0.1:<serverPort>, NATed,
-// unreachable from a remote substrate) discoverable and resolvable from a
-// remote hub over a Circuit Relay v2 reservation: registers with the hub's
-// discovery-vessel advertising protocol:"libp2p" + the circuit multiaddr, then
-// proxies each resolved shape to the plugin's HTTP server. Two families are
-// bridged:
-//   1. Named action/observation routes (obsidian_status, obsidian_dispatch_goal
-//      …) → the specific REST route in ../src/main.ts.
-//   2. The plugin's colon-form RESOLVER shapes (obsidian:note, obsidian:
-//      workspace_state, obsidian:write_note …), fetched live from the plugin's
-//      GET /manifest → proxied to POST /resolve. This is the impulse-contract
-//      surface: whatever resolvers the plugin registers (including ones the
-//      substrate authors into it later) become discoverable/resolvable from any
-//      substrate that peers with the hub, WITHOUT editing this file — the
-//      manifest is the source of truth.
+// The sidecar is the ONE place that holds the API key and the discovery URL.
+// Everything else is looked up: given a shape, it asks discovery which vessel
+// owns it, remaps the registered endpoint to a reachable host:port, and
+// forwards the request with auth attached. The plugin talks only to the
+// sidecar's loopback port and never needs per-service endpoints or keys.
 //
-// This is the single registration surface for the operator-host vessel. The
-// intended routing (per the operator's topology) is entirely relay-mediated:
-//   plugin → this sidecar (libp2p) → relay@hub → hub discovery
-//   spoke goal-host (peers hub) → local federation egress → relay → this sidecar → plugin
-// No host.docker.internal direct path is required; the vessel is reachable from
-// any peer of the hub identically.
+// Two operating modes, selected by whether RELAY_MULTIADDR is set:
+//
+//   LOCAL (no relay): pure egress conduit. No libp2p node is created; the
+//   loopback API below is served, and every outbound resolve/HTTP call is
+//   routed via discovery lookup + direct HTTP. The plugin registers itself
+//   with discovery as before (no double registration from here).
+//
+//   FEDERATED (relay set): everything LOCAL does, plus a libp2p Circuit
+//   Relay v2 reservation that makes the plugin's local HTTP server
+//   discoverable and resolvable from a remote hub. Registers with the hub's
+//   discovery advertising protocol:"libp2p" + the circuit multiaddr, and
+//   prefers the overlay (hub ingress) for outbound resolves, falling back to
+//   discovery-routed HTTP.
+//
+// Loopback API (127.0.0.1:<OBSIDIAN_PASSTHROUGH_HEALTH_PORT>, CORS-open so the
+// Obsidian renderer at app://obsidian.md can call it directly):
+//   GET  /health            — liveness + transport + advertised shapes
+//   POST /outbound/resolve  — { pointer } → resolve via overlay or discovery
+//   POST /outbound/http     — { service?|shape?, method?, path, body? } →
+//                             plain REST forwarded to the owning vessel
 //
 // Env (all set by SidecarManager when it spawns this process):
 //   OBSIDIAN_VESSEL_ID              stable vessel id (seeds the libp2p identity)
-//   RELAY_MULTIADDR                 the substrate relay's public multiaddr    [required]
-//   DISCOVERY_URL                   discovery-vessel base URL to register with [required]
-//   API_KEY                         ApiKey for the discovery registration
+//   RELAY_MULTIADDR                 the substrate relay's public multiaddr [optional → LOCAL mode]
+//   DISCOVERY_URL                   discovery-vessel base URL              [required]
+//   API_KEY                         ApiKey attached to every forwarded request
 //   OBSIDIAN_URL                    the plugin's own HTTP server base URL
-//   OBSIDIAN_PASSTHROUGH_HEALTH_PORT  plain-HTTP /health port (default 8402)
-import { createVesselLibp2p, serveResolve, serveResolveHttp, resolveViaLibp2p, resolveViaHttp, type VesselLibp2p } from '@avigopal/libp2p-federation-transport';
+//   OBSIDIAN_PASSTHROUGH_HEALTH_PORT  loopback API port (default 8402)
+//   FEDERATION_INGRESS_MULTIADDR    hub ingress circuit multiaddr (federated outbound)
 
 const VESSEL_ID = process.env.OBSIDIAN_VESSEL_ID || 'obsidian-host-vessel';
 const RELAY = process.env.RELAY_MULTIADDR || '';
@@ -41,19 +44,88 @@ const DISCOVERY = (process.env.DISCOVERY_URL || '').replace(/\/+$/, '');
 const API_KEY = process.env.API_KEY || process.env.METABOB_API_KEY || '';
 const OBSIDIAN = (process.env.OBSIDIAN_URL || 'http://127.0.0.1:27182').replace(/\/+$/, '');
 const HEALTH_PORT = parseInt(process.env.OBSIDIAN_PASSTHROUGH_HEALTH_PORT || '8402', 10);
-// The hub's federation-transport ingress circuit multiaddr — the target every
-// OUTBOUND resolve is dialled to over libp2p. The hub ingress (proxyToLocalOwner)
-// looks up the shape's owner in the hub's own discovery and forwards internally,
-// so from here the plugin reaches ANY hub-local vessel over the relay without the
-// hub exposing its ports. This is what makes a remote vault behave like a co-located
-// one: outbound rides the overlay, not config-driven host:port dialling.
 const INGRESS = process.env.FEDERATION_INGRESS_MULTIADDR || '';
+const LOCAL_MODE = !RELAY;
 
-if (!RELAY || !DISCOVERY) {
-  console.error('[federation-sidecar] set RELAY_MULTIADDR and DISCOVERY_URL');
+if (!DISCOVERY) {
+  console.error('[federation-sidecar] set DISCOVERY_URL (RELAY_MULTIADDR is optional — without it the sidecar runs as a local egress conduit)');
   process.exit(1);
 }
 
+// ── Discovery-routed HTTP egress ─────────────────────────────────────────────
+// Given a shape, ask discovery who owns it and derive a reachable base URL.
+// Vessels register their in-container endpoints (e.g. http://127.0.0.1:8080);
+// from outside the container the convention is host = discovery's host and
+// port 8xxx → 18xxx. Endpoints already carrying a routable host:port pass
+// through unchanged when they match the discovery host.
+const discoveryUrl = new URL(DISCOVERY);
+
+function remapEndpoint(endpoint: string): string {
+  try {
+    const u = new URL(endpoint);
+    const port = parseInt(u.port || (u.protocol === 'https:' ? '443' : '80'), 10);
+    const discoveryPort = parseInt(discoveryUrl.port || '80', 10);
+    u.hostname = discoveryUrl.hostname;
+    if (port >= 8000 && port < 10000 && discoveryPort >= 10000) {
+      u.port = String(port + 10000);
+    }
+    return u.origin;
+  } catch {
+    return endpoint.replace(/\/+$/, '');
+  }
+}
+
+interface ShapeOwner { base: string; resolvePath: string; vesselId: string }
+const ownerCache = new Map<string, { owner: ShapeOwner; ts: number }>();
+const OWNER_CACHE_TTL_MS = 60_000;
+
+async function lookupShapeOwner(shape: string): Promise<ShapeOwner | null> {
+  const cached = ownerCache.get(shape);
+  if (cached && Date.now() - cached.ts < OWNER_CACHE_TTL_MS) return cached.owner;
+  try {
+    const res = await fetch(DISCOVERY + '/resolve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(API_KEY ? { Authorization: 'ApiKey ' + API_KEY } : {}) },
+      body: JSON.stringify({ pointer: { type: 'vesselCapability', shape } }),
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!res.ok) return null;
+    const body: any = await res.json().catch(() => ({}));
+    const vessels: any[] = body?.content?.vessels ?? body?.vessels ?? [];
+    // Never route back to ourselves (the plugin's own shapes resolve locally).
+    const v = vessels.find((x) => x?.endpoint && x?.vessel_id !== VESSEL_ID && !String(x?.vessel_id ?? '').startsWith('obsidian-'));
+    if (!v) return null;
+    const owner: ShapeOwner = {
+      base: remapEndpoint(String(v.endpoint)),
+      resolvePath: String(v.resolve_endpoint || '/v2/impulses/resolve'),
+      vesselId: String(v.vessel_id ?? 'unknown'),
+    };
+    ownerCache.set(shape, { owner, ts: Date.now() });
+    return owner;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveViaDiscoveryHttp(pointer: any): Promise<any> {
+  const shape = String(pointer?.type ?? '');
+  const owner = await lookupShapeOwner(shape);
+  if (!owner) return { error: `no vessel advertises shape "${shape}" in discovery (${DISCOVERY})` };
+  try {
+    const res = await fetch(owner.base + owner.resolvePath, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(API_KEY ? { Authorization: 'ApiKey ' + API_KEY } : {}) },
+      body: JSON.stringify({ impulse: { pointer } }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    const body = await res.json().catch(() => ({}));
+    return { shape, resolved_by: owner.vesselId, status: res.status, ok: res.ok, ...(typeof body === 'object' && body !== null ? body : { body }) };
+  } catch (e) {
+    return { error: `resolve against ${owner.vesselId} (${owner.base}) failed: ${String((e as Error)?.message ?? e)}` };
+  }
+}
+
+// ── libp2p transport (federated mode only) ──────────────────────────────────
 // Named action/observation routes. Kept in lockstep with the action/observation
 // route registration in ../src/main.ts; add an entry here when a new named
 // obsidian_* action/observation route is exposed. (The colon-form RESOLVER
@@ -87,8 +159,6 @@ async function fetchManifestShapes(): Promise<string[]> {
   }
   return manifestShapes;
 }
-
-const vl: VesselLibp2p = await createVesselLibp2p({ vesselId: VESSEL_ID, relayMultiaddr: RELAY, enableHttp: true });
 
 const obsidianResolveHandler = async (pointer: any): Promise<any> => {
   const t = String(pointer?.type ?? '');
@@ -130,50 +200,126 @@ const obsidianResolveHandler = async (pointer: any): Promise<any> => {
 
   return { error: 'unknown obsidian shape: ' + t };
 };
-// Serve the plugin's shapes over BOTH transports: lpStream (serveResolve — large
-// bodies like concept views survive after the sendAll fix) and legacy HTTP.
-await serveResolve(vl, obsidianResolveHandler);
-await serveResolveHttp(vl, obsidianResolveHandler);
 
-// Wait for the relay reservation -> advertisable circuit multiaddr.
+// Loaded lazily so LOCAL mode never touches libp2p at all.
+let vl: any = null;
 let circuit = '';
-for (let i = 0; i < 40; i++) {
-  const c = vl.advertiseMultiaddrs().find((m) => m.includes('p2p-circuit'));
-  if (c) { circuit = c; break; }
-  await new Promise((r) => setTimeout(r, 500));
+let resolveViaLibp2pFn: any = null;
+let resolveViaHttpFn: any = null;
+
+if (!LOCAL_MODE) {
+  const { createVesselLibp2p, serveResolve, serveResolveHttp, resolveViaLibp2p, resolveViaHttp } =
+    await import('@avigopal/libp2p-federation-transport');
+  resolveViaLibp2pFn = resolveViaLibp2p;
+  resolveViaHttpFn = resolveViaHttp;
+  vl = await createVesselLibp2p({ vesselId: VESSEL_ID, relayMultiaddr: RELAY, enableHttp: true });
+  // Serve the plugin's shapes over BOTH transports: lpStream (serveResolve — large
+  // bodies like concept views survive after the sendAll fix) and legacy HTTP.
+  await serveResolve(vl, obsidianResolveHandler);
+  await serveResolveHttp(vl, obsidianResolveHandler);
+
+  // Wait for the relay reservation -> advertisable circuit multiaddr.
+  for (let i = 0; i < 40; i++) {
+    const c = vl.advertiseMultiaddrs().find((m: string) => m.includes('p2p-circuit'));
+    if (c) { circuit = c; break; }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  if (!circuit) console.warn('[federation-sidecar] no circuit multiaddr yet — registration will advertise none');
 }
-if (!circuit) console.warn('[federation-sidecar] no circuit multiaddr yet — registration will advertise none');
+
+// ── Loopback API ─────────────────────────────────────────────────────────────
+// CORS-open: the Obsidian renderer's origin is app://obsidian.md and Chromium
+// preflights cross-origin fetches. This port binds loopback only, so the
+// process boundary — not the origin — is the trust boundary.
+const CORS_HEADERS: Record<string, string> = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+};
+
+function corsJson(payload: unknown, status = 200): Response {
+  return Response.json(payload as any, { status, headers: CORS_HEADERS });
+}
 
 try {
   Bun.serve({
     port: HEALTH_PORT,
+    hostname: '127.0.0.1',
     async fetch(req) {
       const u = new URL(req.url);
+      if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS });
       if (u.pathname === '/health') {
-        return Response.json({ status: 'ok', service: VESSEL_ID, obsidian: OBSIDIAN, transport: vl.health(), libp2p_peer_id: vl.peerId, libp2p_multiaddr: circuit, ingress: INGRESS || null, advertised_shapes: [...Object.keys(ROUTES), ...manifestShapes] });
+        return corsJson({
+          status: 'ok',
+          service: VESSEL_ID,
+          mode: LOCAL_MODE ? 'local' : 'federated',
+          obsidian: OBSIDIAN,
+          discovery: DISCOVERY,
+          transport: vl ? vl.health() : null,
+          libp2p_peer_id: vl ? vl.peerId : null,
+          libp2p_multiaddr: circuit || null,
+          ingress: INGRESS || null,
+          advertised_shapes: [...Object.keys(ROUTES), ...manifestShapes],
+        });
       }
-      // OUTBOUND: the plugin POSTs { pointer } (optionally { target }) and the
-      // sidecar dials the hub ingress over libp2p, returning the resolved payload.
-      // Loopback-only surface (the health port binds 127.0.0.1), so no auth here —
-      // the container/process boundary is the trust boundary, same as the health port.
+      // OUTBOUND resolve: the plugin POSTs { pointer } (optionally { target }).
+      // Federated: dial the hub ingress over libp2p. Local (or overlay failure):
+      // discovery lookup + direct HTTP to the owning vessel, API key attached.
       if (u.pathname === '/outbound/resolve' && req.method === 'POST') {
         try {
           const body: any = await req.json().catch(() => ({}));
           const pointer = body?.pointer ?? body;
+          if (!pointer || !pointer.type) return corsJson({ error: 'missing pointer.type' }, 400);
           const target = String(body?.target || INGRESS || '');
-          if (!target) return Response.json({ error: 'no ingress target: set FEDERATION_INGRESS_MULTIADDR' }, { status: 503 });
-          if (!pointer || !pointer.type) return Response.json({ error: 'missing pointer.type' }, { status: 400 });
-          // lpStream first (carries multi-KB hub responses reliably after the sendAll
-          // fix); fall back to legacy HTTP if the target hasn't migrated yet.
-          let res;
-          try { res = await resolveViaLibp2p(vl, target, pointer); }
-          catch { res = await resolveViaHttp(vl, target, pointer); }
-          return Response.json(res);
+          if (vl && target) {
+            // lpStream first (carries multi-KB hub responses reliably after the
+            // sendAll fix); legacy HTTP second; discovery-routed HTTP last.
+            try { return corsJson(await resolveViaLibp2pFn(vl, target, pointer)); }
+            catch {
+              try { return corsJson(await resolveViaHttpFn(vl, target, pointer)); }
+              catch { /* fall through to discovery routing */ }
+            }
+          }
+          return corsJson(await resolveViaDiscoveryHttp(pointer));
         } catch (e) {
-          return Response.json({ error: 'outbound resolve failed: ' + String((e as Error)?.message ?? e) }, { status: 502 });
+          return corsJson({ error: 'outbound resolve failed: ' + String((e as Error)?.message ?? e) }, 502);
         }
       }
-      return new Response('not found', { status: 404 });
+      // OUTBOUND plain REST: { service?: 'discovery', shape?, method?, path, body? }.
+      // The target base URL comes from discovery (shape ownership), never from
+      // plugin config — this is what lets the plugin drop per-service endpoints.
+      if (u.pathname === '/outbound/http' && req.method === 'POST') {
+        try {
+          const spec: any = await req.json().catch(() => ({}));
+          const path = String(spec?.path ?? '');
+          if (!path.startsWith('/')) return corsJson({ error: 'missing or invalid path' }, 400);
+          let base = '';
+          let via = '';
+          if (spec?.service === 'discovery') {
+            base = DISCOVERY;
+            via = 'discovery';
+          } else if (spec?.shape) {
+            const owner = await lookupShapeOwner(String(spec.shape));
+            if (!owner) return corsJson({ error: `no vessel advertises shape "${spec.shape}"` }, 502);
+            base = owner.base;
+            via = owner.vesselId;
+          } else {
+            return corsJson({ error: 'specify service:"discovery" or a shape to route by' }, 400);
+          }
+          const method = String(spec?.method || (spec?.body != null ? 'POST' : 'GET')).toUpperCase();
+          const res = await fetch(base + path, {
+            method,
+            headers: { 'Content-Type': 'application/json', ...(API_KEY ? { Authorization: 'ApiKey ' + API_KEY } : {}) },
+            body: spec?.body != null ? JSON.stringify(spec.body) : undefined,
+            signal: AbortSignal.timeout(30_000),
+          });
+          const body = await res.json().catch(() => null);
+          return corsJson({ status: res.status, ok: res.ok, via, body });
+        } catch (e) {
+          return corsJson({ error: 'outbound http failed: ' + String((e as Error)?.message ?? e) }, 502);
+        }
+      }
+      return new Response('not found', { status: 404, headers: CORS_HEADERS });
     },
   });
 } catch (err) {
@@ -184,6 +330,10 @@ try {
   process.exit(3);
 }
 
+// ── Discovery registration (federated mode only) ────────────────────────────
+// In LOCAL mode the plugin registers itself with discovery directly (its HTTP
+// server is reachable from the substrate via the advertised host); registering
+// here too would double-register the same vessel.
 async function register() {
   const resolverShapes = await fetchManifestShapes();
   const shapes = [...Object.keys(ROUTES), ...resolverShapes];
@@ -214,7 +364,13 @@ async function register() {
     console.log('[federation-sidecar] register err', String(e));
   }
 }
-await register();
-setInterval(register, 120_000);
+if (!LOCAL_MODE) {
+  await register();
+  setInterval(register, 120_000);
+} else {
+  // Keep the advertised-shapes list in /health fresh even without registration.
+  await fetchManifestShapes();
+  setInterval(fetchManifestShapes, 120_000);
+}
 
-console.log(`[federation-sidecar] up id=${VESSEL_ID} peer=${vl.peerId} health=:${HEALTH_PORT} circuit=${circuit || '(none yet)'} -> obsidian ${OBSIDIAN}`);
+console.log(`[federation-sidecar] up id=${VESSEL_ID} mode=${LOCAL_MODE ? 'local' : 'federated'} health=:${HEALTH_PORT}${vl ? ` peer=${vl.peerId} circuit=${circuit || '(none yet)'}` : ''} -> obsidian ${OBSIDIAN}, discovery ${DISCOVERY}`)
