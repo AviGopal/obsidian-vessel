@@ -25,7 +25,7 @@ import type { ObsidianVesselSettings } from '../settings';
 import { formatSuccessRate } from '../formatters/metrics-formatter';
 
 export const IMPROVEMENT_NOTE_PATH = 'Substrate/Improvement.md';
-const DEV_VESSEL_ENDPOINT = 'http://127.0.0.1:18090';
+import { sidecarHttp } from '../sidecar-manager';
 const WINDOW_HOURS = 24;
 const LOW_TRACE_THRESHOLD = 10;
 const TRACE_FETCH_LIMIT = 200;
@@ -70,11 +70,16 @@ function authHeaders(settings: ObsidianVesselSettings): Record<string, string> {
 }
 
 async function fetchTraces(settings: ObsidianVesselSettings): Promise<TraceRow[] | null> {
+  const since = new Date(Date.now() - WINDOW_HOURS * 3_600_000).toISOString();
+  const path = `/v2/activities/execution-traces?limit=${TRACE_FETCH_LIMIT}&start_date=${encodeURIComponent(since)}`;
+  // Sidecar-first: routed to the vessel owning the trace store via discovery.
+  const viaSidecar = await sidecarHttp(settings, { shape: 'activityExecutionTrace', path });
+  if (viaSidecar && viaSidecar.ok && Array.isArray(viaSidecar.body?.executions)) {
+    return viaSidecar.body.executions as TraceRow[];
+  }
   try {
     const base = settings.activityApiUrl.replace(/\/$/, '');
-    const since = new Date(Date.now() - WINDOW_HOURS * 3_600_000).toISOString();
-    const url = `${base}/v2/activities/execution-traces?limit=${TRACE_FETCH_LIMIT}&start_date=${encodeURIComponent(since)}`;
-    const resp = await fetch(url, { headers: authHeaders(settings) });
+    const resp = await fetch(base + path, { headers: authHeaders(settings) });
     if (!resp.ok) return null;
     const data = await resp.json();
     return Array.isArray(data.executions) ? (data.executions as TraceRow[]) : null;
@@ -85,23 +90,40 @@ async function fetchTraces(settings: ObsidianVesselSettings): Promise<TraceRow[]
 }
 
 async function fetchLabels(settings: ObsidianVesselSettings): Promise<LabelRow[] | null> {
+  const payload = {
+    impulse: {
+      id: `improvement-note-labels-${Date.now()}`,
+      pointer: { type: 'goal_verification_label', limit: LABEL_FETCH_LIMIT },
+    },
+  };
+  const parse = (data: any): LabelRow[] | null => {
+    if (!data || !data.success || typeof data.content !== 'string') return null;
+    try {
+      const rows = JSON.parse(data.content);
+      return Array.isArray(rows) ? (rows as LabelRow[]) : null;
+    } catch {
+      return null;
+    }
+  };
+  const viaSidecar = await sidecarHttp(settings, {
+    shape: 'goal_verification_label',
+    path: '/v2/impulses/resolve',
+    method: 'POST',
+    body: payload,
+  });
+  if (viaSidecar && viaSidecar.ok) {
+    const rows = parse(viaSidecar.body);
+    if (rows) return rows;
+  }
   try {
     const base = settings.activityApiUrl.replace(/\/$/, '');
     const resp = await fetch(`${base}/v2/impulses/resolve`, {
       method: 'POST',
       headers: authHeaders(settings),
-      body: JSON.stringify({
-        impulse: {
-          id: `improvement-note-labels-${Date.now()}`,
-          pointer: { type: 'goal_verification_label', limit: LABEL_FETCH_LIMIT },
-        },
-      }),
+      body: JSON.stringify(payload),
     });
     if (!resp.ok) return null;
-    const data = await resp.json();
-    if (!data.success || typeof data.content !== 'string') return null;
-    const rows = JSON.parse(data.content);
-    return Array.isArray(rows) ? (rows as LabelRow[]) : null;
+    return parse(await resp.json());
   } catch (err) {
     log('label fetch failed', { error: String(err) });
     return null;
@@ -109,23 +131,26 @@ async function fetchLabels(settings: ObsidianVesselSettings): Promise<LabelRow[]
 }
 
 async function fetchGaps(settings: ObsidianVesselSettings): Promise<GapRow[] | null> {
-  try {
-    const resp = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
-      method: 'POST',
-      headers: authHeaders(settings),
-      body: JSON.stringify({ impulse: { type: 'substrateGap' } }),
-    });
-    if (!resp.ok) return null;
-    const data = await resp.json();
+  // Routed by shape ownership: the sidecar asks discovery which vessel serves
+  // substrateGap — no hardcoded development-vessel endpoint, no CORS (loopback).
+  const viaSidecar = await sidecarHttp(settings, {
+    shape: 'substrateGap',
+    path: '/v2/impulses/resolve',
+    method: 'POST',
+    body: { impulse: { type: 'substrateGap' } },
+  });
+  if (viaSidecar && viaSidecar.ok) {
+    const data = viaSidecar.body;
     const gaps = data && data.body && Array.isArray(data.body.gaps) ? data.body.gaps : null;
-    return gaps as GapRow[] | null;
-  } catch (err) {
-    log('gap fetch failed', { error: String(err) });
-    return null;
+    if (gaps) return gaps as GapRow[];
   }
+  log('gap fetch unavailable (sidecar unreachable or no substrateGap owner)');
+  return null;
 }
 
 async function fetchGoalPathStats(settings: ObsidianVesselSettings): Promise<GoalPathStats | null> {
+  const viaSidecar = await sidecarHttp(settings, { shape: 'activityExecutionTrace', path: '/v2/goal-paths/stats' });
+  if (viaSidecar && viaSidecar.ok && viaSidecar.body) return viaSidecar.body as GoalPathStats;
   try {
     const base = settings.activityApiUrl.replace(/\/$/, '');
     const resp = await fetch(`${base}/v2/goal-paths/stats`, { headers: authHeaders(settings) });
