@@ -75,7 +75,7 @@ function remapEndpoint(endpoint: string): string {
   }
 }
 
-interface ShapeOwner { base: string; resolvePath: string; vesselId: string }
+interface ShapeOwner { base: string; resolvePath: string; vesselId: string; multiaddrs: string[] }
 const ownerCache = new Map<string, { owner: ShapeOwner; ts: number }>();
 const OWNER_CACHE_TTL_MS = 60_000;
 
@@ -102,6 +102,7 @@ async function lookupShapeOwner(shape: string): Promise<ShapeOwner | null> {
       base: v.public_endpoint ? String(v.public_endpoint).replace(/\/+$/, '') : remapEndpoint(String(v.endpoint)),
       resolvePath: String(v.resolve_endpoint || '/v2/impulses/resolve'),
       vesselId: idOf(v) || 'unknown',
+      multiaddrs: Array.isArray(v.libp2p_multiaddr) ? v.libp2p_multiaddr.filter((m: unknown) => typeof m === 'string') : [],
     };
     ownerCache.set(shape, { owner, ts: Date.now() });
     return owner;
@@ -114,6 +115,17 @@ async function resolveViaDiscoveryHttp(pointer: any): Promise<any> {
   const shape = String(pointer?.type ?? '');
   const owner = await lookupShapeOwner(shape);
   if (!owner) return { error: `no vessel advertises shape "${shape}" in discovery (${DISCOVERY})` };
+  // Owners registered behind a federation transport advertise protocol:libp2p
+  // with a circuit multiaddr and only a peer-loopback HTTP endpoint — dial the
+  // overlay when we have a node; the HTTP path below stays as fallback.
+  if (vl && resolveViaLibp2pFn && owner.multiaddrs.length > 0) {
+    try {
+      const res = await resolveViaLibp2pFn(vl, owner.multiaddrs[0], pointer);
+      return { shape, resolved_by: owner.vesselId, ok: true, ...(typeof res === 'object' && res !== null ? res : { body: res }) };
+    } catch {
+      /* fall through to HTTP */
+    }
+  }
   try {
     const res = await fetch(owner.base + owner.resolvePath, {
       method: 'POST',
@@ -304,6 +316,21 @@ try {
           } else if (spec?.shape) {
             const owner = await lookupShapeOwner(String(spec.shape));
             if (!owner) return corsJson({ error: `no vessel advertises shape "${spec.shape}"` }, 502);
+            // Owners behind a federation transport are HTTP-unreachable (peer
+            // loopback endpoint) but overlay-dialable. Impulse-resolve requests
+            // translate cleanly onto the overlay's resolve protocol; do that
+            // instead of dialling a dead endpoint.
+            const bodyObj: any = spec?.body;
+            const isResolve = spec.path === owner.resolvePath && bodyObj && typeof bodyObj === 'object' && (bodyObj.impulse || bodyObj.pointer);
+            if (vl && resolveViaLibp2pFn && owner.multiaddrs.length > 0 && isResolve) {
+              try {
+                const pointer = { type: String(spec.shape), ...(bodyObj.impulse?.pointer ?? bodyObj.impulse ?? bodyObj.pointer) };
+                const res = await resolveViaLibp2pFn(vl, owner.multiaddrs[0], pointer);
+                return corsJson({ status: 200, ok: true, via: owner.vesselId, body: res?.content ?? res });
+              } catch {
+                /* fall through to plain HTTP */
+              }
+            }
             base = owner.base;
             via = owner.vesselId;
           } else {
