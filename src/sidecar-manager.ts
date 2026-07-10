@@ -60,13 +60,20 @@ export class SidecarManager {
     this.settings = settings;
   }
 
+  /** Discovery URL the sidecar routes through: federation setting first, local substrate discovery otherwise. */
+  private discoveryUrl(): string {
+    return this.settings.federationDiscoveryUrl || this.settings.discoveryVesselEndpoint || '';
+  }
+
   start(): void {
     if (!this.settings.enableFederationSidecar) {
       this.logger('info', 'enableFederationSidecar is off — not starting');
       return;
     }
-    if (!this.settings.federationRelayMultiaddr || !this.settings.federationDiscoveryUrl) {
-      this.logger('warn', 'enableFederationSidecar is on but federationRelayMultiaddr/federationDiscoveryUrl are unset — not starting');
+    // A relay is optional: without one the sidecar runs in LOCAL mode as a
+    // pure discovery-routed egress conduit. Only a discovery URL is required.
+    if (!this.discoveryUrl()) {
+      this.logger('warn', 'enableFederationSidecar is on but no discovery URL is set (federationDiscoveryUrl or discoveryVesselEndpoint) — not starting');
       return;
     }
     this.stopped = false;
@@ -119,11 +126,22 @@ export class SidecarManager {
       fs.mkdirSync(sidecarDir, { recursive: true });
       const scriptPath = path.join(sidecarDir, 'federation-sidecar.ts');
       const pkgPath = path.join(sidecarDir, 'package.json');
-      if (!fs.existsSync(scriptPath) || fs.readFileSync(scriptPath, 'utf8') !== __SIDECAR_SOURCE__) {
-        fs.writeFileSync(scriptPath, __SIDECAR_SOURCE__);
-      }
-      if (!fs.existsSync(pkgPath) || fs.readFileSync(pkgPath, 'utf8') !== __SIDECAR_PACKAGE_JSON__) {
-        fs.writeFileSync(pkgPath, __SIDECAR_PACKAGE_JSON__);
+      // Builds made before the esbuild define embed ship without the sidecar
+      // source; fall back to files already on disk (install.sh copies them)
+      // instead of crashing the materialization with a ReferenceError.
+      const embedded = typeof __SIDECAR_SOURCE__ !== 'undefined' && typeof __SIDECAR_PACKAGE_JSON__ !== 'undefined';
+      if (embedded) {
+        if (!fs.existsSync(scriptPath) || fs.readFileSync(scriptPath, 'utf8') !== __SIDECAR_SOURCE__) {
+          fs.writeFileSync(scriptPath, __SIDECAR_SOURCE__);
+        }
+        if (!fs.existsSync(pkgPath) || fs.readFileSync(pkgPath, 'utf8') !== __SIDECAR_PACKAGE_JSON__) {
+          fs.writeFileSync(pkgPath, __SIDECAR_PACKAGE_JSON__);
+        }
+      } else if (!fs.existsSync(scriptPath) || !fs.existsSync(pkgPath)) {
+        this.logger('error', 'sidecar source not embedded in this build and not present on disk — reinstall via install.sh or rebuild the plugin');
+        return false;
+      } else {
+        this.logger('info', 'using on-disk sidecar sources (build has no embedded copy)');
       }
     } catch (err) {
       this.logger('error', `sidecar materialization failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -178,7 +196,7 @@ export class SidecarManager {
       ...process.env,
       OBSIDIAN_VESSEL_ID: this.settings.federationVesselId || 'obsidian-host-vessel',
       RELAY_MULTIADDR: this.settings.federationRelayMultiaddr,
-      DISCOVERY_URL: this.settings.federationDiscoveryUrl,
+      DISCOVERY_URL: this.discoveryUrl(),
       API_KEY: this.settings.federationApiKey || this.settings.apiKey || '',
       OBSIDIAN_URL: `http://127.0.0.1:${this.opts.serverPort}`,
       FEDERATION_INGRESS_MULTIADDR: this.settings.federationIngressMultiaddr || '',
@@ -234,5 +252,96 @@ export class SidecarManager {
     this.restartTimer = setTimeout(() => {
       if (!this.stopped) this.spawnChild();
     }, delay);
+  }
+}
+
+
+// ============================================================================
+// Sidecar egress client — the plugin's single substrate conduit.
+//
+// All outbound substrate communication routes through the federation
+// sidecar's loopback API (see ../sidecar/federation-sidecar.ts). The sidecar
+// holds the API key and the discovery URL, resolves the vessel owning any
+// shape via discovery, and forwards the request with auth attached — so the
+// plugin needs no per-service endpoints or keys. Works identically whether
+// the sidecar is federated (relay overlay) or local (discovery-routed HTTP).
+//
+// Every helper fails soft (null / false) so callers can fall back to their
+// legacy direct paths where those still work.
+// ============================================================================
+
+export interface SidecarHttpRequest {
+  /** Route to a fixed service the sidecar knows natively (currently 'discovery'). */
+  service?: 'discovery';
+  /** Route to whichever vessel advertises this shape in discovery. */
+  shape?: string;
+  /** HTTP method; defaults to GET (POST when body is set). */
+  method?: string;
+  /** Path on the target vessel, e.g. '/v2/goal-paths/stats'. */
+  path: string;
+  /** JSON body. */
+  body?: unknown;
+}
+
+export interface SidecarHttpResult {
+  status: number;
+  ok: boolean;
+  via?: string;
+  body: any;
+}
+
+function sidecarBase(settings: ObsidianVesselSettings): string {
+  return `http://127.0.0.1:${settings.federationHealthPort || 8402}`;
+}
+
+async function postJson(url: string, payload: unknown, timeoutMs: number): Promise<any | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    return await res.json().catch(() => null);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Resolve an impulse pointer via the sidecar (overlay or discovery-routed). */
+export async function sidecarResolve(
+  settings: ObsidianVesselSettings,
+  pointer: Record<string, unknown>,
+  timeoutMs = 30_000,
+): Promise<any | null> {
+  return postJson(`${sidecarBase(settings)}/outbound/resolve`, { pointer }, timeoutMs);
+}
+
+/** Forward a plain REST request to the vessel owning a shape (or to discovery). */
+export async function sidecarHttp(
+  settings: ObsidianVesselSettings,
+  req: SidecarHttpRequest,
+  timeoutMs = 30_000,
+): Promise<SidecarHttpResult | null> {
+  const r = await postJson(`${sidecarBase(settings)}/outbound/http`, req, timeoutMs);
+  return r && typeof r.status === 'number' ? (r as SidecarHttpResult) : null;
+}
+
+/** True when the sidecar's loopback API is reachable. */
+export async function sidecarAvailable(settings: ObsidianVesselSettings): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 2_000);
+  try {
+    const res = await fetch(`${sidecarBase(settings)}/health`, { signal: controller.signal });
+    return res.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
   }
 }
