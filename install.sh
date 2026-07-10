@@ -94,9 +94,9 @@ else
   done
 fi
 
-# Sidecar source must be shipped alongside — the bundled main.js does not embed
-# it (__SIDECAR_SOURCE__ is not defined at build time), so the plugin cannot
-# self-materialize it. Copying it here is what makes libp2p work.
+# Current builds embed the sidecar source (esbuild define) and self-materialize
+# it on first start; copying it here is belt-and-braces so older builds and
+# offline installs work too, and pre-installing deps avoids a first-start wait.
 if [ "$FEDERATION" = "1" ]; then
   mkdir -p "$PLUGIN_DIR/sidecar"
   if [ -f "$SCRIPT_DIR/sidecar/federation-sidecar.ts" ]; then
@@ -138,12 +138,14 @@ if [ "$FEDERATION" = "1" ] && { [ -z "$RELAY" ] || [ -z "$INGRESS" ]; }; then
     echo "[ingress] $INGRESS"
   else
     echo "[relay] could not derive it automatically (no libp2p vessel registered?)."
-    read -rp "Relay multiaddr (/ip4/<ip>/tcp/$RELAY_PORT/p2p/<peerId>), empty to skip: " RELAY
+    read -rp "Relay multiaddr (/ip4/<ip>/tcp/$RELAY_PORT/p2p/<peerId>), empty for local mode: " RELAY
   fi
 fi
+# No relay ≠ no sidecar: without one the sidecar runs in LOCAL mode — a pure
+# discovery-routed egress conduit (CORS-free loopback API, API key attached,
+# endpoints looked up per shape). Only --no-federation disables it entirely.
 if [ "$FEDERATION" = "1" ] && [ -z "$RELAY" ]; then
-  echo "[relay] no relay available — federation sidecar will stay disabled (direct HTTP only)."
-  FEDERATION=0
+  echo "[relay] no relay — sidecar will run in LOCAL mode (discovery-routed egress only)."
 fi
 
 # ── 5. data.json (merge over any existing settings, preserve vesselId) ──────
@@ -203,11 +205,13 @@ echo
 echo "── obsidian-vessel installed ──────────────────────────────────────────"
 echo "  vault:      $VAULT"
 echo "  substrate:  $HOST (discovery $DISCOVERY_URL)"
-if [ "$FEDERATION" = "1" ]; then
+if [ "$FEDERATION" = "1" ] && [ -n "$RELAY" ]; then
   echo "  transport:  libp2p via relay  $RELAY"
   echo "              (vessel id: $FED_VESSEL_ID; sidecar health: http://127.0.0.1:8402/health)"
+elif [ "$FEDERATION" = "1" ]; then
+  echo "  transport:  sidecar in LOCAL mode (discovery-routed egress; health: http://127.0.0.1:8402/health)"
 else
-  echo "  transport:  direct HTTP only (no relay — rerun with --relay <multiaddr> to enable libp2p)"
+  echo "  transport:  direct HTTP only (sidecar disabled — rerun without --no-federation to enable)"
 fi
 echo
 echo "Next: open the vault in Obsidian (community plugins must be allowed once in"

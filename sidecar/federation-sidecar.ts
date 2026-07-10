@@ -93,12 +93,15 @@ async function lookupShapeOwner(shape: string): Promise<ShapeOwner | null> {
     const body: any = await res.json().catch(() => ({}));
     const vessels: any[] = body?.content?.vessels ?? body?.vessels ?? [];
     // Never route back to ourselves (the plugin's own shapes resolve locally).
-    const v = vessels.find((x) => x?.endpoint && x?.vessel_id !== VESSEL_ID && !String(x?.vessel_id ?? '').startsWith('obsidian-'));
+    const idOf = (x: any) => String(x?.vesselId ?? x?.vessel_id ?? '');
+    const v = vessels.find((x) => x?.endpoint && idOf(x) !== VESSEL_ID && !idOf(x).startsWith('obsidian-'));
     if (!v) return null;
+    // Registrations may carry an explicit host-reachable public_endpoint;
+    // fall back to remapping the (possibly in-container) endpoint otherwise.
     const owner: ShapeOwner = {
-      base: remapEndpoint(String(v.endpoint)),
+      base: v.public_endpoint ? String(v.public_endpoint).replace(/\/+$/, '') : remapEndpoint(String(v.endpoint)),
       resolvePath: String(v.resolve_endpoint || '/v2/impulses/resolve'),
-      vesselId: String(v.vessel_id ?? 'unknown'),
+      vesselId: idOf(v) || 'unknown',
     };
     ownerCache.set(shape, { owner, ts: Date.now() });
     return owner;
