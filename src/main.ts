@@ -211,9 +211,14 @@ export default class ObsidianVesselPlugin extends Plugin {
         await this.app.vault.create(path, content);
       }
     };
-    syncImprovements(this.settings, writeNote).catch((e: unknown) =>
-      console.error('[obsidian-vessel] improvement sync error', e)
-    );
+    // First tick waits out the federation-sidecar spawn: firing immediately
+    // races the conduit's startup and burns the on-load attempt on
+    // ERR_CONNECTION_REFUSED.
+    window.setTimeout(() => {
+      syncImprovements(this.settings, writeNote).catch((e: unknown) =>
+        console.error('[obsidian-vessel] improvement sync error', e)
+      );
+    }, 20_000);
     this.improvementSyncTimer = setInterval(() => {
       syncImprovements(this.settings, writeNote).catch((e: unknown) =>
         console.error('[obsidian-vessel] improvement sync error', e)
