@@ -14,6 +14,7 @@
 
 import type { App } from 'obsidian';
 import type { ObsidianVesselSettings } from '../settings';
+import { sidecarHttp } from "../sidecar-manager";
 
 interface DiscoveryVesselEntry {
   vessel_id: string;
@@ -57,7 +58,8 @@ function buildVesselNote(entry: DiscoveryVesselEntry, now: string): string {
   const id = entry.vessel_id;
   const name = entry.vessel_name || humanizeName(id);
   const status = entry.status || 'unknown';
-  const shapes = entry.shapes ?? [];
+  // Registry rows sometimes carry shapes as a count or map — only an array is renderable.
+  const shapes = Array.isArray(entry.shapes) ? entry.shapes : [];
   const shapesCount = entry.shapes_count ?? shapes.length;
   const lastHeartbeat = entry.last_heartbeat ?? entry.registered_at;
 
@@ -151,6 +153,16 @@ export class VesselSyncService {
     const apiKey = this.settings.apiKey;
     const headers: Record<string, string> = { Accept: 'application/json' };
     if (apiKey) headers['Authorization'] = `ApiKey ${apiKey}`;
+
+    // Sidecar-first: discovery is the sidecar's own fixed point, so this works
+    // with zero endpoint config and no CORS (loopback). The direct strategies
+    // below remain as same-host fallback.
+    const viaSidecar = await sidecarHttp(this.settings, { service: 'discovery', path: '/registry/stats' });
+    if (viaSidecar && viaSidecar.ok && viaSidecar.body) {
+      const data = viaSidecar.body as RegistryStatsResponse;
+      const list = data.vessels ?? data.registrations ?? [];
+      if (list.length > 0) return list;
+    }
 
     // Strategy 1: GET /registry/stats
     try {
