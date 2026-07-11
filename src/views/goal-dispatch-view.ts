@@ -868,7 +868,12 @@ export class GoalDispatchView extends ItemView {
       if (!v) return null;
       const candidates = [String(v.public_endpoint || ''), String(v.endpoint || '')].map((s) => s.replace(/\/+$/, '')).filter((s, i, a) => s && a.indexOf(s) === i);
         let base = candidates[0] ?? '';
-        for (const cand of candidates) { try { const probe = await fetch(cand + '/health', { signal: AbortSignal.timeout(1500) }); if (probe.ok) { base = cand; break; } } catch { /* try next candidate */ } }
+        for (const cand of candidates) {
+        try {
+          const probe = await requestUrl({ url: cand + '/health', method: 'GET', throw: false });
+          if (probe.status >= 200 && probe.status < 300) { base = cand; break; }
+        } catch { /* try next candidate */ }
+      }
       if (!base) return null;
       // resolve_endpoint may be a path ("/v2/impulses/resolve") or an absolute
       // (in-container) URL — take just its path and hang it off the reachable base.
