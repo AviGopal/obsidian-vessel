@@ -191,6 +191,29 @@ function sourceLabel(source: string | undefined): string {
   }
 }
 
+function humanizeWalkLine(line: string): string {
+  const brace = line.indexOf('{');
+  if (brace === -1) return line;
+  try {
+    const obj = JSON.parse(line.slice(brace));
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return line;
+    const bits: string[] = [];
+    for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+      if (v === null || v === undefined || v === '') continue;
+      if (Array.isArray(v)) {
+        if (v.length > 0 && v.length <= 4 && v.every((x) => typeof x === 'string')) bits.push(k + ': ' + v.join(', '));
+        continue;
+      }
+      if (typeof v === 'object') continue;
+      const s = String(v);
+      bits.push(k + ': ' + (s.length > 48 ? s.slice(0, 48) + '…' : s));
+    }
+    return line.slice(0, brace).trim() + (bits.length ? ' — ' + bits.join(' · ') : '');
+  } catch {
+    return line;
+  }
+}
+
 /** Compact α/β or sampled-score annotation for a template chip. */
 function scoreAnnot(s: { alpha?: number; beta?: number; sampledScore?: number }): string {
   if (typeof s.sampledScore === 'number') return `θ${s.sampledScore.toFixed(2)}`;
@@ -1518,7 +1541,7 @@ export class GoalDispatchView extends ItemView {
       const trail = why.createDiv('sub-why-trail');
       for (const line of walk) {
         const clean = line.replace('[goal-host-vessel] ', '');
-        trail.createDiv({ cls: 'sub-feed-line sub-why-line', text: clean, attr: { title: clean } });
+        trail.createDiv({ cls: 'sub-feed-line sub-why-line', text: humanizeWalkLine(clean), attr: { title: clean } });
       }
       trail.scrollTop = trail.scrollHeight;
     } else if (step) {
