@@ -13,6 +13,7 @@ import { resolveSearch } from './search-resolver';
 import { resolveListNotes } from './list-notes-resolver';
 import { resolveCanvas } from './canvas-resolver';
 import { resolveUiScreenshot } from './ui-screenshot-resolver';
+import { resolveUiLayoutMetrics } from './ui-layout-metrics-resolver';
 import { resolveBacklinks } from './backlinks-resolver';
 import { resolveFrontmatter } from './frontmatter-resolver';
 import { resolveDailyNote } from './daily-note-resolver';
@@ -140,6 +141,7 @@ registerResolver('obsidian:list_notes', resolveListNotes);
 // Canvas resolver - obsidian:canvas
 registerResolver('obsidian:canvas', resolveCanvas);
 registerResolver('obsidian:ui_screenshot', resolveUiScreenshot);
+registerResolver('obsidian:ui_layout_metrics', resolveUiLayoutMetrics);
 
 // Backlinks resolver - obsidian:backlinks
 registerResolver('obsidian:backlinks', resolveBacklinks);
