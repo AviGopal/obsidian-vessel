@@ -213,20 +213,9 @@ export class ObsidianVesselSettingTab extends PluginSettingTab {
   private createConnectionSection(containerEl: HTMLElement): void {
     containerEl.createEl('h2', { text: 'Connection' });
     containerEl.createEl('p', {
-      text: 'Configure the connection to the Obsidian Activity API.',
+      text: 'The API key authenticates every substrate call (it also carries your organization). Endpoints are discovered automatically — locally via the substrate defaults, remotely via the federation sidecar.',
       cls: 'setting-item-description',
     });
-
-    new Setting(containerEl)
-      .setName('Activity API URL')
-      .setDesc('URL of the obsidian-activity-api server')
-      .addText(text => text
-        .setPlaceholder(DEFAULT_SETTINGS.activityApiUrl)
-        .setValue(this.plugin.settings.activityApiUrl)
-        .onChange(async (value) => {
-          this.plugin.settings.activityApiUrl = value;
-          await this.plugin.saveSettings();
-        }));
 
     new Setting(containerEl)
       .setName('API Key')
@@ -242,16 +231,6 @@ export class ObsidianVesselSettingTab extends PluginSettingTab {
         text.inputEl.type = 'password';
       });
 
-    new Setting(containerEl)
-      .setName('Organization ID')
-      .setDesc('Your organization ID for multi-tenant isolation')
-      .addText(text => text
-        .setPlaceholder('Enter organization ID')
-        .setValue(this.plugin.settings.orgId)
-        .onChange(async (value) => {
-          this.plugin.settings.orgId = value;
-          await this.plugin.saveSettings();
-        }));
 
     new Setting(containerEl)
       .setName('Test Connection')
