@@ -176,7 +176,8 @@ export class ExecutionFormatter {
     lines.push(`| Status | ${statusEmoji} ${execution.success ? 'Success' : 'Failed'} |`);
     lines.push(`| Duration | ${formatDuration(execution.duration_ms)} |`);
     lines.push(`| Cost | ${formatCost(getCost(execution))} |`);
-    lines.push(`| Executed | ${execution.executed_at ? formatRelativeTime(execution.executed_at) : '-'} |`);
+    const executedTs = execution.executed_at ?? (execution as { completed_at?: string; started_at?: string }).completed_at ?? (execution as { completed_at?: string; started_at?: string }).started_at;
+    lines.push(`| Executed | ${executedTs ? formatRelativeTime(executedTs) : '-'} |`);
 
     if (execution.vessel_id) {
       lines.push(`| Vessel | \`${execution.vessel_id}\` |`);
