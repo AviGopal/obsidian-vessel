@@ -279,8 +279,8 @@ ${status.realtimeConnected ? 'Live updates enabled' : 'Polling fallback'}`
   : 'Never'}
 
 **Pending**: ${status.pendingSync} items
-**Auto-sync**: ${this.settings.autoSync ? 'Enabled' : 'Disabled'}
-**Interval**: ${this.settings.syncInterval} min`
+**syncOnStart**: ${this.settings.syncOnStart ? 'Enabled' : 'Disabled'}
+**Interval**: ${this.settings.syncIntervalMinutes} min`
     };
   }
 
