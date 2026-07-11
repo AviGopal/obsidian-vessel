@@ -151,7 +151,7 @@ export class ExecutionFormatter {
       success: execution.success,
       duration_ms: execution.duration_ms,
       cost: getCost(execution),
-      executed_at: execution.executed_at,
+      executed_at: (execution.executed_at ?? (execution as { completed_at?: string; started_at?: string }).completed_at ?? (execution as { completed_at?: string; started_at?: string }).started_at),
       vessel_id: execution.vessel_id,
       extraTags: this.getExtraTags(execution),
     });
