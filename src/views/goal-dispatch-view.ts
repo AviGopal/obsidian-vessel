@@ -1264,7 +1264,11 @@ export class GoalDispatchView extends ItemView {
     // 3. Decision tree when steps are present; otherwise degrade gracefully.
     const steps = Array.isArray(body.steps) ? (body.steps as WalkStep[]) : [];
     if (steps.length > 0) {
-      this.renderDecisionTree(detail, steps);
+      const producers = new Map<string, string>();
+        for (const ev of (Array.isArray(body.poolEvents) ? body.poolEvents : []) as Array<{ shape: string; source: string }>) {
+          if (ev && ev.shape && ev.source && !producers.has(ev.shape)) producers.set(ev.shape, ev.source);
+        }
+        this.renderDecisionTree(detail, steps, producers);
     } else {
       this.renderWalkFallback(detail, body);
     }
@@ -1331,7 +1335,7 @@ export class GoalDispatchView extends ItemView {
    * considered, exclusions with reasons, and step status + rationale prose.
    * Shadow / recovery steps are visually distinct.
    */
-  private renderDecisionTree(parent: HTMLElement, steps: WalkStep[]): void {
+  private renderDecisionTree(parent: HTMLElement, steps: WalkStep[], producers: Map<string, string>): void {
     const tree = parent.createDiv('sub-tree');
     tree.createDiv({ cls: 'sub-section-header', text: `Decision tree — ${steps.length} step${steps.length === 1 ? '' : 's'}` });
     let prevPool: string[] | null = null;
@@ -1340,7 +1344,12 @@ export class GoalDispatchView extends ItemView {
       const before = Array.isArray(step.poolBefore) ? step.poolBefore : (prevPool ?? []);
       this.renderStepNode(tree, step, i);
       const after = Array.isArray(step.poolAfter) ? step.poolAfter : before;
-      this.renderPoolDelta(tree, before, after, step.newShapes);
+      this.renderPoolDelta(
+        tree,
+        before,
+        after,
+        Array.isArray(step.newShapes) ? step.newShapes : undefined,
+      );
       prevPool = after;
     });
   }
@@ -1409,7 +1418,7 @@ export class GoalDispatchView extends ItemView {
    * poolBefore, highlighted as new), plus a collapsed "pool: N shapes"
    * affordance expanding the full pool at that point.
    */
-  private renderPoolDelta(parent: HTMLElement, before: string[], after: string[], newShapes?: string[]): void {
+  private renderPoolDelta(parent: HTMLElement, before: string[], after: string[], newShapes?: string[], producers?: Map<string, string>): void {
     const beforeSet = new Set(before);
     const added = (Array.isArray(newShapes) && newShapes.length > 0)
       ? newShapes
