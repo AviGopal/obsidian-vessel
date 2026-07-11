@@ -117,31 +117,7 @@ export class ObsidianVesselSettingTab extends PluginSettingTab {
           }),
       );
 
-    new Setting(containerEl)
-      .setName('Concept-DB endpoint')
-      .setDesc('HTTP URL for concept-db (default: local substrate host port).')
-      .addText(t =>
-        t
-          .setPlaceholder(DEFAULT_SETTINGS.conceptDbEndpoint)
-          .setValue(this.plugin.settings.conceptDbEndpoint)
-          .onChange(async (v) => {
-            this.plugin.settings.conceptDbEndpoint = v;
-            await this.plugin.saveSettings();
-          }),
-      );
-
-    new Setting(containerEl)
-      .setName('Concept-DB API key')
-      .setDesc('Leave blank to reuse the Activity API key.')
-      .addText(t =>
-        t
-          .setPlaceholder('(uses Activity API key if blank)')
-          .setValue(this.plugin.settings.conceptDbApiKey)
-          .onChange(async (v) => {
-            this.plugin.settings.conceptDbApiKey = v;
-            await this.plugin.saveSettings();
-          }),
-      );
+    // Concept-DB endpoint and API key settings removed
 
     new Setting(containerEl)
       .setName('Sync root folder')
@@ -396,52 +372,6 @@ export class ObsidianVesselSettingTab extends PluginSettingTab {
     // Vessel Registration subsection
     containerEl.createEl('h3', { text: 'Vessel Registration' });
 
-    new Setting(containerEl)
-      .setName('Vessel ID')
-      .setDesc('Unique identifier for this vessel instance')
-      .addText(text => text
-        .setPlaceholder('Auto-generated if empty')
-        .setValue(this.plugin.settings.vesselId)
-        .onChange(async (value) => {
-          this.plugin.settings.vesselId = value;
-          await this.plugin.saveSettings();
-        }))
-      .addButton(button => button
-        .setButtonText('Generate')
-        .onClick(async () => {
-          this.plugin.settings.vesselId = generateVesselId();
-          await this.plugin.saveSettings();
-          this.display();
-          new Notice('New vessel ID generated');
-        }));
-
-    new Setting(containerEl)
-      .setName('Vessel Name')
-      .setDesc('Human-readable name for this vessel')
-      .addText(text => text
-        .setPlaceholder(DEFAULT_SETTINGS.vesselName)
-        .setValue(this.plugin.settings.vesselName)
-        .onChange(async (value) => {
-          this.plugin.settings.vesselName = value;
-          await this.plugin.saveSettings();
-        }));
-
-    new Setting(containerEl)
-      .setName('Supported Shapes')
-      .setDesc('Impulse shapes this vessel can resolve (comma-separated)')
-      .addTextArea(text => {
-        text
-          .setPlaceholder(DEFAULT_SETTINGS.shapes.join(', '))
-          .setValue(this.plugin.settings.shapes.join(', '))
-          .onChange(async (value) => {
-            this.plugin.settings.shapes = value
-              .split(',')
-              .map(s => s.trim())
-              .filter(s => s.length > 0);
-            await this.plugin.saveSettings();
-          });
-        text.inputEl.rows = 3;
-      });
   }
 
   /**
