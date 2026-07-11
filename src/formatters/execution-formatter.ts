@@ -106,7 +106,7 @@ export class ExecutionFormatter {
     }
 
     // Tool calls section (if enabled and present)
-    if (this.settings.showToolCalls) {
+    if (this.settings.includeToolCalls) {
       const toolCalls = this.extractToolCalls(execution);
       if (toolCalls.length > 0) {
         parts.push(this.formatToolCalls(toolCalls));
@@ -114,12 +114,12 @@ export class ExecutionFormatter {
     }
 
     // State changes section (if enabled and present)
-    if (this.settings.showCostEstimates && execution.state_snapshot) {
+    if (execution.state_snapshot) {
       parts.push(this.formatStateChanges(execution.state_snapshot));
     }
 
     // Token usage section (if enabled)
-    if (this.settings.showTokenUsage && getTokenUsage(execution)) {
+    if (getTokenUsage(execution)) {
       parts.push(this.formatTokenUsage(execution));
     }
 
