@@ -1610,7 +1610,7 @@ export default class ObsidianVesselPlugin extends Plugin {
    */
   async handleGoalVerdictChange(file: TFile, cache: CachedMetadata | null): Promise<void> {
     try {
-      if (!file.path.startsWith('Goals/') || !file.path.endsWith('.md')) return;
+      if (!file.path.startsWith('Substrate/Dispatches/') || !file.path.endsWith('.md')) return;
       const fm = cache?.frontmatter as Record<string, unknown> | undefined;
       if (!fm || !fm.executionId) return;
       if (this.verdictInFlight.has(file.path)) return;
@@ -1664,7 +1664,7 @@ export default class ObsidianVesselPlugin extends Plugin {
       if (!m) return;
       this.uiFeedbackInFlight.add(file.path);
       try {
-        const surface: UiFeedbackSurface = file.path.startsWith('Goals/')
+        const surface: UiFeedbackSurface = file.path.startsWith('Substrate/Dispatches/')
           ? 'goal-note'
           : 'improvement-note';
         const region = typeof fm.render_variant_id === 'string' && fm.render_variant_id
