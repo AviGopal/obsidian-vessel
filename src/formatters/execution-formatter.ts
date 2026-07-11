@@ -176,7 +176,7 @@ export class ExecutionFormatter {
     lines.push(`| Status | ${statusEmoji} ${execution.success ? 'Success' : 'Failed'} |`);
     lines.push(`| Duration | ${formatDuration(execution.duration_ms)} |`);
     lines.push(`| Cost | ${formatCost(getCost(execution))} |`);
-    lines.push(`| Executed | ${formatRelativeTime(execution.executed_at)} |`);
+    lines.push(`| Executed | ${execution.executed_at ? formatRelativeTime(execution.executed_at) : '-'} |`);
 
     if (execution.vessel_id) {
       lines.push(`| Vessel | \`${execution.vessel_id}\` |`);
