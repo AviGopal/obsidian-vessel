@@ -1425,11 +1425,12 @@ export class GoalDispatchView extends ItemView {
       : after.filter((s) => !beforeSet.has(s));
     if (after.length === 0 && added.length === 0) return;
     const wrap = parent.createDiv('sub-pool-delta');
+    const chipTitle = (shape: string): string => { const p = producers?.get(shape); return p ? shape + ' — produced by ' + p : shape; };
     if (added.length > 0) {
       const chips = wrap.createDiv('sub-fleet-chips');
       chips.createSpan({ cls: 'sub-pool-arrow', text: '+' });
       for (const s of added) {
-        chips.createSpan({ cls: 'sub-chip sub-chip--new', text: s, attr: { title: s } });
+        chips.createSpan({ cls: 'sub-chip sub-chip--new', text: s, attr: { title: chipTitle(s) } });
       }
     }
     if (after.length > 0) {
@@ -1437,7 +1438,7 @@ export class GoalDispatchView extends ItemView {
         const chips = host.createDiv('sub-fleet-chips');
         for (const s of after) {
           const isNew = added.includes(s);
-          chips.createSpan({ cls: `sub-chip${isNew ? ' sub-chip--new' : ''}`, text: s, attr: { title: s } });
+          chips.createSpan({ cls: `sub-chip${isNew ? ' sub-chip--new' : ''}`, text: s, attr: { title: chipTitle(s) } });
         }
       });
     }
