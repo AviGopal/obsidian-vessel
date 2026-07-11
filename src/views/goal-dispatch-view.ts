@@ -1166,6 +1166,10 @@ export class GoalDispatchView extends ItemView {
     const goalSnippet = goal.length > 60 ? goal.slice(0, 60) + '…' : goal;
     row.createSpan({ cls: `sub-fleet-status ${statusCls}`, text: dot });
     row.createSpan({ cls: 'sub-fleet-goal', text: goalSnippet, attr: { title: goal } });
+        const tid = typeof d.selectedTemplateId === 'string' ? d.selectedTemplateId : '';
+        if (tid) {
+          row.createSpan({ cls: 'sub-chip sub-chip--sel sub-fleet-activity', text: shortId(tid), attr: { title: 'activity: ' + tid } });
+        }
     row.createSpan({ cls: 'sub-fleet-elapsed', text: elapsed });
     // Reached-led: when steps failed but the goal was still reached, say so
     // inline rather than letting the ✗-adjacent status imply failure.
