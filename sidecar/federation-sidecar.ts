@@ -29,27 +29,67 @@
 //   POST /outbound/http     — { service?|shape?, method?, path, body? } →
 //                             plain REST forwarded to the owning vessel
 //
-// Env (all set by SidecarManager when it spawns this process):
-//   OBSIDIAN_VESSEL_ID              stable vessel id (seeds the libp2p identity)
-//   RELAY_MULTIADDR                 the substrate relay's public multiaddr [optional → LOCAL mode]
-//   DISCOVERY_URL                   discovery-vessel base URL              [required]
-//   API_KEY                         ApiKey attached to every forwarded request
-//   OBSIDIAN_URL                    the plugin's own HTTP server base URL
-//   OBSIDIAN_PASSTHROUGH_HEALTH_PORT  loopback API port (default 8402)
-//   FEDERATION_INGRESS_MULTIADDR    hub ingress circuit multiaddr (federated outbound)
+// Env — the complete federated config is TWO values; everything else derives:
+//   API_KEY (or METABOB_API_KEY)    ApiKey attached to every forwarded request [required]
+//   RELAY_MULTIADDR                 the substrate relay's public multiaddr — the libp2p
+//                                   peer location [required for FEDERATED; omit → LOCAL
+//                                   mode, which then needs DISCOVERY_URL]
+// Derived when unset (each env still wins as an explicit override):
+//   DISCOVERY_URL                   ← http://<relay host>:18100
+//   OBSIDIAN_VESSEL_ID              ← obsidian-<hostname>-vessel (host-unique; seeds
+//                                     the libp2p identity — a shared default collides)
+//   FEDERATION_INGRESS_MULTIADDR    ← auto-discovered from hub discovery (federation_probe)
+//   OBSIDIAN_URL                    ← http://127.0.0.1:27182
+//   OBSIDIAN_PASSTHROUGH_HEALTH_PORT  ← 8402
 
-const VESSEL_ID = process.env.OBSIDIAN_VESSEL_ID || 'obsidian-host-vessel';
+import { hostname } from 'node:os';
+
+// A shared default vessel id would seed IDENTICAL libp2p keys on every host
+// (observed peer-id collision); derive a stable host-unique id instead.
+const VESSEL_ID = process.env.OBSIDIAN_VESSEL_ID
+  || `obsidian-${hostname().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')}-vessel`;
 const RELAY = process.env.RELAY_MULTIADDR || '';
-const DISCOVERY = (process.env.DISCOVERY_URL || '').replace(/\/+$/, '');
+// Derive the hub discovery URL from the relay's host when not given explicitly —
+// the relay and the hub control plane live on the same public host by convention,
+// so RELAY_MULTIADDR + API key is a complete federation config.
+function deriveDiscoveryFromRelay(relay: string): string {
+  const m = /^\/ip4\/([0-9.]+)\//.exec(relay) || /^\/dns4?\/([^/]+)\//.exec(relay);
+  return m ? `http://${m[1]}:18100` : '';
+}
+const DISCOVERY = ((process.env.DISCOVERY_URL || '').replace(/\/+$/, '')) || deriveDiscoveryFromRelay(RELAY);
 const API_KEY = process.env.API_KEY || process.env.METABOB_API_KEY || '';
 const OBSIDIAN = (process.env.OBSIDIAN_URL || 'http://127.0.0.1:27182').replace(/\/+$/, '');
 const HEALTH_PORT = parseInt(process.env.OBSIDIAN_PASSTHROUGH_HEALTH_PORT || '8402', 10);
-const INGRESS = process.env.FEDERATION_INGRESS_MULTIADDR || '';
+let INGRESS = process.env.FEDERATION_INGRESS_MULTIADDR || '';
 const LOCAL_MODE = !RELAY;
 
 if (!DISCOVERY) {
-  console.error('[federation-sidecar] set DISCOVERY_URL (RELAY_MULTIADDR is optional — without it the sidecar runs as a local egress conduit)');
+  console.error('[federation-sidecar] set RELAY_MULTIADDR (discovery derives from its host) or DISCOVERY_URL for local-conduit mode');
   process.exit(1);
+}
+
+// Auto-discover the hub federation-transport ingress: ask discovery who serves
+// federation_probe over libp2p and take its circuit multiaddr. Runs once at
+// startup; an explicit FEDERATION_INGRESS_MULTIADDR still wins.
+async function discoverIngress(): Promise<string> {
+  if (INGRESS || !DISCOVERY) return INGRESS;
+  try {
+    const r = await fetch(DISCOVERY + '/resolve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(API_KEY ? { Authorization: 'ApiKey ' + API_KEY } : {}) },
+      body: JSON.stringify({ pointer: { type: 'vesselCapability', shape: 'federation_probe' } }),
+      signal: AbortSignal.timeout(8000),
+    });
+    const j: any = await r.json().catch(() => ({}));
+    const row = (j?.content?.vessels ?? []).find((v: any) =>
+      v?.protocol === 'libp2p' && Array.isArray(v?.libp2p_multiaddr) && v.libp2p_multiaddr[0]
+      && String(v.vesselId ?? '') !== VESSEL_ID);
+    return row ? String(row.libp2p_multiaddr[0]) : '';
+  } catch { return ''; }
+}
+if (!INGRESS && !LOCAL_MODE) {
+  INGRESS = await discoverIngress();
+  if (INGRESS) console.log('[federation-sidecar] auto-discovered hub ingress ...' + INGRESS.slice(-24));
 }
 
 // ── Discovery-routed HTTP egress ─────────────────────────────────────────────
