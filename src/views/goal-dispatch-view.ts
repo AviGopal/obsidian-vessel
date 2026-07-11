@@ -1044,9 +1044,10 @@ export class GoalDispatchView extends ItemView {
   private async renderPulse(): Promise<void> {
     const el = this.pulseEl;
     if (!el) return;
-    const [dj, gj] = await Promise.all([
+    const [dj, gj, rhythmRes] = await Promise.all([
       this.goalHostResolve({ type: 'activeDispatches' }),
       this.devVesselResolve('substrateGap', { limit: 200 }),
+      this.devVesselResolve('poolImpulse', { shape: 'timeShapedRhythm', limit: 12 }),
     ]);
     const dispatches = ((dj?.body as Record<string, unknown> | undefined)?.dispatches ?? []) as Array<Record<string, unknown>>;
     const gaps = ((gj?.body as Record<string, unknown> | undefined)?.gaps ?? []) as Array<Record<string, unknown>>;
@@ -1070,6 +1071,21 @@ export class GoalDispatchView extends ItemView {
         const age = hours >= 48 ? `${Math.round(hours / 24)}d` : `${hours}h`;
         const ageChip = row.createSpan({ cls: 'sub-chip', text: `oldest ${age}` });
         ageChip.setAttr('title', 'Age of the oldest open gap - the durability/latency edge of the close loop.');
+      }
+    }
+    const rhythms: Array<{ id: string; body: { family: string; axis: string; staleness: number; budget: number; alpha: number; beta: number } }> =
+      ((rhythmRes?.body as Record<string, unknown> | undefined)?.['impulses'] ?? []) as Array<{ id: string; body: { family: string; axis: string; staleness: number; budget: number; alpha: number; beta: number } }>;
+    if (rhythms.length > 0) {
+      const sorted = [...rhythms].sort((a, b) => b.body.staleness - a.body.staleness);
+      const rhythmRow = el.createDiv({ cls: 'sub-pulse-row sub-pulse-rhythms' });
+      const METER = '▁▂▃▄▅▆▇█';
+      for (const rhythm of sorted) {
+        const { family, axis, staleness, budget, alpha, beta } = rhythm.body;
+        const meterChar = METER[Math.min(7, Math.floor(staleness * 8))];
+        const chip = rhythmRow.createSpan();
+        chip.textContent = `${family} ${meterChar}`;
+        chip.style.opacity = String(0.55 + 0.45 * staleness);
+        chip.title = `rhythm ${family} · axis ${axis} · staleness ${Math.round(staleness * 100)}% · budget ${budget} · α${alpha}/β${beta} — due-ness the conductor folds into boredom selection`;
       }
     }
   }
