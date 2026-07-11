@@ -262,7 +262,7 @@ export default class ObsidianVesselPlugin extends Plugin {
     // Phase 6b: Start the federation sidecar (opt-in)
     // Makes this plugin reachable from a REMOTE substrate hub over a libp2p
     // relay circuit, in addition to the local-container registration above.
-    if (this.settings.enableFederationSidecar) {
+    if (this.settings.enableFederationSidecar || this.settings.federationRelayMultiaddr) {
       this.startFederationSidecar();
     }
 
