@@ -274,6 +274,13 @@ body {
 .sub-chip--run { color: var(--sub-run); }
 
 /* ── Sections and headers ── */
+.sub-pulse-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sub-space-1);
+  padding: var(--sub-space-1) 0;
+}
+
 .sub-section {
   flex-shrink: 0;
   display: flex;
