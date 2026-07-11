@@ -99,6 +99,30 @@ async function resolveWriteNote(
       await app.vault.modify(existing as TFile, bodyToWrite);
     } else {
       await app.vault.create(path, body);
+
+      // Substrate folder ledger: record new first-level folders under Substrate/
+      const substratePrefix = 'Substrate/';
+      const ledgerPath = 'Substrate/FolderLedger.md';
+      if (path.startsWith(substratePrefix)) {
+        const afterPrefix = path.slice(substratePrefix.length);
+        const firstSegment = afterPrefix.split('/')[0];
+        const isNewFolder = firstSegment && afterPrefix.includes('/');
+        if (isNewFolder) {
+          const folderPath = substratePrefix + firstSegment;
+          const folderExists = app.vault.getAbstractFileByPath(folderPath + '/.keep') !== null;
+          if (!folderExists) {
+            const isoDate = new Date().toISOString();
+            const ledgerLine = `\n- folder: ${firstSegment} | note: ${path} | created: ${isoDate}`;
+            const ledgerFile = app.vault.getAbstractFileByPath(ledgerPath);
+            if (ledgerFile && 'extension' in ledgerFile) {
+              const existingLedger = await app.vault.read(ledgerFile as TFile);
+              await app.vault.modify(ledgerFile as TFile, existingLedger + ledgerLine);
+            } else {
+              await app.vault.create(ledgerPath, `# Folder Ledger\n\nTracks emergent first-level folders created under Substrate/.${ledgerLine}`);
+            }
+          }
+        }
+      }
     }
     registerSolicitation(path, p.dispatch_id ?? path);
     return {
