@@ -109,7 +109,9 @@ async function resolveWriteNote(
         const isNewFolder = firstSegment && afterPrefix.includes('/');
         if (isNewFolder) {
           const folderPath = substratePrefix + firstSegment;
-          const folderExists = app.vault.getAbstractFileByPath(folderPath + '/.keep') !== null;
+          const ledgerFile2 = app.vault.getAbstractFileByPath(ledgerPath);
+          const existingLedgerContent = ledgerFile2 && 'extension' in ledgerFile2 ? await app.vault.read(ledgerFile2 as TFile) : '';
+          const folderExists = existingLedgerContent.includes(`- folder: ${firstSegment} |`);
           if (!folderExists) {
             const isoDate = new Date().toISOString();
             const ledgerLine = `\n- folder: ${firstSegment} | note: ${path} | created: ${isoDate}`;
