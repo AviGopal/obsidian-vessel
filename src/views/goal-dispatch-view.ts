@@ -1082,7 +1082,7 @@ export class GoalDispatchView extends ItemView {
       for (const rhythm of sorted) {
         const { family, axis, staleness, budget, alpha, beta } = rhythm.body;
         const meterChar = METER[Math.min(7, Math.floor(staleness * 8))];
-        const chip = rhythmRow.createSpan();
+        const chip = rhythmRow.createSpan({ cls: 'sub-chip' });
         chip.textContent = `${family} ${meterChar}`;
         chip.style.opacity = String(0.55 + 0.45 * staleness);
         chip.title = `rhythm ${family} · axis ${axis} · staleness ${Math.round(staleness * 100)}% · budget ${budget} · α${alpha}/β${beta} — due-ness the conductor folds into boredom selection`;
