@@ -10,7 +10,7 @@ import { registerSolicitation } from '../resolvers/observe-obsidian-events';
 import type { App, TFile } from 'obsidian';
 import type { GoalHostClient } from './goal-host-client';
 
-const GOALS_FOLDER = 'Goals';
+const GOALS_FOLDER = 'Substrate/Dispatches';
 
 export class GoalNoteManager {
   constructor(private app: App) {}
