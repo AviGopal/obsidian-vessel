@@ -152,6 +152,19 @@ export class HistoricalSyncService {
    * @returns true if note was created/updated
    */
   private async syncExecution(execution: ExecutionTrace): Promise<boolean> {
+    // Skip maintenance heartbeat ticks — they are successful, zero-cost,
+    // and their activity_id ends with "-tick". Creating a note for these
+    // produces near-empty telemetry stub files with no user value.
+    const isTick =
+      execution.success === true &&
+      (execution.cost == null || execution.cost === 0) &&
+      typeof execution.activity_id === 'string' &&
+      execution.activity_id.endsWith('-tick');
+    if (isTick) {
+      this.stateManager.markSynced(execution.execution_id, '', '');
+      return false;
+    }
+
     // Skip if already synced (idempotency check)
     if (this.stateManager.isSynced(execution.execution_id)) {
       console.log('[HistoricalSync] Skipping already synced:', execution.execution_id);
