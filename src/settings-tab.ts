@@ -50,24 +50,13 @@ export class ObsidianVesselSettingTab extends PluginSettingTab {
     containerEl.createEl('p', {
       text:
         'Makes this plugin discoverable and resolvable from a remote substrate ' +
-        '(a hub across the internet) over a libp2p Circuit Relay v2 overlay, in ' +
-        'addition to the local-container registration above. Requires `bun` on ' +
-        'PATH and a relay reachable at the given multiaddr. Changing these ' +
-        'settings takes effect after "Restart Federation Sidecar" below (or an ' +
-        'app reload).',
+        'over a libp2p Circuit Relay v2 overlay. Set the relay multiaddr (the ' +
+        'substrate\'s libp2p peer location) — the discovery URL, hub ingress, ' +
+        'and vessel identity are derived automatically, and the API key comes ' +
+        'from the Connection section. Requires `bun` on PATH. Changes take ' +
+        'effect after "Restart Federation Sidecar" below (or an app reload).',
       cls: 'setting-item-description',
     });
-
-    new Setting(containerEl)
-      .setName('Enable Federation Sidecar')
-      .setDesc('Spawn and supervise the libp2p passthrough as a child process')
-      .addToggle(t => t
-        .setValue(this.plugin.settings.enableFederationSidecar)
-        .onChange(async (value) => {
-          this.plugin.settings.enableFederationSidecar = value;
-          await this.plugin.saveSettings();
-          this.display();
-        }));
 
     new Setting(containerEl)
       .setName('Relay Multiaddr')
@@ -77,67 +66,6 @@ export class ObsidianVesselSettingTab extends PluginSettingTab {
         .setValue(this.plugin.settings.federationRelayMultiaddr)
         .onChange(async (value) => {
           this.plugin.settings.federationRelayMultiaddr = value.trim();
-          await this.plugin.saveSettings();
-        }));
-
-    new Setting(containerEl)
-      .setName('Discovery URL')
-      .setDesc('Discovery-vessel base URL to register with (typically the remote hub)')
-      .addText(text => text
-        .setPlaceholder('http://203.0.113.10:18100')
-        .setValue(this.plugin.settings.federationDiscoveryUrl)
-        .onChange(async (value) => {
-          this.plugin.settings.federationDiscoveryUrl = value.trim();
-          await this.plugin.saveSettings();
-        }));
-
-    new Setting(containerEl)
-      .setName('Federation API Key')
-      .setDesc('ApiKey for the discovery registration (falls back to the API Key above if empty)')
-      .addText(text => {
-        text.inputEl.type = 'password';
-        text
-          .setPlaceholder('mb_...')
-          .setValue(this.plugin.settings.federationApiKey)
-          .onChange(async (value) => {
-            this.plugin.settings.federationApiKey = value.trim();
-            await this.plugin.saveSettings();
-          });
-      });
-
-    new Setting(containerEl)
-      .setName('Federation Vessel ID')
-      .setDesc('Stable id to advertise — seeds the libp2p identity, keep constant across restarts')
-      .addText(text => text
-        .setPlaceholder(DEFAULT_SETTINGS.federationVesselId)
-        .setValue(this.plugin.settings.federationVesselId)
-        .onChange(async (value) => {
-          this.plugin.settings.federationVesselId = value.trim() || DEFAULT_SETTINGS.federationVesselId;
-          await this.plugin.saveSettings();
-        }));
-
-    new Setting(containerEl)
-      .setName('Health Port')
-      .setDesc('Loopback-only liveness port for the sidecar (real reachability is the relay circuit)')
-      .addText(text => text
-        .setPlaceholder(String(DEFAULT_SETTINGS.federationHealthPort))
-        .setValue(String(this.plugin.settings.federationHealthPort))
-        .onChange(async (value) => {
-          const port = parseInt(value, 10);
-          if (!Number.isNaN(port)) {
-            this.plugin.settings.federationHealthPort = port;
-            await this.plugin.saveSettings();
-          }
-        }));
-
-    new Setting(containerEl)
-      .setName('Bun Path')
-      .setDesc('Path to the `bun` executable used to run the sidecar')
-      .addText(text => text
-        .setPlaceholder(DEFAULT_SETTINGS.federationBunPath)
-        .setValue(this.plugin.settings.federationBunPath)
-        .onChange(async (value) => {
-          this.plugin.settings.federationBunPath = value.trim() || DEFAULT_SETTINGS.federationBunPath;
           await this.plugin.saveSettings();
         }));
 
