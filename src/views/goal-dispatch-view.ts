@@ -308,6 +308,7 @@ export class GoalDispatchView extends ItemView {
   // default; polled on a slow cadence (they change far less than dispatches).
   private gapsEl: HTMLElement | null = null;
   private projectsEl: HTMLElement | null = null;
+  private pulseEl: HTMLElement | null = null;
   private gapsExpanded = false;
   // per-gap causal-thread expansion (gap id -> expanded)
   private gapDetailExpanded: Set<string> = new Set();
@@ -410,7 +411,8 @@ export class GoalDispatchView extends ItemView {
 
     // ── Priority stack (pinned above the scroll container) ──
     // 1. Solicitation cards (WS5) — the substrate asking the human.
-    this.solicitationsEl = contentEl.createDiv('sub-section sub-solicitations');
+    this.pulseEl = contentEl.createDiv('sub-section sub-pulse');
+        this.solicitationsEl = contentEl.createDiv('sub-section sub-solicitations');
     // 2. Fleet rows (WS6) — in-flight dispatches, collapsed one-liners.
     this.fleetEl = contentEl.createDiv('sub-section sub-fleet');
     // 3. Completed goals — one-line count, expandable.
@@ -895,6 +897,7 @@ export class GoalDispatchView extends ItemView {
     const tick = (): void => {
       void this.renderGaps();
       void this.renderProjects();
+      void this.renderPulse();
     };
     tick();
     this.workBoardTimer = window.setInterval(tick, 30000);
@@ -1032,6 +1035,45 @@ export class GoalDispatchView extends ItemView {
    * Read-only list of the most recent threads (title + age) — the "what has the
    * system been building toward" context behind the immediate goals.
    */
+  /**
+   * Pulse strip: the system's outcome metrics at a glance, composed ONLY from
+   * data the panel already reads (dispatch ledger + gap store). Outcome over
+   * activity: reach on recent dispatches, gap flow (open / closed last 24h),
+   * and the oldest open gap's age. Rendered as sub-chips - no new primitives.
+   */
+  private async renderPulse(): Promise<void> {
+    const el = this.pulseEl;
+    if (!el) return;
+    const [dj, gj] = await Promise.all([
+      this.goalHostResolve({ type: 'activeDispatches' }),
+      this.devVesselResolve('substrateGap', { limit: 200 }),
+    ]);
+    const dispatches = ((dj?.body as Record<string, unknown> | undefined)?.dispatches ?? []) as Array<Record<string, unknown>>;
+    const gaps = ((gj?.body as Record<string, unknown> | undefined)?.gaps ?? []) as Array<Record<string, unknown>>;
+    el.empty();
+    const row = el.createDiv({ cls: 'sub-pulse-row' });
+    const settled = dispatches.filter((d) => d['status'] === 'completed' || d['status'] === 'failed').slice(-10);
+    if (settled.length) {
+      const reachedCount = settled.filter((d) => d['reached'] === true || d['reached'] === 'yes').length;
+      const chip = row.createSpan({ cls: 'sub-chip', text: `reach ${reachedCount}/${settled.length}` });
+      chip.setAttr('title', 'Goal-reach verdicts on the last settled dispatches - the honest outcome signal, not exit status.');
+    }
+    if (gaps.length) {
+      const open = gaps.filter((g) => g['status'] === 'open');
+      const dayAgo = Date.now() - 86_400_000;
+      const closed24 = gaps.filter((g) => g['status'] === 'closed' && Date.parse(String(g['updated_at'] ?? '')) > dayAgo).length;
+      const chip = row.createSpan({ cls: 'sub-chip', text: `gaps ${open.length} open · ${closed24} closed/24h` });
+      chip.setAttr('title', 'Gap flow: how much self-improvement backlog is open and how fast it is draining.');
+      const oldest = open.map((g) => Date.parse(String(g['created_at'] ?? g['detected_at'] ?? ''))).filter((t) => Number.isFinite(t)).sort((a, b) => a - b)[0];
+      if (oldest !== undefined) {
+        const hours = Math.round((Date.now() - oldest) / 3_600_000);
+        const age = hours >= 48 ? `${Math.round(hours / 24)}d` : `${hours}h`;
+        const ageChip = row.createSpan({ cls: 'sub-chip', text: `oldest ${age}` });
+        ageChip.setAttr('title', 'Age of the oldest open gap - the durability/latency edge of the close loop.');
+      }
+    }
+  }
+
   private async renderProjects(): Promise<void> {
     const el = this.projectsEl;
     if (!el) return;

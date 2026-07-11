@@ -1300,4 +1300,5 @@ body {
 .sub-badge--operatorverified { color: var(--sub-ok); border-color: var(--sub-ok); }
 .sub-badge--gapdecompose { color: var(--sub-text-muted); border-color: var(--sub-border); }
 
-/* end of styles */
+/* end of styles (placeholder replaced) */
+.__PLACEHOLDER_THAT_WONT_MATCH__ {
