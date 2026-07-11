@@ -60,7 +60,7 @@ export class VesselStatusModal extends Modal {
     configSection.createEl('h3', { text: 'Configuration' });
     this.createInfoRow(configSection, 'API Endpoint', this.plugin.settings.activityApiUrl || 'Not configured');
     this.createInfoRow(configSection, 'API Key', this.plugin.settings.apiKey ? '********' : 'Not set');
-    this.createInfoRow(configSection, 'Sync Interval', `${this.plugin.settings.syncInterval} minutes`);
+    this.createInfoRow(configSection, 'Sync Interval', `${this.plugin.settings.syncIntervalMinutes} minutes`);
 
     // Actions section
     const actionsSection = contentEl.createDiv('status-actions');
