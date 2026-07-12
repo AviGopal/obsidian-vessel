@@ -151,10 +151,10 @@ export class SidecarManager {
       this.logger('error', `sidecar materialization failed: ${err instanceof Error ? err.message : String(err)}`);
       return false;
     }
-    if (fs.existsSync(path.join(sidecarDir, 'node_modules', '@avigopal', 'libp2p-federation-transport'))) {
-      return true;
-    }
-    this.logger('info', `installing sidecar dependencies: ${bunPath} install (cwd=${sidecarDir})`);
+    // Always run `bun install`: a no-op when node_modules is complete, and it
+    // repairs partial trees left by an interrupted or timed-out install (which
+    // otherwise crash the sidecar with "Cannot find package ..." forever).
+    this.logger('info', `reconciling sidecar dependencies: ${bunPath} install (cwd=${sidecarDir})`);
     return await new Promise<boolean>((resolve) => {
       let child: ChildProcessWithoutNullStreams;
       try {
@@ -166,7 +166,7 @@ export class SidecarManager {
       }
       let stderr = '';
       child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
-      const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* already exited */ } }, 180_000);
+      const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* already exited */ } }, 600_000);
       child.on('exit', (code) => {
         clearTimeout(timer);
         if (code !== 0) this.logger('error', `bun install exited with ${code}: ${stderr.slice(-500)}`);
