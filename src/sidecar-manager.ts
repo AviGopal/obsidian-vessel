@@ -65,7 +65,7 @@ export class SidecarManager {
 
   /** Discovery URL the sidecar routes through: federation setting first, local substrate discovery otherwise. */
   private discoveryUrl(): string {
-    return this.settings.federationDiscoveryUrl || this.settings.discoveryVesselEndpoint || '';
+    return this.settings.discoveryVesselEndpoint || '';
   }
 
   start(): void {
@@ -218,7 +218,7 @@ export class SidecarManager {
       '/opt/homebrew/bin/bun',
       '/usr/local/bin/bun',
     ];
-    const bunPath = this.settings.federationBunPath || bunCandidates.find(p => fs.existsSync(p)) || 'bun';
+    const bunPath = bunCandidates.find(p => fs.existsSync(p)) || 'bun';
 
     const ready = await this.ensureSidecarMaterialized(sidecarDir, bunPath);
     if (this.stopped) return;
@@ -267,7 +267,7 @@ export class SidecarManager {
       OBSIDIAN_VESSEL_ID: this.settings.federationVesselId || '',
       RELAY_MULTIADDR: this.settings.federationRelayMultiaddr,
       DISCOVERY_URL: this.discoveryUrl(),
-      API_KEY: this.settings.federationApiKey || this.settings.apiKey || '',
+      API_KEY: this.settings.apiKey || '',
       OBSIDIAN_URL: `http://127.0.0.1:${this.opts.serverPort}`,
       FEDERATION_INGRESS_MULTIADDR: this.settings.federationIngressMultiaddr || '',
       OBSIDIAN_PASSTHROUGH_HEALTH_PORT: String(healthPort),
