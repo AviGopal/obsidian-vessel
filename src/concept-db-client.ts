@@ -20,6 +20,8 @@
 // Types
 // =============================================================================
 
+import { sidecarHttpAuto } from './sidecar-manager';
+
 export interface ConceptRecord {
   /** Full id, e.g. "concept:abcdef..." */
   id: string;
@@ -424,6 +426,21 @@ export class ConceptDbClient {
     const headers: Record<string, string> = { Accept: 'application/json' };
     if (this.apiKey) headers['Authorization'] = `ApiKey ${this.apiKey}`;
     if (body) headers['Content-Type'] = 'application/json';
+
+    // Sidecar-first: route through the federation sidecar (the plugin's
+    // substrate conduit — identical local or remote) by the concept shape;
+    // fall back to the direct endpoint below when the sidecar is not up.
+    const viaSidecar = await sidecarHttpAuto({ shape: 'concept', method, path, body }, this.timeout);
+    if (viaSidecar) {
+      if (!viaSidecar.ok) {
+        const eb = viaSidecar.body as { error?: unknown } | null;
+        throw new ConceptDbError(
+          eb && typeof eb === 'object' && eb.error ? String(eb.error) : `Request failed with status ${viaSidecar.status}`,
+          viaSidecar.status
+        );
+      }
+      return viaSidecar.body as T;
+    }
 
     const maxAttempts = noRetry ? 1 : this.maxRetries;
     let lastError: Error | null = null;

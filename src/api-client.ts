@@ -10,6 +10,7 @@
  */
 
 import type { ExecutionTrace } from './types/execution-trace';
+import { sidecarHttpAuto } from './sidecar-manager';
 import type { ActivityTemplate } from './types';
 
 // =============================================================================
@@ -596,6 +597,22 @@ export class ActivityAPIClient {
 
     if (body) {
       headers['Content-Type'] = 'application/json';
+    }
+
+    // Sidecar-first: the federation sidecar is the plugin's substrate conduit —
+    // it holds the API key and reaches the substrate identically whether local
+    // or remote (relay overlay). null → sidecar not up → direct endpoint below.
+    const viaSidecar = await sidecarHttpAuto({ shape: 'activityExecutionTrace', method, path, body }, this.timeout);
+    if (viaSidecar) {
+      if (!viaSidecar.ok) {
+        const eb = viaSidecar.body as APIError | null;
+        throw new ActivityAPIError(
+          eb && typeof eb === 'object' && eb.error ? eb.error : `Request failed with status ${viaSidecar.status}`,
+          viaSidecar.status,
+          eb && typeof eb === 'object' ? eb : undefined
+        );
+      }
+      return viaSidecar.body as T;
     }
 
     const maxAttempts = noRetry ? 1 : this.maxRetries;

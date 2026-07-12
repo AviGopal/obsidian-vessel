@@ -9,7 +9,7 @@ import { ObsidianVesselSettingTab } from './settings-tab';
 import { HTTPServer } from './server/index';
 import { sendJson, sendError, parseJsonBody } from './server/routes';
 import { VesselClient } from './vessel-client';
-import { SidecarManager } from './sidecar-manager';
+import { SidecarManager, sidecarResolve } from './sidecar-manager';
 import { ActivityAPIClient } from './api-client';
 import { SyncService } from './sync/index';
 import { ConceptSyncService, makeObsidianNoteWriter } from './sync/concept-sync';
@@ -771,6 +771,13 @@ export default class ObsidianVesselPlugin extends Plugin {
         substrateProxy: this.settings.activityApiUrl
           ? async (pointer) => {
               try {
+                // Sidecar-first: the conduit routes the pointer to whichever
+                // vessel owns it (locally or over the federation overlay).
+                const via = await sidecarResolve(this.settings, pointer as Record<string, unknown>, 15_000);
+                const viaContent = via?.content ?? via?.body ?? null;
+                if (viaContent != null) {
+                  return { success: true, content: viaContent, metadata: via?.metadata };
+                }
                 const base = this.settings.activityApiUrl.replace(/\/+$/, '');
                 const resp = await fetch(`${base}/v2/impulses/resolve`, {
                   method: 'POST',

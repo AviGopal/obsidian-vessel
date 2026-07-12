@@ -7,6 +7,7 @@
  */
 
 import { requestUrl } from 'obsidian';
+import { sidecarHttpAuto } from '../sidecar-manager';
 
 export interface GoalDispatchResult {
   executionId: string;
@@ -48,6 +49,31 @@ export class GoalHostClient {
   ) {}
 
   /**
+   * Sidecar-first transport: route through the federation sidecar (the
+   * plugin's substrate conduit — works identically local or remote) by the
+   * goal_execution shape; fall back to the direct endpoint when the sidecar
+   * is not up. Throws on a non-2xx response either way.
+   */
+  private async http(path: string, body?: unknown, method?: string): Promise<Record<string, unknown>> {
+    const m = method || (body != null ? 'POST' : 'GET');
+    const via = await sidecarHttpAuto({ shape: 'goal_execution', method: m, path, body });
+    if (via) {
+      if (!via.ok) throw new Error(`goal-host ${path} failed with status ${via.status}`);
+      return (via.body ?? {}) as Record<string, unknown>;
+    }
+    const r = await requestUrl({
+      url: this.endpoint.replace(/\/+$/, '') + path,
+      method: m,
+      headers: {
+        'Authorization': 'ApiKey ' + this.apiKey,
+        ...(body != null ? { 'Content-Type': 'application/json' } : {}),
+      },
+      body: body != null ? JSON.stringify(body) : undefined,
+    });
+    return r.json as Record<string, unknown>;
+  }
+
+  /**
    * Poll GET /executions/:dispatchId until execution_id is known or timeout.
    * Returns { executionId, variantId } on success, throws with reason on failure.
    *
@@ -66,12 +92,7 @@ export class GoalHostClient {
     while (Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 800));
       try {
-        const r = await requestUrl({
-          url: `${this.endpoint}/executions/${dispatchId}`,
-          method: 'GET',
-          headers: { 'Authorization': `ApiKey ${this.apiKey}` },
-        });
-        const body = r.json as Record<string, unknown>;
+        const body = await this.http(`/executions/${dispatchId}`);
         if (body.executionId) {
           return {
             executionId: body.executionId as string,
@@ -104,12 +125,7 @@ export class GoalHostClient {
    * and `goalReachReason` — distinct from `status`, which is only exit status.
    */
   async getDispatchRecord(dispatchId: string): Promise<Record<string, unknown>> {
-    const r = await requestUrl({
-      url: this.endpoint + '/executions/' + dispatchId,
-      method: 'GET',
-      headers: { 'Authorization': 'ApiKey ' + this.apiKey },
-    });
-    return r.json as Record<string, unknown>;
+    return this.http('/executions/' + dispatchId);
   }
 
   /**
@@ -120,16 +136,7 @@ export class GoalHostClient {
    */
   async getWalkState(dispatchId: string): Promise<Record<string, unknown>> {
     try {
-      const r = await requestUrl({
-        url: this.endpoint.replace(/\/+$/, '') + '/resolve',
-        method: 'POST',
-        headers: {
-          'Authorization': 'ApiKey ' + this.apiKey,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ impulse: { pointer: { type: 'goalWalkState', dispatchId } } }),
-      });
-      const j = r.json as Record<string, unknown>;
+      const j = await this.http('/resolve', { impulse: { pointer: { type: 'goalWalkState', dispatchId } } });
       return (j.body as Record<string, unknown>) ?? {};
     } catch {
       return {};
@@ -150,21 +157,12 @@ export class GoalHostClient {
     if (ctx?.open_note_paths?.length) tags.push(`obsidian:open_notes_${ctx.open_note_paths.length}`);
     if (ctx?.available_shapes?.length) tags.push(`obsidian:shapes_${ctx.available_shapes.length}`);
 
-    const resp = await requestUrl({
-      url: `${this.endpoint}/run-goal`,
-      method: 'POST',
-      headers: {
-        'Authorization': `ApiKey ${this.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        goal,
-        variables,
-        tags,
-        ...(expectedOutputShapes ? { expected_output_shapes: expectedOutputShapes } : {}),
-      }),
+    const raw = await this.http('/run-goal', {
+      goal,
+      variables,
+      tags,
+      ...(expectedOutputShapes ? { expected_output_shapes: expectedOutputShapes } : {}),
     });
-    const raw = resp.json as Record<string, unknown>;
     return {
       executionId: (raw.executionId ?? raw.dispatchId ?? '') as string,
       status: (raw.status ?? 'unknown') as string,
@@ -193,22 +191,26 @@ export class GoalHostClient {
   ): Promise<void> {
     for (const shape of shapes) {
       try {
-        await requestUrl({
-          url: `${activityApiUrl}/v2/activities/impulse-relevance`,
-          method: 'POST',
-          headers: {
-            'Authorization': `ApiKey ${this.apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            impulse_id: shape,
-            activity_variant_id: variantId,
-            execution_id: executionId,
-            was_loaded: true,
-            execution_succeeded: succeeded,
-            pointer_type: shape,
-          }),
-        });
+        const payload = {
+          impulse_id: shape,
+          activity_variant_id: variantId,
+          execution_id: executionId,
+          was_loaded: true,
+          execution_succeeded: succeeded,
+          pointer_type: shape,
+        };
+        const via = await sidecarHttpAuto({ shape: 'impulseRelevance', method: 'POST', path: '/v2/activities/impulse-relevance', body: payload });
+        if (!via) {
+          await requestUrl({
+            url: `${activityApiUrl}/v2/activities/impulse-relevance`,
+            method: 'POST',
+            headers: {
+              'Authorization': `ApiKey ${this.apiKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+          });
+        }
       } catch {
         // relevance writes are best-effort — don't surface errors to the user
       }

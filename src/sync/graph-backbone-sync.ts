@@ -21,6 +21,7 @@
 import type { App, TFile } from 'obsidian';
 import { requestUrl } from 'obsidian';
 import type { ObsidianVesselSettings } from '../settings';
+import { sidecarHttpAuto } from '../sidecar-manager';
 
 const ROOT = 'Substrate/Graph';
 
@@ -69,11 +70,21 @@ export class GraphBackboneSyncService {
       return r.json as Record<string, unknown>;
     } catch { return null; }
   }
-  /** Resolve a shape's host-reachable base URL via discovery (prefers public_endpoint). */
-  private async resolveVesselBase(shape: string): Promise<string | null> {
+  /**
+   * POST a pointer to discovery /resolve — sidecar-first (the conduit reaches
+   * discovery locally or over the federation), direct endpoint as fallback.
+   */
+  private async discoveryResolve(pointer: Record<string, unknown>): Promise<Record<string, unknown> | null> {
+    const via = await sidecarHttpAuto({ service: 'discovery', method: 'POST', path: '/resolve', body: { pointer } });
+    if (via && via.ok) return (via.body ?? null) as Record<string, unknown> | null;
     const disco = (this.settings.discoveryVesselEndpoint || '').replace(/\/+$/, '');
     if (!disco) return null;
-    const j = await this.postJson(`${disco}/resolve`, { pointer: { type: 'vesselCapability', shape } });
+    return this.postJson(`${disco}/resolve`, { pointer });
+  }
+
+  /** Resolve a shape's host-reachable base URL via discovery (prefers public_endpoint). */
+  private async resolveVesselBase(shape: string): Promise<string | null> {
+    const j = await this.discoveryResolve({ type: 'vesselCapability', shape });
     const vessels = ((j?.content as Record<string, unknown> | undefined)?.vessels ?? []) as Array<Record<string, unknown>>;
     const v = vessels[0];
     if (!v) return null;
@@ -82,9 +93,7 @@ export class GraphBackboneSyncService {
 
   // ── vessel ↔ shape topology (discovery vesselRegistry) ────────────────────
   private async syncVesselShapes(): Promise<{ vessels: number; shapes: number }> {
-    const disco = (this.settings.discoveryVesselEndpoint || '').replace(/\/+$/, '');
-    if (!disco) return { vessels: 0, shapes: 0 };
-    const j = await this.postJson(`${disco}/resolve`, { pointer: { type: 'vesselRegistry' } });
+    const j = await this.discoveryResolve({ type: 'vesselRegistry' });
     const content = (j?.content ?? {}) as Record<string, unknown>;
     const vessels = ((content.vessels ?? []) as Array<Record<string, unknown>>).filter(Boolean);
     if (vessels.length === 0) return { vessels: 0, shapes: 0 };
