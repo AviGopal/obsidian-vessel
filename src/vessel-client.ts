@@ -11,6 +11,7 @@
 
 import { requestUrl } from 'obsidian';
 import { ObsidianVesselSettings } from './settings';
+import { getActiveSidecarPort } from './sidecar-manager';
 
 // =============================================================================
 // Types
@@ -278,7 +279,7 @@ export class VesselClient {
 
   private async fetchSidecarMultiaddr(): Promise<string[]> {
     if (!this.settings.enableFederationSidecar) return [];
-    const healthUrl = 'http://127.0.0.1:' + String(this.settings.federationHealthPort || 8402) + '/health';
+    const healthUrl = 'http://127.0.0.1:' + String(getActiveSidecarPort(this.settings)) + '/health';
     try {
       const response = await this.fetchWithTimeout(healthUrl, { method: 'GET' }, 2000);
       if (!response.ok) return [];
