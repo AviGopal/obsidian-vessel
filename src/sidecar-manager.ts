@@ -26,6 +26,7 @@ import { ObsidianVesselSettings } from './settings';
 // sidecar package on first start.
 declare const __SIDECAR_SOURCE__: string;
 declare const __SIDECAR_PACKAGE_JSON__: string;
+declare const __SIDECAR_BUNDLE__: string;
 
 export interface SidecarManagerOptions {
   /** Absolute path to the vault root. */
@@ -130,6 +131,16 @@ export class SidecarManager {
   private async ensureSidecarMaterialized(sidecarDir: string, bunPath: string): Promise<boolean> {
     try {
       fs.mkdirSync(sidecarDir, { recursive: true });
+      // Vendored single-file sidecar (all deps bundled at plugin build time):
+      // write it and return — no bun install on the user's machine at all.
+      // Empty/missing in older builds, which fall through to source + install.
+      if (typeof __SIDECAR_BUNDLE__ !== 'undefined' && __SIDECAR_BUNDLE__.length > 0) {
+        const bundlePath = path.join(sidecarDir, 'federation-sidecar.bundle.js');
+        if (!fs.existsSync(bundlePath) || fs.readFileSync(bundlePath, 'utf8') !== __SIDECAR_BUNDLE__) {
+          fs.writeFileSync(bundlePath, __SIDECAR_BUNDLE__);
+        }
+        return true;
+      }
       const scriptPath = path.join(sidecarDir, 'federation-sidecar.ts');
       const pkgPath = path.join(sidecarDir, 'package.json');
       // Builds made before the esbuild define embed ship without the sidecar
@@ -201,7 +212,6 @@ export class SidecarManager {
 
   private async prepareAndSpawn(): Promise<void> {
     const sidecarDir = this.resolveSidecarDir();
-    const scriptPath = path.join(sidecarDir, 'federation-sidecar.ts');
     const home = process.env.HOME || process.env.USERPROFILE || '';
     const bunCandidates = [
       ...(home ? [path.join(home, '.bun', 'bin', 'bun'), path.join(home, '.bun', 'bin', 'bun.exe')] : []),
@@ -216,6 +226,8 @@ export class SidecarManager {
       this.scheduleRestart();
       return;
     }
+    const bundlePath = path.join(sidecarDir, 'federation-sidecar.bundle.js');
+    const scriptPath = fs.existsSync(bundlePath) ? bundlePath : path.join(sidecarDir, 'federation-sidecar.ts');
 
     // Clear our own stale sidecar (recorded pid) if it survived a previous
     // session, then pick the health port: the configured one when free,
