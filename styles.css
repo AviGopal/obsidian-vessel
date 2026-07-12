@@ -176,16 +176,60 @@ body {
   margin: 0;
 }
 
+.sub-solicitation-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sub-space-2);
+  flex-wrap: wrap;
+}
+
 .sub-solicitation-title {
   font-weight: 700;
   font-size: var(--sub-font-m);
   margin-bottom: var(--sub-space-1);
 }
 
+.sub-solicitation-meta {
+  font-size: var(--sub-font-s);
+  color: var(--sub-text-faint);
+  white-space: nowrap;
+}
+
+/* Question body: evidence tables can be wider than the panel and the
+   walk-evidence can be long — scroll inside the card, never blow it out
+   or push the answer area off-screen. */
+.sub-solicitation-body {
+  font-size: var(--sub-font-s);
+  max-height: 18em;
+  overflow-y: auto;
+  overflow-x: auto;
+}
+
+.sub-solicitation-body > :first-child {
+  margin-top: 0;
+}
+
+.sub-solicitation-label {
+  margin-top: var(--sub-space-2);
+  font-weight: 600;
+  font-size: var(--sub-font-s);
+  color: var(--sub-text-muted);
+}
+
 .sub-solicitation-answer {
   width: 100%;
-  margin-top: var(--sub-space-2);
+  box-sizing: border-box;
+  margin-top: var(--sub-space-1);
+  padding: var(--sub-space-1) var(--sub-space-2);
   font-size: var(--sub-font-s);
+  font-family: inherit;
+  min-height: 4.5em;
+  resize: vertical;
+  border: 1px solid var(--sub-border);
+  border-radius: var(--sub-radius-s);
+  background: var(--sub-bg);
+  color: var(--sub-text);
 }
 
 .sub-solicitation-btns {
