@@ -187,7 +187,13 @@ export class SidecarManager {
   private async prepareAndSpawn(): Promise<void> {
     const sidecarDir = this.resolveSidecarDir();
     const scriptPath = path.join(sidecarDir, 'federation-sidecar.ts');
-    const bunPath = this.settings.federationBunPath || [process.env.HOME + '/.bun/bin/bun', '/opt/homebrew/bin/bun', '/usr/local/bin/bun'].find(p => fs.existsSync(p)) || 'bun';
+    const home = process.env.HOME || process.env.USERPROFILE || '';
+    const bunCandidates = [
+      ...(home ? [path.join(home, '.bun', 'bin', 'bun'), path.join(home, '.bun', 'bin', 'bun.exe')] : []),
+      '/opt/homebrew/bin/bun',
+      '/usr/local/bin/bun',
+    ];
+    const bunPath = this.settings.federationBunPath || bunCandidates.find(p => fs.existsSync(p)) || 'bun';
 
     const ready = await this.ensureSidecarMaterialized(sidecarDir, bunPath);
     if (this.stopped) return;
