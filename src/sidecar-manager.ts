@@ -152,10 +152,22 @@ export class SidecarManager {
       this.logger('error', `sidecar materialization failed: ${err instanceof Error ? err.message : String(err)}`);
       return false;
     }
+    if (this.forceReinstall) {
+      // A module-resolution crash means the tree is broken in a way plain
+      // `bun install` (and on Windows even --force) may not repair — remove
+      // node_modules and the lockfile so the reinstall is a clean rebuild.
+      try {
+        fs.rmSync(path.join(sidecarDir, 'node_modules'), { recursive: true, force: true, maxRetries: 3, retryDelay: 500 });
+        fs.rmSync(path.join(sidecarDir, 'bun.lock'), { force: true });
+        this.logger('warn', 'removed sidecar node_modules + bun.lock for a clean reinstall');
+      } catch (err) {
+        this.logger('warn', `could not fully remove node_modules (${err instanceof Error ? err.message : String(err)}) — continuing with bun install --force`);
+      }
+    }
     // Always run `bun install`: a no-op when node_modules is complete, and it
     // repairs partial trees left by an interrupted or timed-out install (which
     // otherwise crash the sidecar with "Cannot find package ..." forever).
-    this.logger('info', `reconciling sidecar dependencies: ${bunPath} install (cwd=${sidecarDir})`);
+    this.logger('info', `reconciling sidecar dependencies: ${bunPath} install${this.forceReinstall ? ' --force' : ''} (cwd=${sidecarDir})`);
     return await new Promise<boolean>((resolve) => {
       let child: ChildProcessWithoutNullStreams;
       try {
