@@ -107,7 +107,11 @@ function remapEndpoint(endpoint: string): string {
     const discoveryPort = parseInt(discoveryUrl.port || '80', 10);
     u.hostname = discoveryUrl.hostname;
     if (port >= 8000 && port < 10000 && discoveryPort >= 10000) {
-      u.port = String(port + 10000);
+      // Host-mapping convention: in-container 8xxx maps to host 8xxx + OFFSET,
+      // where OFFSET is derivable from discovery's own mapping (its container
+      // port is always 8100). +10000 for the default 18xxx layout, +20000 when
+      // the substrate runs with PORT_OFFSET=10000 (28xxx), etc.
+      u.port = String(port + (discoveryPort - 8100));
     }
     return u.origin;
   } catch {
@@ -136,10 +140,14 @@ async function lookupShapeOwner(shape: string): Promise<ShapeOwner | null> {
     const idOf = (x: any) => String(x?.vesselId ?? x?.vessel_id ?? '');
     const v = vessels.find((x) => x?.endpoint && idOf(x) !== VESSEL_ID && !idOf(x).startsWith('obsidian-'));
     if (!v) return null;
-    // Registrations may carry an explicit host-reachable public_endpoint;
-    // fall back to remapping the (possibly in-container) endpoint otherwise.
+    // Remap the (possibly in-container) endpoint ourselves: the offset is
+    // derived from discovery's own mapped port, which stays correct when the
+    // substrate runs on shifted host ports. public_endpoint is only trusted
+    // when it isn't loopback-guessed (discovery computes it with a fixed
+    // +10000 that breaks on shifted layouts).
+    const pub = typeof v.public_endpoint === 'string' ? v.public_endpoint.replace(/\/+$/, '') : '';
     const owner: ShapeOwner = {
-      base: v.public_endpoint ? String(v.public_endpoint).replace(/\/+$/, '') : remapEndpoint(String(v.endpoint)),
+      base: pub && !/^https?:\/\/127\.0\.0\.1[:/]/.test(pub) ? pub : remapEndpoint(String(v.endpoint)),
       resolvePath: String(v.resolve_endpoint || '/v2/impulses/resolve'),
       vesselId: idOf(v) || 'unknown',
       multiaddrs: Array.isArray(v.libp2p_multiaddr) ? v.libp2p_multiaddr.filter((m: unknown) => typeof m === 'string') : [],
