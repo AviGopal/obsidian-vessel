@@ -413,6 +413,20 @@ export async function sidecarHttp(
   return r && typeof r.status === 'number' ? (r as SidecarHttpResult) : null;
 }
 
+/**
+ * Settings-free variant of sidecarHttp for clients constructed with a bare
+ * endpoint string (api-client, goal-host-client, concept-db-client): routes
+ * via the module-tracked actually-bound sidecar port. Returns null when the
+ * sidecar is not up, so callers fall back to their direct endpoint.
+ */
+export async function sidecarHttpAuto(
+  req: SidecarHttpRequest,
+  timeoutMs = 30_000,
+): Promise<SidecarHttpResult | null> {
+  const r = await postJson(`http://127.0.0.1:${activeSidecarPort || 8402}/outbound/http`, req, timeoutMs);
+  return r && typeof r.status === 'number' ? (r as SidecarHttpResult) : null;
+}
+
 /** True when the sidecar's loopback API is reachable. */
 export async function sidecarAvailable(settings: ObsidianVesselSettings): Promise<boolean> {
   const controller = new AbortController();
