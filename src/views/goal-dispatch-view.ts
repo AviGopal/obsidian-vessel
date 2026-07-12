@@ -1600,6 +1600,10 @@ export class GoalDispatchView extends ItemView {
     if (!mgr || !this.solicitationsEl) return;
     this.renderSolicitations(mgr.list());
     this.unsubscribeSolicitations = mgr.subscribe((list) => this.renderSolicitations(list));
+    // Reconcile pending cards against goal-host so a card whose goal has
+    // completed (or whose solicitation timed out server-side) disappears
+    // instead of lingering forever. registerInterval → cleared on view close.
+    this.registerInterval(window.setInterval(() => void mgr.reconcile(), 30_000));
   }
 
   private renderSolicitations(list: PendingSolicitation[]): void {
@@ -1609,15 +1613,46 @@ export class GoalDispatchView extends ItemView {
     if (list.length === 0) return;
     for (const sol of list) {
       const card = el.createDiv('sub-card sub-card--solicitation');
-      card.createDiv({ cls: 'sub-solicitation-title', text: '⚑ The substrate needs your input' });
+      const head = card.createDiv('sub-solicitation-head');
+      head.createDiv({ cls: 'sub-solicitation-title', text: '⚑ The substrate needs your input' });
+      head.createDiv({
+        cls: 'sub-solicitation-meta',
+        text: `${new Date(sol.receivedAt).toLocaleTimeString()}${sol.dispatchId ? ` · goal ${sol.dispatchId.slice(0, 8)}` : ''}`,
+      });
       const bodyEl = card.createDiv('sub-solicitation-body');
       void MarkdownRenderer.render(this.plugin.app, sol.questionMarkdown, bodyEl, '/', this);
+      card.createDiv({ cls: 'sub-solicitation-label', text: 'Your answer' });
       const answerEl = card.createEl('textarea', {
         cls: 'sub-solicitation-answer',
-        attr: { placeholder: 'Your answer… (typing keeps the door open)', rows: '3' },
+        attr: { placeholder: 'Type your answer — typing keeps the door open…', rows: '4' },
       });
       answerEl.addEventListener('input', () => this.plugin.solicitationManager?.heartbeat(sol.solicitationId));
       const btnRow = card.createDiv('sub-solicitation-btns');
+      // Deliver an outcome with honest feedback: disable the row while the
+      // POST is in flight, confirm on success, and re-enable + Notice on
+      // failure (respond() already drops the card if goal-host says the
+      // solicitation is gone, so a false return here with the card still
+      // present means transport failure).
+      const sendOutcome = async (
+        btn: HTMLButtonElement,
+        outcome: 'answered' | 'declined' | 'insufficient_context',
+        answer?: string,
+      ): Promise<void> => {
+        const mgr = this.plugin.solicitationManager;
+        if (!mgr) return;
+        const buttons = Array.from(btnRow.querySelectorAll('button')) as HTMLButtonElement[];
+        for (const b of buttons) b.disabled = true;
+        const originalLabel = btn.textContent ?? '';
+        btn.textContent = 'Sending…';
+        const ok = await mgr.respond(sol.solicitationId, outcome, answer);
+        if (ok) {
+          new Notice(outcome === 'answered' ? 'Answer delivered to the substrate.' : 'Response recorded.');
+          return;
+        }
+        btn.textContent = originalLabel;
+        for (const b of buttons) b.disabled = false;
+        new Notice('Could not deliver the response — the solicitation may have expired or goal-host is unreachable.');
+      };
       const answerBtn = btnRow.createEl('button', { cls: 'mod-cta', text: 'Answer' });
       answerBtn.addEventListener('click', () => {
         const answer = answerEl.value.trim();
@@ -1625,13 +1660,12 @@ export class GoalDispatchView extends ItemView {
           new Notice('Write an answer first (or use Not now).');
           return;
         }
-        void this.plugin.solicitationManager?.respond(sol.solicitationId, 'answered', answer);
+        void sendOutcome(answerBtn, 'answered', answer);
       });
       const declineBtn = btnRow.createEl('button', { text: 'Not now' });
-      declineBtn.addEventListener('click', () => void this.plugin.solicitationManager?.respond(sol.solicitationId, 'declined'));
+      declineBtn.addEventListener('click', () => void sendOutcome(declineBtn, 'declined'));
       const insufficientBtn = btnRow.createEl('button', { text: 'Not enough context' });
-      insufficientBtn.addEventListener('click', () =>
-        void this.plugin.solicitationManager?.respond(sol.solicitationId, 'insufficient_context'));
+      insufficientBtn.addEventListener('click', () => void sendOutcome(insufficientBtn, 'insufficient_context'));
     }
   }
 
