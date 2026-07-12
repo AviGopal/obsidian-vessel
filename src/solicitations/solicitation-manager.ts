@@ -1,3 +1,4 @@
+import { requestUrl } from 'obsidian';
 /**
  * Solicitation manager (WS5: the human is a resolver).
  *
@@ -85,19 +86,28 @@ export class SolicitationManager {
     }
   }
 
-  private async post(shape: string, body: Record<string, unknown>): Promise<boolean> {
+  /**
+   * POST a write shape to goal-host /resolve. Uses Obsidian's requestUrl —
+   * plain fetch() from the app://obsidian.md renderer is CORS-blocked and
+   * goal-host serves no CORS headers, so every button POST failed silently.
+   * Returns the HTTP status (0 on transport failure) so callers can
+   * distinguish "solicitation gone server-side" (404) from unreachable.
+   */
+  private async post(shape: string, body: Record<string, unknown>): Promise<{ ok: boolean; status: number }> {
     try {
-      const resp = await fetch(`${this.goalHostEndpoint}/resolve`, {
+      const resp = await requestUrl({
+        url: `${this.goalHostEndpoint}/resolve`,
         method: 'POST',
+        throw: false,
         headers: {
           'Content-Type': 'application/json',
           ...(this.apiKey ? { Authorization: `ApiKey ${this.apiKey}` } : {}),
         },
         body: JSON.stringify({ type: shape, ...body }),
       });
-      return resp.ok;
+      return { ok: resp.status >= 200 && resp.status < 300, status: resp.status };
     } catch {
-      return false;
+      return { ok: false, status: 0 };
     }
   }
 
@@ -112,7 +122,9 @@ export class SolicitationManager {
     const last = this.lastHeartbeatAt.get(solicitationId) ?? 0;
     if (Date.now() - last < HEARTBEAT_MIN_INTERVAL_MS) return;
     this.lastHeartbeatAt.set(solicitationId, Date.now());
-    void this.post('solicitationHeartbeat_write', { solicitationId });
+    void this.post('solicitationHeartbeat_write', { solicitationId }).then((r) => {
+      if (r.status === 404) this.expire(solicitationId);
+    });
   }
 
   async respond(
@@ -122,18 +134,67 @@ export class SolicitationManager {
   ): Promise<boolean> {
     const sol = this.pending.get(solicitationId);
     if (!sol || sol.status !== 'pending') return false;
-    const ok = await this.post('solicitationResponse_write', {
+    const r = await this.post('solicitationResponse_write', {
       solicitationId,
       outcome,
       ...(answer !== undefined ? { answer } : {}),
     });
-    if (ok) {
+    if (r.status === 404) {
+      // Goal-host no longer holds this solicitation (the goal finished or
+      // the solicitation timed out server-side) — the card is stale; drop it.
+      this.expire(solicitationId);
+      return false;
+    }
+    if (r.ok) {
       sol.status = outcome;
       this.pending.delete(solicitationId);
       this.lastHeartbeatAt.delete(solicitationId);
       this.emit();
     }
-    return ok;
+    return r.ok;
+  }
+
+  /** Drop a solicitation that is no longer answerable (gone server-side). */
+  private expire(solicitationId: string): void {
+    const sol = this.pending.get(solicitationId);
+    if (!sol) return;
+    sol.status = 'expired';
+    this.pending.delete(solicitationId);
+    this.lastHeartbeatAt.delete(solicitationId);
+    this.emit();
+  }
+
+  /**
+   * Reconcile pending cards against goal-host. A solicitation whose dispatch
+   * has finished (goal completed/failed) or that goal-host has dropped is
+   * gone server-side — the card must not linger. Called on an interval by
+   * the goal-dispatch view.
+   */
+  async reconcile(): Promise<void> {
+    for (const sol of [...this.pending.values()]) {
+      if (sol.status !== 'pending') continue;
+      if (sol.dispatchId) {
+        try {
+          const r = await requestUrl({
+            url: `${this.goalHostEndpoint}/executions/${sol.dispatchId}`,
+            method: 'GET',
+            throw: false,
+            headers: this.apiKey ? { Authorization: `ApiKey ${this.apiKey}` } : {},
+          });
+          const status = r.status === 200 ? ((r.json as { status?: string } | null)?.status ?? null) : null;
+          if (r.status === 404 || (status !== null && status !== 'running')) {
+            this.expire(sol.solicitationId);
+            continue;
+          }
+        } catch { /* goal-host unreachable — keep the card, retry next sweep */ }
+      } else {
+        // No dispatch to check against: hard-expire after the advertised
+        // timeout plus generous composing slack (heartbeats may have
+        // extended goal-host's deadline beyond timeoutMs).
+        const age = Date.now() - new Date(sol.receivedAt).getTime();
+        if (age > sol.timeoutMs + 10 * 60_000) this.expire(sol.solicitationId);
+      }
+    }
   }
 
   updateEndpoint(goalHostEndpoint: string, apiKey?: string): void {
