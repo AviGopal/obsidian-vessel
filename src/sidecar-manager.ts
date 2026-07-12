@@ -46,6 +46,7 @@ export class SidecarManager {
   private child: ChildProcessWithoutNullStreams | null = null;
   private stopped = true;
   private restartAttempt = 0;
+  private forceReinstall = false;
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
   private logger: NonNullable<SidecarManagerOptions['logger']>;
 
@@ -158,7 +159,7 @@ export class SidecarManager {
     return await new Promise<boolean>((resolve) => {
       let child: ChildProcessWithoutNullStreams;
       try {
-        child = spawn(bunPath, ['install'], { cwd: sidecarDir, stdio: 'pipe' });
+        child = spawn(bunPath, this.forceReinstall ? ['install', '--force'] : ['install'], { cwd: sidecarDir, stdio: 'pipe' });
       } catch (err) {
         this.logger('error', `failed to run bun install: ${err instanceof Error ? err.message : String(err)}`);
         resolve(false);
@@ -169,6 +170,7 @@ export class SidecarManager {
       const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* already exited */ } }, 600_000);
       child.on('exit', (code) => {
         clearTimeout(timer);
+        if (code === 0) this.forceReinstall = false;
         if (code !== 0) this.logger('error', `bun install exited with ${code}: ${stderr.slice(-500)}`);
         resolve(code === 0);
       });
@@ -239,12 +241,20 @@ export class SidecarManager {
     this.child = child;
     try { fs.writeFileSync(path.join(sidecarDir, 'sidecar.pid'), String(child.pid)); } catch { /* best effort */ }
 
+    let recentStderr = '';
     this.child.stdout?.on('data', (chunk: Buffer) => this.logger('info', chunk.toString().trimEnd()));
-    this.child.stderr?.on('data', (chunk: Buffer) => this.logger('warn', chunk.toString().trimEnd()));
+    this.child.stderr?.on('data', (chunk: Buffer) => {
+      recentStderr = (recentStderr + chunk.toString()).slice(-4000);
+      this.logger('warn', chunk.toString().trimEnd());
+    });
 
     child.on('exit', (code, signal) => {
       if (this.child === child) this.child = null;
       if (this.stopped) return;
+      if (/Cannot find (package|module)/i.test(recentStderr)) {
+        this.forceReinstall = true;
+        this.logger('warn', 'sidecar crashed on module resolution — forcing bun install --force on next start to repair node_modules');
+      }
       this.logger('warn', `sidecar exited (code=${code}, signal=${signal}) — restarting`);
       this.scheduleRestart();
     });
