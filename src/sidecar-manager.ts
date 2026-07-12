@@ -17,6 +17,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as net from 'net';
 import { ObsidianVesselSettings } from './settings';
 
 // Injected at build time by esbuild.config.mjs (`define`) from
@@ -216,6 +217,39 @@ export class SidecarManager {
       return;
     }
 
+    // Clear our own stale sidecar (recorded pid) if it survived a previous
+    // session, then pick the health port: the configured one when free,
+    // otherwise walk forward — a port held by a process we don't own (second
+    // vault, unrelated listener) must never block this plugin's own sidecar.
+    const desiredPort = this.settings.federationHealthPort || 8402;
+    const pidPath = path.join(sidecarDir, 'sidecar.pid');
+    if (!(await portIsFree(desiredPort))) {
+      try {
+        const stalePid = parseInt(fs.readFileSync(pidPath, 'utf8'), 10);
+        if (stalePid > 1) {
+          process.kill(stalePid, 'SIGKILL');
+          this.logger('info', `killed stale sidecar (pid ${stalePid}) holding port ${desiredPort}`);
+          await new Promise(r => setTimeout(r, 300));
+        }
+      } catch { /* no pid file, or the process is not ours to kill */ }
+    }
+    try { fs.unlinkSync(pidPath); } catch { /* absent */ }
+    let healthPort = desiredPort;
+    if (!(await portIsFree(desiredPort))) {
+      let found = 0;
+      for (let p = desiredPort + 1; p <= desiredPort + 20; p++) {
+        if (await portIsFree(p)) { found = p; break; }
+      }
+      if (!found) {
+        this.logger('error', `no free health port in ${desiredPort}-${desiredPort + 20} — retrying later`);
+        this.scheduleRestart();
+        return;
+      }
+      healthPort = found;
+      this.logger('warn', `health port ${desiredPort} is held by another process — using ${healthPort} for this session`);
+    }
+    setActiveSidecarPort(healthPort);
+
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       OBSIDIAN_VESSEL_ID: this.settings.federationVesselId || '',
@@ -224,23 +258,10 @@ export class SidecarManager {
       API_KEY: this.settings.federationApiKey || this.settings.apiKey || '',
       OBSIDIAN_URL: `http://127.0.0.1:${this.opts.serverPort}`,
       FEDERATION_INGRESS_MULTIADDR: this.settings.federationIngressMultiaddr || '',
-              OBSIDIAN_PASSTHROUGH_HEALTH_PORT: String(this.settings.federationHealthPort || 8402),
+      OBSIDIAN_PASSTHROUGH_HEALTH_PORT: String(healthPort),
     };
 
-    try {
-        const pidPath = path.join(sidecarDir, 'sidecar.pid');
-        const stalePid = parseInt(fs.readFileSync(pidPath, 'utf8'), 10);
-        if (stalePid > 1) {
-          const held = await fetch(`http://127.0.0.1:${this.settings.federationHealthPort || 8402}/health`).then(r => r.ok).catch(() => false);
-          if (held) {
-            process.kill(stalePid, 'SIGKILL');
-            this.logger('info', `killed stale sidecar (pid ${stalePid}) holding the health port`);
-            await new Promise(r => setTimeout(r, 300));
-          }
-          fs.unlinkSync(pidPath);
-        }
-      } catch { /* no stale sidecar */ }
-      this.logger('info', `spawning sidecar: ${bunPath} ${scriptPath} (cwd=${sidecarDir})`);
+    this.logger('info', `spawning sidecar: ${bunPath} ${scriptPath} (cwd=${sidecarDir})`);
 
     let child: ChildProcessWithoutNullStreams;
     try {
@@ -322,8 +343,24 @@ export interface SidecarHttpResult {
   body: any;
 }
 
+// The port the running sidecar actually bound (may differ from settings when
+// the configured port was held and the manager walked to a free one).
+let activeSidecarPort: number | null = null;
+export function setActiveSidecarPort(port: number): void { activeSidecarPort = port; }
+export function getActiveSidecarPort(settings: ObsidianVesselSettings): number {
+  return activeSidecarPort || settings.federationHealthPort || 8402;
+}
+
+function portIsFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const srv = net.createServer();
+    srv.once('error', () => resolve(false));
+    srv.listen(port, '127.0.0.1', () => srv.close(() => resolve(true)));
+  });
+}
+
 function sidecarBase(settings: ObsidianVesselSettings): string {
-  return `http://127.0.0.1:${settings.federationHealthPort || 8402}`;
+  return `http://127.0.0.1:${getActiveSidecarPort(settings)}`;
 }
 
 async function postJson(url: string, payload: unknown, timeoutMs: number): Promise<any | null> {
