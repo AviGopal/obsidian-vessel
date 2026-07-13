@@ -427,6 +427,21 @@ export async function sidecarHttpAuto(
   return r && typeof r.status === 'number' ? (r as SidecarHttpResult) : null;
 }
 
+/**
+ * Settings-free variant of sidecarResolve for clients constructed with a bare
+ * endpoint string (concept-db-client et al.): POSTs { pointer } to the
+ * sidecar's /outbound/resolve, which crosses the federation overlay
+ * (lpStream -> HTTP-over-libp2p -> discovery-routed HTTP). Returns the
+ * resolved JSON, or null when the sidecar is not up or the resolve failed -
+ * callers treat null as "engage explicit fallback".
+ */
+export async function sidecarResolveAuto(
+  pointer: Record<string, unknown>,
+  timeoutMs = 30_000,
+): Promise<any | null> {
+  return postJson(`http://127.0.0.1:${activeSidecarPort || 8402}/outbound/resolve`, { pointer }, timeoutMs);
+}
+
 /** True when the sidecar's loopback API is reachable. */
 export async function sidecarAvailable(settings: ObsidianVesselSettings): Promise<boolean> {
   const controller = new AbortController();

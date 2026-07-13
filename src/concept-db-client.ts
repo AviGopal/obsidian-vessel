@@ -1,7 +1,22 @@
 /**
  * Concept-DB Client
  *
- * HTTP client for the concept-db REST surface. Concept-db exposes:
+ * Primary transport: shaped impulse resolves through the sidecar's
+ * /outbound/resolve surface, which crosses the federation overlay and works
+ * against libp2p-only producers (hub concept-db is firewalled to spokes;
+ * vessel-native REST cannot cross the resolve-only overlay). Pointer mapping:
+ *   search    -> { type:'concept', query, shape, source_type, min_relevance, limit, offset }
+ *   by id     -> { type:'concept', concept_id }
+ *   neighbors -> { type:'relatedConcepts', concept_id, direction, edge_types, limit }
+ *   edges     -> { type:'conceptGraph', concept_id, direction }
+ *   create    -> { type:'concept_create_write', conceptData }
+ *   upsert    -> { type:'conceptSignatureUpsert_write', pointer_type, shape }
+ *   link      -> { type:'conceptLink_write', linkData }
+ * (updateConcept stays REST-only: concept-db exposes no update impulse shape yet.)
+ *
+ * Fallback transport (engaged EXPLICITLY, with a warn log, when the sidecar is
+ * down or the resolve fails): the concept-db REST surface below.
+ *   GET  /concepts/search?query=&shape=&source_type=&limit=&offset=
  *   GET  /concepts/search?query=&shape=&source_type=&limit=&offset=
  *   GET  /concepts/:id
  *   GET  /concepts/:id/neighbors?direction=&edge_types=&limit=
@@ -20,7 +35,7 @@
 // Types
 // =============================================================================
 
-import { sidecarHttpAuto } from './sidecar-manager';
+import { sidecarHttpAuto, sidecarResolveAuto } from './sidecar-manager';
 
 export interface ConceptRecord {
   /** Full id, e.g. "concept:abcdef..." */
@@ -307,9 +322,23 @@ export class ConceptDbClient {
     if (params.minRelevance !== undefined) q.set('min_relevance', String(params.minRelevance));
     if (params.limit !== undefined) q.set('limit', String(params.limit));
     if (params.offset !== undefined) q.set('offset', String(params.offset));
+    const resolved = await this.resolveImpulse({
+      type: 'concept',
+      query: params.query,
+      shape: params.shape,
+      source_type: params.sourceType,
+      min_relevance: params.minRelevance,
+      limit: params.limit,
+      offset: params.offset,
+    });
+    if (resolved && Array.isArray(resolved.content)) {
+      const concepts = resolved.content as ConceptRecord[];
+      const metaCount = (resolved.metadata as { count?: number } | undefined)?.count;
+      return { concepts, count: metaCount ?? concepts.length };
+    }
     const qs = q.toString();
     const path = `/concepts/search${qs ? `?${qs}` : ''}`;
-    this.logger('debug', 'searchConcepts', { params, path });
+    this.logger('debug', 'searchConcepts (REST fallback)', { params, path });
     const resp = await this.fetch<SearchConceptsResponse>(path);
     return {
       concepts: resp.concepts || [],
@@ -318,6 +347,18 @@ export class ConceptDbClient {
   }
 
   async getConcept(id: string): Promise<ConceptRecord | null> {
+    const resolved = await this.resolveImpulse({ type: 'concept', concept_id: id });
+    if (resolved && resolved.metadata && resolved.content !== undefined) {
+      const md = resolved.metadata as Record<string, unknown>;
+      return {
+        id,
+        shape: String(md.concept_shape ?? md.shape ?? ''),
+        source_type: md.source_type as string | undefined,
+        summary: md.summary as string | undefined,
+        content: typeof resolved.content === 'string' ? resolved.content : JSON.stringify(resolved.content),
+        relevance: md.relevance as number | undefined,
+      };
+    }
     const short = stripConceptPrefix(id);
     const path = `/concepts/${encodeURIComponent(short)}`;
     try {
@@ -334,6 +375,23 @@ export class ConceptDbClient {
     edgeTypes?: string[],
     limit?: number
   ): Promise<ConceptNeighbor[]> {
+    const resolved = await this.resolveImpulse({
+      type: 'relatedConcepts',
+      concept_id: id,
+      direction,
+      edge_types: edgeTypes,
+      limit,
+    });
+    if (resolved && Array.isArray(resolved.content)) {
+      return (resolved.content as Array<Record<string, unknown>>).map((r) => ({
+        id: String(r.concept_id ?? ''),
+        shape: r.shape as string | undefined,
+        summary: r.summary as string | undefined,
+        relevance: r.relevance as number | undefined,
+        edge_type: String(r.edge_type ?? 'related_to'),
+        edge_weight: r.edge_weight as number | undefined,
+      }));
+    }
     const short = stripConceptPrefix(id);
     const q = new URLSearchParams();
     q.set('direction', direction);
@@ -348,6 +406,23 @@ export class ConceptDbClient {
   }
 
   async getEdges(id: string, direction: 'outgoing' | 'incoming' | 'both' = 'both'): Promise<ConceptEdge[]> {
+    const resolved = await this.resolveImpulse({ type: 'conceptGraph', concept_id: id, direction });
+    const graph = resolved?.content as
+      | { edges?: Array<{ edge?: Record<string, unknown>; neighbor?: { id?: string } }> }
+      | undefined;
+    if (graph && Array.isArray(graph.edges)) {
+      return graph.edges.map((row) => {
+        const e = row.edge ?? {};
+        return {
+          id: e.id !== undefined ? String(e.id) : undefined,
+          from_concept_id: String(e.in ?? id),
+          to_concept_id: String(e.out ?? row.neighbor?.id ?? ''),
+          edge_type: String(e.type ?? e.edge_type ?? 'related_to'),
+          weight: e.weight as number | undefined,
+          description: e.description as string | undefined,
+        };
+      });
+    }
     const short = stripConceptPrefix(id);
     const path = `/concepts/${encodeURIComponent(short)}/edges?direction=${direction}`;
     const resp = await this.fetch<EdgesResponse>(path);
@@ -359,10 +434,31 @@ export class ConceptDbClient {
   // ---------------------------------------------------------------------------
 
   async createConcept(payload: CreateConceptPayload): Promise<ConceptRecord> {
+    const resolved = await this.resolveImpulse({ type: 'concept_create_write', conceptData: payload });
+    if (resolved && resolved.success && typeof resolved.content === 'string') {
+      try {
+        return JSON.parse(resolved.content) as ConceptRecord;
+      } catch {
+        /* malformed content — fall through to REST */
+      }
+    }
     return this.fetch<ConceptRecord>('/concepts', { method: 'POST', body: payload });
   }
 
   async upsertBySignature(payload: UpsertBySignaturePayload): Promise<UpsertBySignatureResponse> {
+    const resolved = await this.resolveImpulse({
+      type: 'conceptSignatureUpsert_write',
+      pointer_type: payload.pointer_type,
+      shape: payload.shape,
+    });
+    if (resolved && resolved.success) {
+      const body = typeof resolved.content === 'string'
+        ? (() => { try { return JSON.parse(resolved.content); } catch { return null; } })()
+        : resolved.content;
+      if (body && typeof body === 'object' && 'id' in body) {
+        return { id: String((body as { id: unknown }).id), created: Boolean((body as { created?: unknown }).created) };
+      }
+    }
     return this.fetch<UpsertBySignatureResponse>('/concepts/upsert-by-signature', {
       method: 'POST',
       body: payload,
@@ -387,6 +483,20 @@ export class ConceptDbClient {
     weight?: number,
     description?: string
   ): Promise<ConceptEdge> {
+    const resolved = await this.resolveImpulse({
+      type: 'conceptLink_write',
+      linkData: { from_concept_id: fromId, to_concept_id: toId, edge_type: edgeType, weight, description },
+    });
+    if (resolved && resolved.success) {
+      if (typeof resolved.content === 'string') {
+        try {
+          return JSON.parse(resolved.content) as ConceptEdge;
+        } catch {
+          /* fall through to constructed edge */
+        }
+      }
+      return { from_concept_id: fromId, to_concept_id: toId, edge_type: edgeType, weight, description };
+    }
     const short = stripConceptPrefix(fromId);
     const body: LinkConceptsPayload = {
       to_concept_id: toId,
@@ -416,6 +526,35 @@ export class ConceptDbClient {
   // ---------------------------------------------------------------------------
   // Private
   // ---------------------------------------------------------------------------
+
+  /**
+   * Issue a shaped impulse resolve through the sidecar's /outbound/resolve
+   * surface (crosses the federation overlay; reaches libp2p-only producers
+   * that vessel-native REST cannot). Returns null when the sidecar is down or
+   * the resolve failed for any reason — callers then engage the REST fallback,
+   * and the fallback engagement is logged instead of being silent.
+   */
+  private async resolveImpulse(pointer: Record<string, unknown>): Promise<{
+    success?: boolean;
+    content?: unknown;
+    metadata?: unknown;
+  } | null> {
+    const resp = await sidecarResolveAuto(pointer, this.timeout);
+    if (resp === null || typeof resp !== 'object') {
+      this.logger('warn', 'overlay resolve unavailable - engaging REST fallback', {
+        type: String(pointer.type),
+      });
+      return null;
+    }
+    if ('error' in resp && !('content' in resp)) {
+      this.logger('warn', 'overlay resolve returned error - engaging REST fallback', {
+        type: String(pointer.type),
+        error: String((resp as { error: unknown }).error),
+      });
+      return null;
+    }
+    return resp as { success?: boolean; content?: unknown; metadata?: unknown };
+  }
 
   private async fetch<T>(
     path: string,
