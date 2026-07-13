@@ -1456,6 +1456,9 @@ export class GoalDispatchView extends ItemView {
   private renderCompleted(): void {
     const el = this.completedEl;
     if (!el) return;
+    const completedSnap = JSON.stringify({ done: this.completedDispatches, expanded: this.completedExpanded });
+    if (this.lastRenderedSnapshot.get('completed') === completedSnap) return;
+    this.lastRenderedSnapshot.set('completed', completedSnap);
     el.empty();
     const done = this.completedDispatches;
     if (done.length === 0) return;
