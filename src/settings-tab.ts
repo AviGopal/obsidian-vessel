@@ -31,8 +31,6 @@ export class ObsidianVesselSettingTab extends PluginSettingTab {
     this.createConnectionSection(containerEl);
     this.createSyncSection(containerEl);
     this.createHttpServerSection(containerEl);
-    this.createNoteFormattingSection(containerEl);
-    this.createCanvasSection(containerEl);
     this.createConceptDbSection(containerEl);
     this.createFederationSidecarSection(containerEl);
     this.createStatusSection(containerEl);
@@ -289,18 +287,6 @@ export class ObsidianVesselSettingTab extends PluginSettingTab {
         }));
 
     new Setting(containerEl)
-      .setName('Historical Sync Limit')
-      .setDesc('Maximum number of historical executions to sync (10-1000)')
-      .addSlider(slider => slider
-        .setLimits(10, 1000, 10)
-        .setValue(this.plugin.settings.historicalSyncLimit)
-        .setDynamicTooltip()
-        .onChange(async (value) => {
-          this.plugin.settings.historicalSyncLimit = value;
-          await this.plugin.saveSettings();
-        }));
-
-    new Setting(containerEl)
       .setName('Sync Interval')
       .setDesc('Minutes between automatic syncs (1-60)')
       .addSlider(slider => slider
@@ -374,103 +360,6 @@ export class ObsidianVesselSettingTab extends PluginSettingTab {
 
   }
 
-  /**
-   * Note formatting settings section
-   */
-  private createNoteFormattingSection(containerEl: HTMLElement): void {
-    containerEl.createEl('h2', { text: 'Note Formatting' });
-    containerEl.createEl('p', {
-      text: 'Configure how execution notes are formatted.',
-      cls: 'setting-item-description',
-    });
-
-    new Setting(containerEl)
-      .setName('Note Template')
-      .setDesc('Template style for execution notes')
-      .addDropdown(dropdown => dropdown
-        .addOption('detailed', 'Detailed - Full execution information')
-        .addOption('compact', 'Compact - Summary only')
-        .addOption('custom', 'Custom - Use custom template')
-        .setValue(this.plugin.settings.noteTemplate)
-        .onChange(async (value) => {
-          this.plugin.settings.noteTemplate = value as 'detailed' | 'compact' | 'custom';
-          await this.plugin.saveSettings();
-          this.display(); // Refresh to show/hide custom template
-        }));
-
-    // Show custom template input only when 'custom' is selected
-    if (this.plugin.settings.noteTemplate === 'custom') {
-      new Setting(containerEl)
-        .setName('Custom Template')
-        .setDesc('Custom template string using Handlebars-like syntax. Available variables: {{execution_id}}, {{activity_id}}, {{success}}, {{duration_ms}}, {{cost}}, {{executed_at}}, {{tasks}}, {{tool_calls}}')
-        .addTextArea(text => {
-          text
-            .setPlaceholder('# {{activity_id}}\n\n**Status:** {{#if success}}Success{{else}}Failed{{/if}}\n**Duration:** {{duration_ms}}ms')
-            .setValue(this.plugin.settings.customTemplate)
-            .onChange(async (value) => {
-              this.plugin.settings.customTemplate = value;
-              await this.plugin.saveSettings();
-            });
-          text.inputEl.rows = 10;
-          text.inputEl.style.width = '100%';
-          text.inputEl.style.fontFamily = 'monospace';
-        });
-    }
-
-    new Setting(containerEl)
-      .setName('Include Tool Calls')
-      .setDesc('Include detailed tool call information in execution notes')
-      .addToggle(toggle => toggle
-        .setValue(this.plugin.settings.includeToolCalls)
-        .onChange(async (value) => {
-          this.plugin.settings.includeToolCalls = value;
-          await this.plugin.saveSettings();
-        }));
-
-    new Setting(containerEl)
-      .setName('Include Diffs')
-      .setDesc('Include file diffs and state changes in execution notes')
-      .addToggle(toggle => toggle
-        .setValue(this.plugin.settings.includeDiffs)
-        .onChange(async (value) => {
-          this.plugin.settings.includeDiffs = value;
-          await this.plugin.saveSettings();
-        }));
-  }
-
-  /**
-   * Canvas settings section
-   */
-  private createCanvasSection(containerEl: HTMLElement): void {
-    containerEl.createEl('h2', { text: 'Canvas' });
-    containerEl.createEl('p', {
-      text: 'Configure canvas generation and layout options.',
-      cls: 'setting-item-description',
-    });
-
-    new Setting(containerEl)
-      .setName('Auto-Update Canvas')
-      .setDesc('Automatically update canvases when new executions are synced')
-      .addToggle(toggle => toggle
-        .setValue(this.plugin.settings.canvasAutoUpdate)
-        .onChange(async (value) => {
-          this.plugin.settings.canvasAutoUpdate = value;
-          await this.plugin.saveSettings();
-        }));
-
-    new Setting(containerEl)
-      .setName('Canvas Layout')
-      .setDesc('Layout algorithm for activity canvases')
-      .addDropdown(dropdown => dropdown
-        .addOption('hierarchical', 'Hierarchical - Tree-based layout')
-        .addOption('force-directed', 'Force-Directed - Physics-based layout')
-        .addOption('timeline', 'Timeline - Chronological layout')
-        .setValue(this.plugin.settings.canvasLayout)
-        .onChange(async (value) => {
-          this.plugin.settings.canvasLayout = value as 'hierarchical' | 'force-directed' | 'timeline';
-          await this.plugin.saveSettings();
-        }));
-  }
 
   /**
    * Status display section
