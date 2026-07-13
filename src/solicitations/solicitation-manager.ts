@@ -1,4 +1,5 @@
 import { requestUrl } from 'obsidian';
+import { sidecarResolveOutcome } from '../sidecar-manager';
 /**
  * Solicitation manager (WS5: the human is a resolver).
  *
@@ -87,13 +88,19 @@ export class SolicitationManager {
   }
 
   /**
-   * POST a write shape to goal-host /resolve. Uses Obsidian's requestUrl —
-   * plain fetch() from the app://obsidian.md renderer is CORS-blocked and
-   * goal-host serves no CORS headers, so every button POST failed silently.
-   * Returns the HTTP status (0 on transport failure) so callers can
+   * Deliver a write shape to goal-host. Primary route: a shaped resolve
+   * through the federation sidecar (crosses the overlay — the answer travels
+   * even when goal-host is only libp2p-reachable). The direct goal-host
+   * /resolve POST survives as an explicitly LOGGED fallback for sidecar-down
+   * local setups (requestUrl, not fetch: the app://obsidian.md renderer is
+   * CORS-blocked against vessels that serve no CORS headers).
+   * Returns an HTTP-like status (0 on transport failure) so callers can
    * distinguish "solicitation gone server-side" (404) from unreachable.
    */
   private async post(shape: string, body: Record<string, unknown>): Promise<{ ok: boolean; status: number }> {
+    const outcome = await sidecarResolveOutcome({ type: shape, ...body });
+    if (outcome !== null) return { ok: outcome.ok, status: outcome.status };
+    console.warn(`[SolicitationManager] sidecar resolve unavailable for ${shape} — engaging direct goal-host fallback`);
     try {
       const resp = await requestUrl({
         url: `${this.goalHostEndpoint}/resolve`,
@@ -174,6 +181,23 @@ export class SolicitationManager {
     for (const sol of [...this.pending.values()]) {
       if (sol.status !== 'pending') continue;
       if (sol.dispatchId) {
+        // Primary: the goalWalkState shape over the sidecar (overlay-capable);
+        // the direct /executions/:id GET survives as a LOGGED local fallback.
+        const oc = await sidecarResolveOutcome({ type: 'goalWalkState', dispatchId: sol.dispatchId });
+        if (oc !== null) {
+          if (oc.status === 404) {
+            this.expire(sol.solicitationId);
+            continue;
+          }
+          const walkStatus = oc.ok && oc.body && typeof oc.body === 'object'
+            ? String((oc.body as { status?: unknown }).status ?? '')
+            : '';
+          if (walkStatus && walkStatus !== 'running') {
+            this.expire(sol.solicitationId);
+          }
+          continue;
+        }
+        console.warn('[SolicitationManager] sidecar resolve unavailable for goalWalkState — engaging direct goal-host fallback');
         try {
           const r = await requestUrl({
             url: `${this.goalHostEndpoint}/executions/${sol.dispatchId}`,

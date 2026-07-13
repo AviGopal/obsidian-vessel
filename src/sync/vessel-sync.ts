@@ -163,6 +163,7 @@ export class VesselSyncService {
       const list = data.vessels ?? data.registrations ?? [];
       if (list.length > 0) return list;
     }
+    this.log('sidecar conduit yielded no vessels — engaging direct discovery fallback');
 
     // Strategy 1: GET /registry/stats
     try {

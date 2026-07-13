@@ -533,6 +533,91 @@ export async function sidecarResolveAuto(
   return postJson(`http://127.0.0.1:${activeSidecarPort || 8402}/outbound/resolve`, { pointer }, timeoutMs);
 }
 
+/**
+ * Pseudo-HTTP outcome of a sidecar resolve, normalized across every transport
+ * envelope the conduit can hand back (verified against the live surfaces):
+ *  - federation-transport (overlay lpStream): the owner's response arrives as
+ *    { content: { shape, produced_by, body, ... }, metadata } — no HTTP status
+ *    survives the stream, so one is inferred from the body's error text.
+ *  - discovery-routed HTTP: { shape, resolved_by, status, ok, ...ownerResponse }
+ *    with goal-host-style owners nesting their payload under `body`.
+ *  - v2 vessels answering { content, metadata } verbatim.
+ * null means the sidecar itself was unreachable or could not route AT ALL —
+ * callers treat that as "engage the (logged) direct fallback", while a non-null
+ * !ok outcome is an answer from the owner and must NOT be retried directly.
+ */
+export interface SidecarResolveOutcome {
+  ok: boolean;
+  status: number;
+  body: unknown;
+}
+
+export async function sidecarResolveOutcome(
+  pointer: Record<string, unknown>,
+  timeoutMs = 30_000,
+): Promise<SidecarResolveOutcome | null> {
+  const r = await sidecarResolveAuto(pointer, timeoutMs);
+  if (r === null || typeof r !== 'object') return null;
+  const rec = r as Record<string, unknown>;
+
+  // Transport-level failure: the sidecar could not route the pointer at all
+  // (no owner in discovery, overlay + HTTP both failed). Same contract as a
+  // down sidecar — the caller's direct fallback is the only remaining path.
+  if ('error' in rec && !('content' in rec) && !('body' in rec)) return null;
+
+  const errStatus = (errText: string): number =>
+    /not.?found|unknown (solicitation|dispatch|shape|execution)|expired/i.test(errText) ? 404 : 500;
+
+  // Federation-transport envelope.
+  const outer = rec.content;
+  if (
+    outer && typeof outer === 'object' && !Array.isArray(outer) &&
+    'produced_by' in (outer as Record<string, unknown>) &&
+    'body' in (outer as Record<string, unknown>)
+  ) {
+    const o = outer as Record<string, unknown>;
+    const inner = o.body;
+    const errText =
+      inner && typeof inner === 'object' && typeof (inner as Record<string, unknown>).error === 'string'
+        ? String((inner as Record<string, unknown>).error)
+        : '';
+    const status = typeof o.status === 'number' ? o.status : errText ? errStatus(errText) : 200;
+    return { ok: !errText && status < 400, status, body: inner };
+  }
+
+  // Discovery-routed HTTP (status/ok survive).
+  if (typeof rec.status === 'number' || typeof rec.ok === 'boolean') {
+    const status = typeof rec.status === 'number' ? rec.status : rec.ok === false ? 500 : 200;
+    return { ok: rec.ok !== false && status < 400, status, body: 'body' in rec ? rec.body : rec };
+  }
+
+  // v2 { content, metadata } verbatim.
+  if ('content' in rec) {
+    const failed = 'error' in rec;
+    return { ok: !failed, status: failed ? 500 : 200, body: rec.content };
+  }
+  const failed = 'error' in rec;
+  return { ok: !failed, status: failed ? errStatus(String(rec.error ?? '')) : 200, body: rec };
+}
+
+/**
+ * Convenience over sidecarResolveOutcome for read shapes: the owner's response
+ * BODY as an object on success ({} when the owner answered with a non-object
+ * body), null when the sidecar was unreachable OR the owner answered with an
+ * error — callers then engage their explicit, logged fallback.
+ */
+export async function sidecarResolveBody(
+  pointer: Record<string, unknown>,
+  timeoutMs = 30_000,
+): Promise<Record<string, unknown> | null> {
+  const outcome = await sidecarResolveOutcome(pointer, timeoutMs);
+  if (!outcome || !outcome.ok) return null;
+  if (outcome.body && typeof outcome.body === 'object' && !Array.isArray(outcome.body)) {
+    return outcome.body as Record<string, unknown>;
+  }
+  return {};
+}
+
 /** True when the sidecar's loopback API is reachable. */
 export async function sidecarAvailable(settings: ObsidianVesselSettings): Promise<boolean> {
   const controller = new AbortController();

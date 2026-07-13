@@ -4,6 +4,14 @@
  * WebSocket-based real-time sync for execution traces.
  * Connects to the Activity API WebSocket and creates
  * notes as executions complete.
+ *
+ * Transport note: this is the ONE substrate surface the plugin still reaches
+ * directly — the federation sidecar's conduit carries shaped resolves and
+ * plain REST, not WebSocket streams, so the event stream cannot ride the
+ * overlay yet. On a bare federated host this service degrades gracefully
+ * (bounded reconnect attempts, then quiet); everything the panel renders
+ * arrives via polled sidecar resolves instead, so no data path depends on
+ * this socket. When the sidecar grows a WS/event proxy, route this through it.
  */
 
 import type { App } from 'obsidian';

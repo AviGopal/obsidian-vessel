@@ -29,6 +29,7 @@ import { GoalHostClient, type VaultContext } from '../goals/goal-host-client';
 import { GoalNoteManager } from '../goals/goal-note-manager';
 import type { PendingSolicitation } from '../solicitations/solicitation-manager';
 import type { UiFeedbackKind } from '../feedback/ui-feedback-store';
+import { sidecarResolveBody } from '../sidecar-manager';
 
 export const VIEW_TYPE_GOAL_DISPATCH = 'obsidian-goal-dispatch';
 
@@ -828,7 +829,17 @@ export class GoalDispatchView extends ItemView {
     }
   }
 
+  /**
+   * Resolve a goal-host shape. Primary route: a shaped resolve through the
+   * federation sidecar's /outbound/resolve — it crosses the overlay, so the
+   * panel works on a bare host holding only hub credentials + the relay
+   * multiaddr. The configured goal-host endpoint survives only as an
+   * explicitly LOGGED fallback for sidecar-down local setups.
+   */
   private async goalHostResolve(body: Record<string, unknown>): Promise<Record<string, unknown> | null> {
+    const viaSidecar = await sidecarResolveBody(body);
+    if (viaSidecar !== null) return { resolved: true, body: viaSidecar };
+    console.warn(`[GoalDispatchView] sidecar resolve unavailable for ${String(body.type)} — engaging direct goal-host fallback`);
     const base = this.plugin.settings.goalHostEndpoint.replace(/\/+$/, '');
     return this.postJson(`${base}/resolve`, body);
   }
@@ -873,11 +884,12 @@ export class GoalDispatchView extends ItemView {
   // ---------------------------------------------------------------------------
 
   /**
-   * Resolve which host-reachable URL serves a shape, by asking discovery (the
-   * ONE fixed point). Prefers the vessel's `public_endpoint` (discovery derives
-   * a host-reachable one for in-container vessels) and appends the vessel's
-   * advertised resolve path. No hardcoded per-shape endpoints — if a vessel
-   * moves, discovery reflects it and the panel follows. Cached ~60s.
+   * FALLBACK-ONLY route derivation: which host-reachable URL serves a shape,
+   * by asking discovery (the ONE fixed point) and probing the candidate
+   * endpoints. The PRIMARY route for every shape is the sidecar resolve in
+   * devVesselResolve below — this direct path only engages (logged) when the
+   * sidecar is down, and it only works when the vessels are host-reachable
+   * (i.e. a local substrate; never on a bare federated host). Cached ~60s.
    */
   private async resolveShapeRoute(shape: string): Promise<string | null> {
     const cached = this.shapeRouteCache.get(shape);
@@ -914,11 +926,19 @@ export class GoalDispatchView extends ItemView {
     }
   }
 
-  /** Resolve a shape through discovery (never a hardcoded endpoint). */
+  /**
+   * Resolve a shape by name, sidecar-first (crosses the federation overlay;
+   * reaches libp2p-only producers that host-reachable HTTP cannot). Falls back
+   * — with a warn log — to the discovery-derived direct endpoint route, which
+   * only exists on hosts that can reach the vessels directly.
+   */
   private async devVesselResolve(
     shape: string,
     extra: Record<string, unknown> = {},
   ): Promise<Record<string, unknown> | null> {
+    const viaSidecar = await sidecarResolveBody({ type: shape, ...extra });
+    if (viaSidecar !== null) return { resolved: true, body: viaSidecar };
+    console.warn(`[GoalDispatchView] sidecar resolve unavailable for ${shape} — engaging discovery-routed direct fallback`);
     const url = await this.resolveShapeRoute(shape);
     if (!url) return null;
     return this.postJson(url, { impulse: { type: shape, ...extra } });

@@ -10,6 +10,7 @@ import { VesselStatusModal } from './modals/vessel-status-modal';
 import { ExecutionIdModal } from './modals/execution-id-modal';
 import { ExecutionSearchModal } from './modals/execution-search-modal';
 import { TemplatesBrowserModal } from './modals/templates-browser-modal';
+import { sidecarResolveBody } from './sidecar-manager';
 
 export function registerCommands(plugin: ObsidianVesselPlugin): void {
 
@@ -185,6 +186,13 @@ export function registerCommands(plugin: ObsidianVesselPlugin): void {
     name: 'Obsidian Vessel: Show substrate expectation',
     icon: 'sparkles',
     callback: async () => {
+      // Primary: shaped resolve through the federation sidecar (overlay-capable).
+      const viaSidecar = await sidecarResolveBody({ type: 'implicitVesselReport' }, 5000);
+      if (viaSidecar !== null) {
+        new Notice(JSON.stringify(viaSidecar).slice(0, 300));
+        return;
+      }
+      console.warn('[Commands] sidecar resolve unavailable for implicitVesselReport — engaging direct activity-api fallback');
       const activityApiUrl = plugin.settings.activityApiUrl;
       if (!activityApiUrl) {
         new Notice('Substrate expectation unavailable');

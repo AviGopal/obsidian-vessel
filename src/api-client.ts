@@ -603,6 +603,9 @@ export class ActivityAPIClient {
     // it holds the API key and reaches the substrate identically whether local
     // or remote (relay overlay). null → sidecar not up → direct endpoint below.
     const viaSidecar = await sidecarHttpAuto({ shape: 'activityExecutionTrace', method, path, body }, this.timeout);
+    if (!viaSidecar) {
+      this.logger('warn', 'sidecar conduit unavailable — engaging direct activity-api fallback', { path });
+    }
     if (viaSidecar) {
       if (!viaSidecar.ok) {
         const eb = viaSidecar.body as APIError | null;
