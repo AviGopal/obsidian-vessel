@@ -1399,25 +1399,29 @@ export class GoalDispatchView extends ItemView {
     if (this.lastRenderedSnapshot.get('pulse') === pulseSnapshot) return;
     this.lastRenderedSnapshot.set('pulse', pulseSnapshot);
     el.empty();
-    const row = el.createDiv({ cls: 'sub-pulse-row' });
+    const tiles = el.createDiv({ cls: 'sub-pulse-tiles' });
+    const addTile = (label: string, value: string, delta?: string, tooltip?: string): void => {
+      const tile = tiles.createDiv({ cls: 'sub-stat-tile' });
+      tile.createDiv({ cls: 'sub-stat-label', text: label });
+      tile.createDiv({ cls: 'sub-stat-value', text: value });
+      if (delta) tile.createDiv({ cls: 'sub-stat-delta', text: delta });
+      if (tooltip) tile.setAttr('title', tooltip);
+    };
     const settled = dispatches.filter((d) => d['status'] === 'completed' || d['status'] === 'failed').slice(-10);
     if (settled.length) {
       const reachedCount = settled.filter((d) => d['reached'] === true || d['reached'] === 'yes').length;
-      const chip = row.createSpan({ cls: 'sub-chip', text: `reach ${reachedCount}/${settled.length}` });
-      chip.setAttr('title', 'Goal-reach verdicts on the last settled dispatches - the honest outcome signal, not exit status.');
+      addTile('reach', `${reachedCount}/${settled.length}`, undefined, 'Goal-reach verdicts on the last settled dispatches - the honest outcome signal, not exit status.');
     }
     if (gaps.length) {
       const open = gaps.filter((g) => g['status'] === 'open');
       const dayAgo = Date.now() - 86_400_000;
       const closed24 = gaps.filter((g) => g['status'] === 'closed' && Date.parse(String(g['updated_at'] ?? '')) > dayAgo).length;
-      const chip = row.createSpan({ cls: 'sub-chip', text: `gaps ${open.length} open · ${closed24} closed/24h` });
-      chip.setAttr('title', 'Gap flow: how much self-improvement backlog is open and how fast it is draining.');
+      addTile('gaps open', String(open.length), `${closed24} closed/24h`, 'Gap flow: how much self-improvement backlog is open and how fast it is draining.');
       const oldest = open.map((g) => Date.parse(String(g['created_at'] ?? g['detected_at'] ?? ''))).filter((t) => Number.isFinite(t)).sort((a, b) => a - b)[0];
       if (oldest !== undefined) {
         const hours = Math.round((Date.now() - oldest) / 3_600_000);
         const age = hours >= 48 ? `${Math.round(hours / 24)}d` : `${hours}h`;
-        const ageChip = row.createSpan({ cls: 'sub-chip', text: `oldest ${age}` });
-        ageChip.setAttr('title', 'Age of the oldest open gap - the durability/latency edge of the close loop.');
+        addTile('oldest gap', age, undefined, 'Age of the oldest open gap - the durability/latency edge of the close loop.');
       }
     }
     const rhythms = (((rhythmRes?.body as Record<string, unknown> | undefined)?.['impulses'] ?? []) as Array<unknown>).filter((r): r is { body: Record<string, unknown> & { staleness: number } } => {
@@ -1427,15 +1431,15 @@ export class GoalDispatchView extends ItemView {
     }) as Array<{ id: string; body: { family: string; axis: string; staleness: number; budget: number; alpha: number; beta: number } }>;
     if (rhythms.length > 0) {
       const sorted = [...rhythms].sort((a, b) => b.body.staleness - a.body.staleness);
-      const rhythmRow = el.createDiv({ cls: 'sub-pulse-row sub-pulse-rhythms' });
-      const METER = '▁▂▃▄▅▆▇█';
+      const meters = el.createDiv({ cls: 'sub-rhythm-meters' });
       for (const rhythm of sorted) {
         const { family, axis, staleness, budget, alpha, beta } = rhythm.body;
-        const meterChar = METER[Math.min(7, Math.floor(staleness * 8))];
-        const chip = rhythmRow.createSpan({ cls: 'sub-chip' });
-        chip.textContent = `${family} ${meterChar}`;
-        chip.style.opacity = String(0.55 + 0.45 * staleness);
-        chip.title = `rhythm ${family} · axis ${axis} · staleness ${Math.round(staleness * 100)}% · budget ${budget} · α${alpha}/β${beta} — due-ness the conductor folds into boredom selection`;
+        const meter = meters.createDiv({ cls: 'sub-rhythm-meter' });
+        meter.createSpan({ cls: 'sub-rhythm-name', text: family });
+        const track = meter.createDiv({ cls: 'sub-rhythm-track' });
+        const fill = track.createDiv({ cls: 'sub-rhythm-fill' });
+        fill.style.width = `${Math.round(staleness * 100)}%`;
+        meter.setAttr('title', `rhythm ${family} · axis ${axis} · staleness ${Math.round(staleness * 100)}% · budget ${budget} · α${alpha}/β${beta} — due-ness the conductor folds into boredom selection`);
       }
     }
   }
