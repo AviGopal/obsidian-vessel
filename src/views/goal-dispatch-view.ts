@@ -1057,6 +1057,9 @@ export class GoalDispatchView extends ItemView {
       }
     }
 
+    const groupSnap = JSON.stringify({ members, gaps, boredom, rhythms, supplemented });
+    if (this.lastRenderedSnapshot.get('group') === groupSnap) return;
+    this.lastRenderedSnapshot.set('group', groupSnap);
     el.empty();
     if (members.length === 0 && gaps.length === 0 && boredom.length === 0 && rhythms.length === 0) {
       el.createDiv({
