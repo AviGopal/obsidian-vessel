@@ -433,6 +433,8 @@ body {
 .sub-card:focus:not(:focus-visible) {
   outline: none;
 }
+
+.sub-section-header.is-toggle {
   cursor: pointer;
 }
 
@@ -1445,7 +1447,7 @@ body {
 .sub-badge--gapdecompose { color: var(--sub-text-muted); border-color: var(--sub-border); }
 
 /* end of styles (placeholder replaced) */
-.__PLACEHOLDER_THAT_WONT_MATCH__ {
+
 
 /* Section render-failure card: a visible error instead of a blank section
    (guardSection in goal-dispatch-view). */
