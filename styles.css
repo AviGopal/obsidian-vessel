@@ -325,6 +325,39 @@ body {
   padding: var(--sub-space-1) 0;
 }
 
+.sub-pulse-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.sub-stat-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px;
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+  min-width: 76px;
+}
+
+.sub-stat-label {
+  font-size: var(--sub-font-s);
+  color: var(--sub-text-muted);
+}
+
+.sub-stat-value {
+  font-size: 1.15em;
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.sub-stat-delta {
+  font-size: var(--sub-font-s);
+  color: var(--sub-text-muted);
+}
+
 .sub-section {
   flex-shrink: 0;
   display: flex;
