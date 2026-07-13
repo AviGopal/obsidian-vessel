@@ -1078,6 +1078,10 @@ export class GoalDispatchView extends ItemView {
       this.groupExpanded = !this.groupExpanded;
       void this.renderGroupFeed();
     });
+    this.makeToggleAccessible(header, this.groupExpanded, () => {
+      this.groupExpanded = !this.groupExpanded;
+      void this.renderGroupFeed();
+    });
     if (!feed) {
       el.createDiv({ cls: 'sub-fleet-note', text: 'aggregate feed unavailable — showing direct overlay resolves' });
     } else if (supplemented.length > 0) {
@@ -1203,6 +1207,10 @@ export class GoalDispatchView extends ItemView {
       this.gapsExpanded = !this.gapsExpanded;
       void this.renderGaps();
     });
+    this.makeToggleAccessible(header, this.gapsExpanded, () => {
+      this.gapsExpanded = !this.gapsExpanded;
+      void this.renderGaps();
+    });
     if (!this.gapsExpanded) return;
     const ts = (g: Record<string, unknown>): number => {
       const v = g.updated_at ?? g.detected_at ?? g.created_at;
@@ -1276,6 +1284,10 @@ export class GoalDispatchView extends ItemView {
     });
     toggle.addEventListener('click', (ev) => {
       ev.stopPropagation();
+      if (expanded) this.gapDetailExpanded.delete(id); else this.gapDetailExpanded.add(id);
+      void this.renderGaps();
+    });
+    this.makeToggleAccessible(toggle, expanded, () => {
       if (expanded) this.gapDetailExpanded.delete(id); else this.gapDetailExpanded.add(id);
       void this.renderGaps();
     });
