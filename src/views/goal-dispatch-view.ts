@@ -1467,6 +1467,7 @@ export class GoalDispatchView extends ItemView {
       row.createSpan({ cls: 'sub-chip sub-chip--ok sub-fleet-note', text: 'goal reached', attr: { title: 'steps exited non-zero but the goal was reached' } });
     }
     row.addEventListener('click', () => void this.expandFleetRow(row, d));
+        this.makeToggleAccessible(row, this.expandedDispatches.has(String(d.dispatchId ?? '')), () => void this.expandFleetRow(row, d));
     if (this.expandedDispatches.has(String(d.dispatchId ?? ''))) void this.renderFleetDetail(row, d);
     if (running) {
       const ctxBtn = row.createEl('button', { cls: 'sub-fleet-btn', text: '+ctx' });
