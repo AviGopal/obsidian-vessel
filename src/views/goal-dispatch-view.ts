@@ -1120,7 +1120,7 @@ export class GoalDispatchView extends ItemView {
       }
     }
 
-    const groupSnap = JSON.stringify({ members, gaps, boredom, rhythms, supplemented });
+    const groupSnap = JSON.stringify({ members, gaps, boredom, rhythms, supplemented, expanded: this.groupExpanded });
     if (this.lastRenderedSnapshot.get('group') === groupSnap) return;
     this.lastRenderedSnapshot.set('group', groupSnap);
     el.empty();
@@ -1255,7 +1255,7 @@ export class GoalDispatchView extends ItemView {
     if (!el) return;
     const j = await this.devVesselResolve('substrateGap', { limit: 200 });
     const gaps = ((j?.body as Record<string, unknown> | undefined)?.gaps ?? []) as Array<Record<string, unknown>>;
-    const gapsSnap = JSON.stringify(gaps);
+    const gapsSnap = JSON.stringify({ gaps, expanded: this.gapsExpanded, threads: [...this.gapDetailExpanded] });
     if (this.lastRenderedSnapshot.get('gaps') === gapsSnap) return;
     this.lastRenderedSnapshot.set('gaps', gapsSnap);
     el.empty();
@@ -1449,7 +1449,7 @@ export class GoalDispatchView extends ItemView {
     if (!el) return;
     const j = await this.devVesselResolve('memoryNote', { note_type: 'project', limit: 40 });
     const notes = ((j?.body as Record<string, unknown> | undefined)?.notes ?? []) as Array<Record<string, unknown>>;
-		const projectsSnap = JSON.stringify(notes);
+		const projectsSnap = JSON.stringify({ notes, expanded: this.projectsExpanded });
 		if (this.lastRenderedSnapshot.get('projects') === projectsSnap) return;
 		this.lastRenderedSnapshot.set('projects', projectsSnap);
     el.empty();
