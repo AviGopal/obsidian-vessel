@@ -953,12 +953,26 @@ export class GoalDispatchView extends ItemView {
     return this.postJson(url, { impulse: { type: shape, ...extra } });
   }
 
+  private async guardSection(el: HTMLElement | null, name: string, render: () => void | Promise<void>): Promise<void> {
+    try {
+      await render();
+    } catch (e) {
+      const err = e instanceof Error ? e : new Error(String(e));
+      console.error(`[GoalDispatchView] ${name} section failed to render`, err);
+      if (!el) return;
+      el.empty();
+      const card = el.createDiv('sub-card sub-card--error');
+      card.createDiv({ cls: 'sub-section-header', text: `${name} — render failed` });
+      card.createDiv({ cls: 'sub-fleet-note', text: err.message.slice(0, 180), attr: { title: (err.stack ?? err.message).slice(0, 1500) } });
+    }
+  }
+
   private startWorkBoard(): void {
     const tick = (): void => {
-      void this.renderGroupFeed();
-      void this.renderGaps();
-      void this.renderProjects();
-      void this.renderPulse();
+      void this.guardSection(this.groupEl, 'Group', () => this.renderGroupFeed());
+      void this.guardSection(this.gapsEl, 'Gaps', () => this.renderGaps());
+      void this.guardSection(this.projectsEl, 'Projects', () => this.renderProjects());
+      void this.guardSection(this.pulseEl, 'Pulse', () => this.renderPulse());
     };
     tick();
     this.workBoardTimer = window.setInterval(tick, 30000);
