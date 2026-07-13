@@ -4,6 +4,7 @@
   "description": "Connects Obsidian to the substrate activity system as a knowledge vessel",
   "main": "main.js",
   "scripts": {
+    "typecheck": "tsc --noEmit",
     "dev": "node esbuild.config.mjs",
     "build": "node esbuild.config.mjs production",
     "typecheck": "tsc --noEmit",
