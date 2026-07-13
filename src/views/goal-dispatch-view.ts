@@ -322,6 +322,7 @@ export class GoalDispatchView extends ItemView {
   private completedDispatches: Array<Record<string, unknown>> = [];
   private completedExpanded = false;
   private fleetTimer: number | null = null;
+  private substrateSeen = false; // true once ANY resolve has answered — gates the boot-transient fast retry
   // Dispatch rows the user has expanded — persisted across the 7s fleet
   // re-render so a running walk's live "why" trail stays open and refreshes.
   private expandedDispatches = new Set<string>();
@@ -858,6 +859,7 @@ export class GoalDispatchView extends ItemView {
       if (!this.fleetEl) return;
       const j = await this.goalHostResolve({ type: 'activeDispatches' });
       if (!j) return;
+        this.substrateSeen = true;
       const dispatches = ((j.body as Record<string, unknown> | undefined)?.dispatches ?? []) as Array<Record<string, unknown>>;
       if (
         this.activeDispatchId &&
@@ -872,7 +874,7 @@ export class GoalDispatchView extends ItemView {
         this.setDispatchBtnState(false);
         this.activeDispatchId = null;
       }
-      this.renderFleet(dispatches);
+      void this.guardSection(this.fleetEl, 'Fleet', () => this.renderFleet(dispatches));
     };
     void tick();
     this.fleetTimer = window.setInterval(() => void tick(), 7000);
