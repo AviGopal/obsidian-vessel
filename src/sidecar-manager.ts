@@ -273,25 +273,28 @@ export class SidecarManager {
       }
     }
 
-    // (d) nvm-managed node trees (bun installed via `npm i -g bun` lands here);
-    // newest version first so a stale tree never shadows the current one.
+    // (d) nvm-managed node trees (bun installed via `npm i -g bun` lands
+    // here); both the classic layout (~/.nvm/versions/node/<v>/bin) and the
+    // nvm.fish layout (~/.local/share/nvm/<v>/bin) are scanned, newest
+    // version first so a stale tree never shadows the current one.
     if (home) {
-      const nvmDir = path.join(home, '.nvm', 'versions', 'node');
-      try {
-        const parse = (v: string): number[] =>
-          (v.replace(/^v/, '').split('.').map((n) => parseInt(n, 10) || 0));
-        const versions = fs.readdirSync(nvmDir)
-          .filter((d) => /^v\d+(\.\d+)*$/.test(d))
-          .sort((a, b) => {
-            const [pa, pb] = [parse(a), parse(b)];
-            for (let i = 0; i < 3; i++) { if ((pb[i] ?? 0) !== (pa[i] ?? 0)) return (pb[i] ?? 0) - (pa[i] ?? 0); }
-            return 0;
-          });
-        for (const v of versions) {
-          const cand = path.join(nvmDir, v, 'bin', 'bun');
-          if (exists(cand)) return won(`nvm (${v})`, cand);
-        }
-      } catch { probed.push(path.join(nvmDir, '<none readable>')); }
+      const parse = (v: string): number[] =>
+        (v.replace(/^v/, '').split('.').map((n) => parseInt(n, 10) || 0));
+      for (const nvmDir of [path.join(home, '.nvm', 'versions', 'node'), path.join(home, '.local', 'share', 'nvm')]) {
+        try {
+          const versions = fs.readdirSync(nvmDir)
+            .filter((d) => /^v\d+(\.\d+)*$/.test(d))
+            .sort((a, b) => {
+              const [pa, pb] = [parse(a), parse(b)];
+              for (let i = 0; i < 3; i++) { if ((pb[i] ?? 0) !== (pa[i] ?? 0)) return (pb[i] ?? 0) - (pa[i] ?? 0); }
+              return 0;
+            });
+          for (const v of versions) {
+            const cand = path.join(nvmDir, v, 'bin', 'bun');
+            if (exists(cand)) return won(`nvm (${nvmDir}, ${v})`, cand);
+          }
+        } catch { probed.push(path.join(nvmDir, '<none readable>')); }
+      }
     }
 
     // (e) static well-known locations.
