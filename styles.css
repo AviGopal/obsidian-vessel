@@ -332,6 +332,20 @@ body {
   gap: 2px;
 }
 
+.sub-section:empty {
+  min-height: 28px;
+}
+
+.sub-section:empty::before {
+  content: '';
+  display: block;
+  height: 8px;
+  margin: 10px 8px;
+  border-radius: 4px;
+  background: var(--background-modifier-hover);
+  opacity: 0.6;
+}
+
 .sub-section-header {
   font-size: var(--sub-font-s);
   font-weight: 600;
