@@ -1763,19 +1763,26 @@ export default class ObsidianVesselPlugin extends Plugin {
     let ok = false;
     let detail = '';
     try {
-      const resp = await requestUrl({
-        url: activityApiUrl.replace(/\/+$/, '') + '/v2/impulses/resolve',
-        method: 'POST',
-        headers: {
-          'Authorization': 'ApiKey ' + this.settings.apiKey,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ impulse: { pointer } }),
-        throw: false,
-      });
-      const body = resp.json as { success?: boolean; error?: string } | undefined;
-      ok = resp.status < 300 && body?.success !== false;
-      if (!ok) detail = body?.error ?? 'HTTP ' + resp.status;
+      const via = await sidecarResolve(this.settings, pointer as Record<string, unknown>, 15_000);
+      const viaContent = via?.content ?? via?.body ?? null;
+      if (viaContent != null) {
+        ok = true;
+      } else {
+        // sidecar down / not overlay-reachable — fall back to the direct activity-api endpoint
+        const resp = await requestUrl({
+          url: activityApiUrl.replace(/\/+$/, '') + '/v2/impulses/resolve',
+          method: 'POST',
+          headers: {
+            'Authorization': 'ApiKey ' + this.settings.apiKey,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ impulse: { pointer } }),
+          throw: false,
+        });
+        const body = resp.json as { success?: boolean; error?: string } | undefined;
+        ok = resp.status < 300 && body?.success !== false;
+        if (!ok) detail = body?.error ?? 'HTTP ' + resp.status;
+      }
     } catch (error) {
       detail = error instanceof Error ? error.message : String(error);
     }
