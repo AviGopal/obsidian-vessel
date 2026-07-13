@@ -23,7 +23,44 @@
  * - Component grammar: sub-card / sub-chip / sub-feed-line (see styles.css)
  */
 
-import { ItemView, WorkspaceLeaf, TFile, Notice, Menu, MarkdownView, MarkdownRenderer, requestUrl } from 'obsidian';
+import { ItemView, WorkspaceLeaf, TFile, Notice, Menu, MarkdownView, MarkdownRenderer, requestUrl, Modal, App } from 'obsidian';
+
+class TextPromptModal extends Modal {
+	private resolve: (v: string | null) => void;
+	private submitted = false;
+	constructor(app: App, private promptTitle: string, resolve: (v: string | null) => void) {
+		super(app);
+		this.resolve = resolve;
+	}
+	onOpen(): void {
+		this.titleEl.setText(this.promptTitle);
+		const input = this.contentEl.createEl('textarea', { cls: 'sub-prompt-input' });
+		input.rows = 3;
+		input.style.width = '100%';
+		input.focus();
+		input.addEventListener('keydown', (ev) => {
+			if (ev.key === 'Enter' && (ev.metaKey || ev.ctrlKey)) {
+				this.submitted = true;
+				this.resolve(input.value);
+				this.close();
+			}
+		});
+		const submit = this.contentEl.createEl('button', { text: 'Submit' });
+		submit.addEventListener('click', () => {
+			this.submitted = true;
+			this.resolve(input.value);
+			this.close();
+		});
+	}
+	onClose(): void {
+		if (!this.submitted) this.resolve(null);
+		this.contentEl.empty();
+	}
+}
+
+function promptText(app: App, title: string): Promise<string | null> {
+	return new Promise((resolve) => new TextPromptModal(app, title, resolve).open());
+}
 import type ObsidianVesselPlugin from '../main';
 import { GoalHostClient, type VaultContext } from '../goals/goal-host-client';
 import { GoalNoteManager } from '../goals/goal-note-manager';
@@ -489,7 +526,7 @@ export class GoalDispatchView extends ItemView {
       for (const [kind, label] of kinds) {
         menu.addItem((item) =>
           item.setTitle(`UI feedback: ${label}`).setIcon('frown').onClick(async () => {
-            const prose = window.prompt(`${label} — optional detail (Cancel = none):`) ?? undefined;
+            const prose = (await promptText(this.plugin.app, `${label} — optional detail (close to skip):`)) ?? undefined;
             await this.plugin.captureUiFeedback({
               surface: 'panel',
               region,
@@ -1896,7 +1933,7 @@ export class GoalDispatchView extends ItemView {
       content = await app.vault.cachedRead(activeFile);
       summary = `active note ${activeFile.path}`;
     } else {
-      content = window.prompt('Context to inject into this dispatch:') ?? null;
+      content = (await promptText(app, 'Context to inject into this dispatch:')) ?? null;
       if (!content) return;
     }
     const j = await this.goalHostResolve({ type: 'poolImpulse_write', dispatchId, shape, content, summary });
