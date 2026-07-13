@@ -11,17 +11,20 @@
  *   Shapes/    #sub/shape    — one per shape, links to serving vessels (backlinks)
  *   Activities/#sub/activity — one per composing activity, parent→child edges (weight)
  *
- * All data flows through discovery (the one fixed point): vesselRegistry for the
- * vessel↔shape topology, and the activity-api base is resolved via discovery
- * (vesselCapability for activityTemplate → public_endpoint) before reading its
- * composition graph — no hardcoded vessel endpoints. Every network call uses
- * Obsidian's requestUrl (the Electron renderer blocks cross-origin fetch).
+ * Data paths: shaped resolves through the sidecar wherever a read shape
+ * exists (dispatch pool / walk state); the composition graph is the one
+ * REST-only fetch left (no compositionGraph shape yet), and its base is
+ * resolved via discovery with transport-proxy rows filtered out, each
+ * candidate health-probed, and the configured activityApiUrl as the last
+ * fallback — no hardcoded vessel endpoints, no blind public_endpoint trust.
+ * Every REST call uses Obsidian's requestUrl (the Electron renderer blocks
+ * cross-origin fetch).
  */
 
 import type { App, TFile } from 'obsidian';
 import { requestUrl } from 'obsidian';
 import type { ObsidianVesselSettings } from '../settings';
-import { sidecarHttpAuto } from '../sidecar-manager';
+import { sidecarHttpAuto, sidecarResolveBody } from '../sidecar-manager';
 
 const ROOT = 'Substrate/Graph';
 
@@ -82,13 +85,81 @@ export class GraphBackboneSyncService {
     return this.postJson(`${disco}/resolve`, { pointer });
   }
 
-  /** Resolve a shape's host-reachable base URL via discovery (prefers public_endpoint). */
-  private async resolveVesselBase(shape: string): Promise<string | null> {
+  /**
+   * Resolve a host-reachable REST base for the vessel serving `shape`.
+   *
+   * Discovery rows on a federated spoke can carry the federation-transport
+   * proxy as public_endpoint (:8401/:18401, protocol libp2p) — a surface that
+   * serves ONLY /v2/impulses/resolve and connection-refuses every other REST
+   * path, so blindly taking vessels[0].public_endpoint rendered this whole
+   * sync empty on spokes. Candidates are therefore filtered (transport rows
+   * dropped), health-probed in order, and the configured fallback base — a
+   * host-reachable setting on both hub and spoke — is appended last. The
+   * winning base and its source are logged so a wrong pick is diagnosable.
+   *
+   * NOTE: anything expressible as a shaped resolve must NOT come through
+   * here — use sidecarResolveBody (see syncDispatches). This machinery exists
+   * only for REST paths that have no read shape yet.
+   */
+  private async resolveRestBase(shape: string, configuredFallback: string): Promise<string | null> {
+    const candidates: Array<{ base: string; via: string }> = [];
     const j = await this.discoveryResolve({ type: 'vesselCapability', shape });
     const vessels = ((j?.content as Record<string, unknown> | undefined)?.vessels ?? []) as Array<Record<string, unknown>>;
-    const v = vessels[0];
-    if (!v) return null;
-    return String(v.public_endpoint || v.endpoint || '').replace(/\/+$/, '') || null;
+    for (const v of vessels) {
+      const vid = String(v.vesselId ?? v.vessel_id ?? '?');
+      if (this.isTransportProxyRow(v)) {
+        console.log(`[GraphBackboneSync] skipping transport-proxy row for ${shape}: ${vid} (resolve-only surface)`);
+        continue;
+      }
+      for (const field of ['public_endpoint', 'endpoint'] as const) {
+        const base = String(v[field] ?? '').replace(/\/+$/, '');
+        if (base && !candidates.some((c) => c.base === base)) {
+          candidates.push({ base, via: `discovery ${field} of ${vid}` });
+        }
+      }
+    }
+    const fallback = (configuredFallback || '').replace(/\/+$/, '');
+    if (fallback && !candidates.some((c) => c.base === fallback)) {
+      candidates.push({ base: fallback, via: 'configured fallback setting' });
+    }
+    for (const c of candidates) {
+      if (await this.probeHealth(c.base)) {
+        console.log(`[GraphBackboneSync] REST base for ${shape}: ${c.base} (via ${c.via})`);
+        return c.base;
+      }
+      console.log(`[GraphBackboneSync] REST base candidate failed health probe: ${c.base} (via ${c.via})`);
+    }
+    console.warn(`[GraphBackboneSync] no reachable REST base for ${shape} — probed ${candidates.length} candidate(s)`);
+    return null;
+  }
+
+  /**
+   * True for discovery rows that are the federation-transport proxy rather
+   * than the vessel's own REST surface: protocol libp2p, a vesselId minted by
+   * the transport, or the transport's well-known ports (8401/18401).
+   */
+  private isTransportProxyRow(v: Record<string, unknown>): boolean {
+    if (String(v.protocol ?? '') === 'libp2p') return true;
+    const vid = String(v.vesselId ?? v.vessel_id ?? '');
+    if (vid.includes('federation-transport')) return true;
+    for (const field of ['public_endpoint', 'endpoint'] as const) {
+      const m = /:(\d+)$/.exec(String(v[field] ?? '').replace(/\/+$/, ''));
+      if (m && (m[1] === '8401' || m[1] === '18401')) return true;
+    }
+    return false;
+  }
+
+  /** Quick reachability probe (2.5s cap — requestUrl has no timeout of its own). */
+  private async probeHealth(base: string): Promise<boolean> {
+    try {
+      const probe = requestUrl({ url: `${base}/health`, method: 'GET', throw: false })
+        .then((r) => r.status >= 200 && r.status < 300)
+        .catch(() => false);
+      const timeout = new Promise<boolean>((res) => window.setTimeout(() => res(false), 2500));
+      return await Promise.race([probe, timeout]);
+    } catch {
+      return false;
+    }
   }
 
   // ── vessel ↔ shape topology (discovery vesselRegistry) ────────────────────
@@ -131,15 +202,7 @@ export class GraphBackboneSyncService {
 
   // ── activity ↔ activity composition edges (activity-api, base via discovery) ─
   private async syncComposition(): Promise<number> {
-    const base = await this.resolveVesselBase('activityTemplate');
-    if (!base) return 0;
-    let edges: Array<Record<string, unknown>> = [];
-    try {
-      const r = await requestUrl({ url: `${base}/v2/activities/composition/graph?limit=400`, method: 'GET', headers: this.authHeaders(), throw: false });
-      if (r.status >= 200 && r.status < 300) {
-        edges = ((r.json as Record<string, unknown>)?.edges ?? []) as Array<Record<string, unknown>>;
-      }
-    } catch { return 0; }
+    const edges = await this.fetchCompositionEdges();
     if (edges.length === 0) return 0;
 
     // group edges by parent activity → its children (with weight)
@@ -155,6 +218,7 @@ export class GraphBackboneSyncService {
     }
     for (const id of nodes) {
       const outs = children.get(id) ?? [];
+      // (unchanged rendering below)
       const links = outs.map((o) => `- → [[${ROOT}/Activities/${slug(cleanId(o.child))}|${cleanId(o.child)}]] \`w:${o.weight}\`${o.genuine ? ' ✓' : ''}`);
       const body = [
         '---', 'tags:', '  - sub/activity', 'cssclasses:', '  - substrate-authored', '---',
@@ -165,6 +229,29 @@ export class GraphBackboneSyncService {
       await this.upsert(`${ROOT}/Activities/${slug(cleanId(id))}.md`, body);
     }
     return nodes.size;
+  }
+
+  /**
+   * SWAP POINT: the composition graph has no read shape yet (gap
+   * composition-graph-not-a-shape — substrate coax pending), so this is the
+   * one REST-only fetch left in this service. When the compositionGraph shape
+   * lands, replace the body of THIS function with
+   * `sidecarResolveBody({ type: 'compositionGraph', limit: 400 })` and the
+   * REST base machinery stops being used for activity-api entirely.
+   */
+  private async fetchCompositionEdges(): Promise<Array<Record<string, unknown>>> {
+    const base = await this.resolveRestBase('activityTemplate', this.settings.activityApiUrl);
+    if (!base) return [];
+    try {
+      const r = await requestUrl({ url: `${base}/v2/activities/composition/graph?limit=400`, method: 'GET', headers: this.authHeaders(), throw: false });
+      if (r.status >= 200 && r.status < 300) {
+        return (((r.json as Record<string, unknown>)?.edges ?? []) as Array<Record<string, unknown>>);
+      }
+      console.warn(`[GraphBackboneSync] composition graph GET ${base} → ${r.status}`);
+    } catch (e) {
+      console.warn(`[GraphBackboneSync] composition graph GET failed against ${base}: ${String(e)}`);
+    }
+    return [];
   }
 
   // ── dispatch pool + provenance-by-relevancy (goal-host walk state) ────────
@@ -179,10 +266,24 @@ export class GraphBackboneSyncService {
   //         backbone Activities/ note). Opening the dispatch note → local graph
   //         = its compositional context (pool ↔ activities ↔ produced shapes).
   private async syncDispatches(): Promise<number> {
-    const base = await this.resolveVesselBase('goal_execution'); // goal-host
-    if (!base) return 0;
-    const listJson = await this.postJson(`${base}/resolve`, { type: 'activeDispatches' });
-    const dispatches = ((listJson?.body as Record<string, unknown> | undefined)?.dispatches ?? []) as Array<Record<string, unknown>>;
+    // Shaped resolves through the sidecar are the primary route (they cross
+    // the federation overlay — no REST base needed at all); the discovery-
+    // derived goal-host REST base survives only as a LOGGED fallback for
+    // sidecar-down local setups.
+    let resolveShaped = async (pointer: Record<string, unknown>): Promise<Record<string, unknown> | null> =>
+      sidecarResolveBody(pointer);
+    let listBody = await resolveShaped({ type: 'activeDispatches' });
+    if (listBody === null) {
+      const base = await this.resolveRestBase('goal_execution', this.settings.goalHostEndpoint); // goal-host
+      if (!base) return 0;
+      console.warn(`[GraphBackboneSync] sidecar resolve unavailable — using direct goal-host REST base ${base}`);
+      resolveShaped = async (pointer: Record<string, unknown>): Promise<Record<string, unknown> | null> => {
+        const r = await this.postJson(`${base}/resolve`, pointer);
+        return (r?.body ?? null) as Record<string, unknown> | null;
+      };
+      listBody = await resolveShaped({ type: 'activeDispatches' });
+    }
+    const dispatches = ((listBody?.dispatches ?? []) as Array<Record<string, unknown>>);
     if (dispatches.length === 0) return 0;
     const recent = [...dispatches]
       .sort((a, b) => Number(b.startedAt ?? 0) - Number(a.startedAt ?? 0))
@@ -191,8 +292,7 @@ export class GraphBackboneSyncService {
     for (const d of recent) {
       const did = String(d.dispatchId ?? '');
       if (!did) continue;
-      const wsJson = await this.postJson(`${base}/resolve`, { type: 'goalWalkState', dispatchId: did });
-      const ws = (wsJson?.body ?? {}) as Record<string, unknown>;
+      const ws = ((await resolveShaped({ type: 'goalWalkState', dispatchId: did })) ?? {}) as Record<string, unknown>;
       const steps = (Array.isArray(ws.steps) ? ws.steps : []) as Array<Record<string, unknown>>;
       const pool = (Array.isArray(ws.poolShapes) ? ws.poolShapes : []) as string[];
       if (pool.length === 0 && steps.length === 0) continue;

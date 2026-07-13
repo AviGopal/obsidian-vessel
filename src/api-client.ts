@@ -603,19 +603,23 @@ export class ActivityAPIClient {
     // it holds the API key and reaches the substrate identically whether local
     // or remote (relay overlay). null → sidecar not up → direct endpoint below.
     const viaSidecar = await sidecarHttpAuto({ shape: 'activityExecutionTrace', method, path, body }, this.timeout);
-    if (!viaSidecar) {
-      this.logger('warn', 'sidecar conduit unavailable — engaging direct activity-api fallback', { path });
+    if (viaSidecar && viaSidecar.ok) {
+      return viaSidecar.body as T;
     }
     if (viaSidecar) {
-      if (!viaSidecar.ok) {
-        const eb = viaSidecar.body as APIError | null;
-        throw new ActivityAPIError(
-          eb && typeof eb === 'object' && eb.error ? eb.error : `Request failed with status ${viaSidecar.status}`,
-          viaSidecar.status,
-          eb && typeof eb === 'object' ? eb : undefined
-        );
-      }
-      return viaSidecar.body as T;
+      // On a federated spoke the sidecar can proxy this REST path to a
+      // resolve-only transport surface (:8401/:18401), which 404s or refuses
+      // everything but /v2/impulses/resolve — so a sidecar-proxied failure is
+      // never authoritative for REST. Log it and try the configured direct
+      // endpoint before giving up (activity-family/templates sync went empty
+      // on spokes when the proxied 404 was thrown as final).
+      this.logger('warn', 'sidecar-proxied request failed — trying direct endpoint', {
+        path,
+        status: viaSidecar.status,
+        via: viaSidecar.via,
+      });
+    } else {
+      this.logger('warn', 'sidecar conduit unavailable — engaging direct activity-api fallback', { path });
     }
 
     const maxAttempts = noRetry ? 1 : this.maxRetries;
