@@ -978,6 +978,16 @@ export class GoalDispatchView extends ItemView {
     };
     tick();
     this.workBoardTimer = window.setInterval(tick, 30000);
+		// On a fresh boot the sidecar conduit may not be up yet, so the very first tick can find no conduit and render honest empties. Retry on a short cadence until ANY resolve answers (then the sections re-render with real data on that same fast tick), for at most a minute; the 30s cadence owns steady state. registerInterval → cleared on view close.
+		const fastRetry = window.setInterval(() => {
+			if (this.substrateSeen) {
+				window.clearInterval(fastRetry);
+				return;
+			}
+			tick();
+		}, 5000);
+		this.registerInterval(fastRetry);
+		window.setTimeout(() => window.clearInterval(fastRetry), 60_000);
   }
 
   private stopWorkBoard(): void {
