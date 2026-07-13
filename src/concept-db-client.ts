@@ -558,6 +558,21 @@ export class ConceptDbClient {
       });
       return null;
     }
+    // Normalize the federation-transport envelope: over the overlay the owner's
+    // response arrives wrapped as { content: { shape, produced_by, body, ... } },
+    // while plain discovery-routed resolves return the owner's response verbatim
+    // ({ content, metadata }). Unwrap so callers see one contract either way.
+    const outer = (resp as { content?: unknown }).content;
+    if (
+      outer &&
+      typeof outer === 'object' &&
+      !Array.isArray(outer) &&
+      'produced_by' in (outer as Record<string, unknown>) &&
+      'body' in (outer as Record<string, unknown>)
+    ) {
+      const inner = outer as { body?: unknown; metadata?: unknown };
+      return { success: true, content: inner.body, metadata: inner.metadata };
+    }
     return resp as { success?: boolean; content?: unknown; metadata?: unknown };
   }
 
