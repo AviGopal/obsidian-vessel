@@ -14,7 +14,7 @@
  * — `builtin-modules` are marked external, not bundled).
  */
 
-import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as net from 'net';
@@ -210,15 +210,106 @@ export class SidecarManager {
     void this.prepareAndSpawn();
   }
 
+  /**
+   * Ordered bun discovery. Obsidian is a GUI app, so its PATH is stripped of
+   * everything the user's shell profile adds (~/.bun, nvm, homebrew on some
+   * setups) — a bare `spawn('bun', ...)` fails on exactly the machines that
+   * installed bun the normal way. Probe, in order:
+   *   (a) the explicit `federationBunPath` settings override,
+   *   (b) `which bun` against the user's REAL path (login shell, then plain),
+   *   (c) ~/.bun/bin/bun (the official installer location),
+   *   (d) the newest ~/.nvm/versions/node/<version>/bin/bun (version-sorted),
+   *   (e) the static well-known locations.
+   * Returns null when nothing is found, logging every path probed; the winner
+   * and its source are logged so a wrong pick is diagnosable from the console.
+   */
+  private discoverBunPath(): string | null {
+    const probed: string[] = [];
+    const exists = (p: string): boolean => {
+      probed.push(p);
+      try { return fs.existsSync(p); } catch { return false; }
+    };
+    const won = (source: string, p: string): string => {
+      this.logger('info', `bun resolved via ${source}: ${p}`);
+      return p;
+    };
+
+    // (a) explicit settings override ('bun' is the "resolve it for me" default).
+    const configured = (this.settings.federationBunPath || '').trim();
+    if (configured && configured !== 'bun') {
+      if (exists(configured)) return won('settings override (federationBunPath)', configured);
+      this.logger('warn', `federationBunPath is set to ${configured} but nothing exists there — continuing discovery`);
+    }
+
+    // (b) which/where against the user's real PATH. A login shell (-l) sources
+    // the user's profile, recovering PATH entries the GUI launch stripped.
+    if (process.platform === 'win32') {
+      probed.push('where bun');
+      try {
+        const r = spawnSync('where', ['bun'], { encoding: 'utf8', timeout: 10_000 });
+        const found = (r.stdout || '').split(/\r?\n/).map((l) => l.trim()).find(Boolean) ?? '';
+        if (r.status === 0 && found && fs.existsSync(found)) return won('where bun', found);
+      } catch { /* keep probing */ }
+    } else {
+      const shell = process.env.SHELL || '/bin/sh';
+      for (const flag of ['-lc', '-c']) {
+        probed.push(`${shell} ${flag} "which bun"`);
+        try {
+          const r = spawnSync(shell, [flag, 'which bun'], { encoding: 'utf8', timeout: 10_000 });
+          const found = (r.stdout || '').split('\n').map((l) => l.trim()).filter(Boolean).pop() ?? '';
+          if (r.status === 0 && found.startsWith('/') && fs.existsSync(found)) {
+            return won(`which bun (${shell} ${flag})`, found);
+          }
+        } catch { /* keep probing */ }
+      }
+    }
+
+    const home = process.env.HOME || process.env.USERPROFILE || '';
+
+    // (c) the official bun installer location.
+    if (home) {
+      for (const cand of [path.join(home, '.bun', 'bin', 'bun'), path.join(home, '.bun', 'bin', 'bun.exe')]) {
+        if (exists(cand)) return won('~/.bun/bin', cand);
+      }
+    }
+
+    // (d) nvm-managed node trees (bun installed via `npm i -g bun` lands here);
+    // newest version first so a stale tree never shadows the current one.
+    if (home) {
+      const nvmDir = path.join(home, '.nvm', 'versions', 'node');
+      try {
+        const parse = (v: string): number[] =>
+          (v.replace(/^v/, '').split('.').map((n) => parseInt(n, 10) || 0));
+        const versions = fs.readdirSync(nvmDir)
+          .filter((d) => /^v\d+(\.\d+)*$/.test(d))
+          .sort((a, b) => {
+            const [pa, pb] = [parse(a), parse(b)];
+            for (let i = 0; i < 3; i++) { if ((pb[i] ?? 0) !== (pa[i] ?? 0)) return (pb[i] ?? 0) - (pa[i] ?? 0); }
+            return 0;
+          });
+        for (const v of versions) {
+          const cand = path.join(nvmDir, v, 'bin', 'bun');
+          if (exists(cand)) return won(`nvm (${v})`, cand);
+        }
+      } catch { probed.push(path.join(nvmDir, '<none readable>')); }
+    }
+
+    // (e) static well-known locations.
+    for (const cand of ['/opt/homebrew/bin/bun', '/usr/local/bin/bun']) {
+      if (exists(cand)) return won('static candidate', cand);
+    }
+
+    this.logger('error', `bun not found — probed: ${probed.join(', ')}`);
+    return null;
+  }
+
   private async prepareAndSpawn(): Promise<void> {
     const sidecarDir = this.resolveSidecarDir();
-    const home = process.env.HOME || process.env.USERPROFILE || '';
-    const bunCandidates = [
-      ...(home ? [path.join(home, '.bun', 'bin', 'bun'), path.join(home, '.bun', 'bin', 'bun.exe')] : []),
-      '/opt/homebrew/bin/bun',
-      '/usr/local/bin/bun',
-    ];
-    const bunPath = bunCandidates.find(p => fs.existsSync(p)) || 'bun';
+    const bunPath = this.discoverBunPath();
+    if (bunPath === null) {
+      this.scheduleRestart();
+      return;
+    }
 
     const ready = await this.ensureSidecarMaterialized(sidecarDir, bunPath);
     if (this.stopped) return;
