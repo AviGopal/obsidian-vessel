@@ -1228,17 +1228,19 @@ export class GoalDispatchView extends ItemView {
       if (b.substrate) line.createSpan({ cls: 'sub-chip', text: String(b.substrate) });
     }
 
-    // Rhythm due-ness meters (same visual grammar as the pulse strip).
+    // Rhythm due-ness meters (same 4px meter primitive as the pulse strip).
     if (rhythms.length > 0) {
-      const rhythmRow = el.createDiv({ cls: 'sub-pulse-row sub-pulse-rhythms' });
-      const METER = '▁▂▃▄▅▆▇█';
+      const meters = el.createDiv({ cls: 'sub-rhythm-meters' });
       for (const r of rhythms.slice(0, 12)) {
         const body = (r.body && typeof r.body === 'object' ? r.body : r) as Record<string, unknown>;
         const family = String(body.family ?? body.id ?? r.id ?? 'rhythm');
         const staleness = typeof body.staleness === 'number' ? body.staleness : 0;
-        const chip = rhythmRow.createSpan({ cls: 'sub-chip' });
-        chip.textContent = `${family} ${METER[Math.min(7, Math.floor(staleness * 8))]}`;
-        chip.title = `rhythm ${family} · staleness ${Math.round(staleness * 100)}%${r.substrate ? ` · ${String(r.substrate)}` : ''}`;
+        const meter = meters.createDiv({ cls: 'sub-rhythm-meter' });
+        meter.createSpan({ cls: 'sub-rhythm-name', text: family });
+        const track = meter.createDiv({ cls: 'sub-rhythm-track' });
+        const fill = track.createDiv({ cls: 'sub-rhythm-fill' });
+        fill.style.width = `${Math.round(staleness * 100)}%`;
+        meter.setAttr('title', `rhythm ${family} · staleness ${Math.round(staleness * 100)}%${r.substrate ? ` · ${String(r.substrate)}` : ''}`);
       }
     }
   }
