@@ -1389,6 +1389,10 @@ export class GoalDispatchView extends ItemView {
       this.projectsExpanded = !this.projectsExpanded;
       void this.renderProjects();
     });
+    this.makeToggleAccessible(header, this.projectsExpanded, () => {
+      this.projectsExpanded = !this.projectsExpanded;
+      void this.renderProjects();
+    });
     if (!this.projectsExpanded) return;
     for (const n of recent) {
       const row = el.createDiv('sub-card sub-project-row');
@@ -1452,6 +1456,18 @@ export class GoalDispatchView extends ItemView {
     this.renderCompleted();
   }
 
+  private makeToggleAccessible(el: HTMLElement, expanded: boolean, onActivate: () => void): void {
+    el.setAttribute('role', 'button');
+    el.setAttribute('tabindex', '0');
+    el.setAttribute('aria-expanded', String(expanded));
+    el.addEventListener('keydown', (ev: KeyboardEvent) => {
+      if (ev.key === 'Enter' || ev.key === ' ') {
+        ev.preventDefault();
+        onActivate();
+      }
+    });
+  }
+
   /** Completed goals: a one-line count, expandable to collapsed rows. */
   private renderCompleted(): void {
     const el = this.completedEl;
@@ -1468,6 +1484,10 @@ export class GoalDispatchView extends ItemView {
       text: `${this.completedExpanded ? '▾' : '▸'} ${done.length} completed (${reached} reached)`,
     });
     header.addEventListener('click', () => {
+      this.completedExpanded = !this.completedExpanded;
+      this.renderCompleted();
+    });
+    this.makeToggleAccessible(header, this.completedExpanded, () => {
       this.completedExpanded = !this.completedExpanded;
       this.renderCompleted();
     });
