@@ -1367,6 +1367,9 @@ export class GoalDispatchView extends ItemView {
     if (!el) return;
     const j = await this.devVesselResolve('memoryNote', { note_type: 'project', limit: 40 });
     const notes = ((j?.body as Record<string, unknown> | undefined)?.notes ?? []) as Array<Record<string, unknown>>;
+		const projectsSnap = JSON.stringify(notes);
+		if (this.lastRenderedSnapshot.get('projects') === projectsSnap) return;
+		this.lastRenderedSnapshot.set('projects', projectsSnap);
     el.empty();
     if (notes.length === 0) return;
     const ts = (n: Record<string, unknown>): number => {
