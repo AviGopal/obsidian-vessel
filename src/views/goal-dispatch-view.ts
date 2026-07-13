@@ -292,6 +292,9 @@ export class GoalDispatchView extends ItemView {
 
   // Execution context: tracks activity name + task descriptions per execId
   private execCtxs = new Map<string, ExecCtx>();
+  // Deferred impulse-relevance writes: fired only when the execution actually
+  // settles, with the real outcome.
+  private pendingRelevance = new Map<string, (succeeded: boolean) => void>();
 
   // Event buffer: accumulate WS messages while waiting for the real executionId
   // from the poll. Keyed by execId so we can replay just the right one.
@@ -680,22 +683,20 @@ export class GoalDispatchView extends ItemView {
       }
       this.eventBuffer.clear();
 
-      // Fire impulse relevance feedback for the obsidian shapes in context.
+      // Defer impulse-relevance feedback until the execution settles: firing here
+      // reported success before the outcome existed and corrupted the corpus.
       const variantId = this.execCtxs.get(executionId)?.variantId ?? dispatchVariantId;
       if (variantId && ctx?.available_shapes?.length) {
-        const completedEvent = buffered.find(m =>
-          m.type === 'execution_completed' || m.type === 'activity.completed',
-        );
-        const completedData = (completedEvent?.data ?? completedEvent ?? {}) as Record<string, unknown>;
-        const succeeded = completedData.success !== false;
-        // Fire and forget — don't await, don't block the UI
-        void client.recordImpulseRelevance(
-          this.plugin.settings.activityApiUrl,
-          executionId,
-          variantId,
-          ctx.available_shapes,
-          succeeded,
-        );
+        const relevanceShapes = [...ctx.available_shapes];
+        this.pendingRelevance.set(executionId, (succeeded: boolean) => {
+          void client.recordImpulseRelevance(
+            this.plugin.settings.activityApiUrl,
+            executionId,
+            variantId,
+            relevanceShapes,
+            succeeded,
+          );
+        });
       }
 
       this.goalFile = await this.goalNoteManager.createGoalNote(executionId, goal);
@@ -2110,6 +2111,13 @@ export class GoalDispatchView extends ItemView {
           this.dispatching = false;
           this.setDispatchBtnState(false);
           void this.renderReachVerdict();
+          // Fire the deferred impulse-relevance write with the real outcome.
+          const settleId = execId ?? this.activeExecutionId ?? '';
+          const fireRelevance = this.pendingRelevance.get(settleId);
+          if (fireRelevance) {
+            this.pendingRelevance.delete(settleId);
+            fireRelevance(ok);
+          }
         } else {
           const ok = success !== false;
           this.appendMessage(`${pad}${ok ? '✓' : '✗'} Sub-activity done${durStr}`, ok ? 'sub' : 'failure');
