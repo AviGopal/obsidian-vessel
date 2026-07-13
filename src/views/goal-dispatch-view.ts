@@ -341,6 +341,10 @@ export class GoalDispatchView extends ItemView {
   // (fleetActivityFeed aggregate, with direct-resolve fallback legs).
   private groupEl: HTMLElement | null = null;
   private groupExpanded = true;
+  // True once ANY resolve has answered — gates the boot-transient fast retry
+  // (the sidecar spawns in parallel with this view; the first ticks can race
+  // it and must re-render soon after, not 30s later).
+  private substrateSeen = false;
   private pulseEl: HTMLElement | null = null;
   private gapsExpanded = false;
   // per-gap causal-thread expansion (gap id -> expanded)
@@ -839,6 +843,32 @@ export class GoalDispatchView extends ItemView {
   }
 
   /**
+   * Run one panel section's render with a crash barrier: a thrown exception
+   * renders a visible error card (message + first stack line) into THAT
+   * section instead of leaving it — or, via an unhandled rejection, the whole
+   * panel — silently blank. Sections are guarded independently so one dead
+   * data source can never prevent the dispatch list from mounting.
+   */
+  private async guardSection(el: HTMLElement | null, name: string, render: () => void | Promise<void>): Promise<void> {
+    try {
+      await render();
+    } catch (e) {
+      const err = e instanceof Error ? e : new Error(String(e));
+      console.error(`[GoalDispatchView] ${name} section failed to render`, err);
+      if (!el) return;
+      const stackLine = (err.stack ?? '').split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('Error'))[0] ?? '';
+      el.empty();
+      const card = el.createDiv('sub-card sub-card--error');
+      card.createDiv({ cls: 'sub-section-header', text: `${name} — render failed` });
+      card.createDiv({
+        cls: 'sub-fleet-note',
+        text: `${err.message}${stackLine ? ` · ${stackLine.slice(0, 140)}` : ''}`,
+        attr: { title: (err.stack ?? err.message).slice(0, 1500) },
+      });
+    }
+  }
+
+  /**
    * Resolve a goal-host shape. Primary route: a shaped resolve through the
    * federation sidecar's /outbound/resolve — it crosses the overlay, so the
    * panel works on a bare host holding only hub credentials + the relay
@@ -847,35 +877,48 @@ export class GoalDispatchView extends ItemView {
    */
   private async goalHostResolve(body: Record<string, unknown>): Promise<Record<string, unknown> | null> {
     const viaSidecar = await sidecarResolveBody(body);
-    if (viaSidecar !== null) return { resolved: true, body: viaSidecar };
+    if (viaSidecar !== null) {
+      this.substrateSeen = true;
+      return { resolved: true, body: viaSidecar };
+    }
     console.warn(`[GoalDispatchView] sidecar resolve unavailable for ${String(body.type)} — engaging direct goal-host fallback`);
     const base = this.plugin.settings.goalHostEndpoint.replace(/\/+$/, '');
     return this.postJson(`${base}/resolve`, body);
   }
 
   private startFleetBoard(): void {
-    const tick = async (): Promise<void> => {
-      if (!this.fleetEl) return;
-      const j = await this.goalHostResolve({ type: 'activeDispatches' });
-      if (!j) return;
-      const dispatches = ((j.body as Record<string, unknown> | undefined)?.dispatches ?? []) as Array<Record<string, unknown>>;
-      if (
-        this.activeDispatchId &&
-        dispatches.some(
-          (d: Record<string, unknown>) =>
-            d.id === this.activeDispatchId &&
-            (d.status === 'completed' || d.status === 'failed')
-        )
-      ) {
-        if (this.elapsedTimer !== null) { window.clearInterval(this.elapsedTimer); this.elapsedTimer = null; }
-        this.dispatching = false;
-        this.setDispatchBtnState(false);
-        this.activeDispatchId = null;
-      }
-      this.renderFleet(dispatches);
+    const tick = (): void => {
+      void this.guardSection(this.fleetEl, 'Fleet', async () => {
+        if (!this.fleetEl) return;
+        const j = await this.goalHostResolve({ type: 'activeDispatches' });
+        if (!j) {
+          // Boot transient / substrate unreachable: say so once instead of
+          // mounting nothing — the 7s cadence re-renders as soon as the
+          // sidecar (or the direct fallback) starts answering.
+          if (this.fleetEl.childElementCount === 0) {
+            this.fleetEl.createDiv({ cls: 'sub-fleet-note', text: 'Fleet — waiting for the substrate conduit…' });
+          }
+          return;
+        }
+        const dispatches = ((j.body as Record<string, unknown> | undefined)?.dispatches ?? []) as Array<Record<string, unknown>>;
+        if (
+          this.activeDispatchId &&
+          dispatches.some(
+            (d: Record<string, unknown>) =>
+              d.id === this.activeDispatchId &&
+              (d.status === 'completed' || d.status === 'failed')
+          )
+        ) {
+          if (this.elapsedTimer !== null) { window.clearInterval(this.elapsedTimer); this.elapsedTimer = null; }
+          this.dispatching = false;
+          this.setDispatchBtnState(false);
+          this.activeDispatchId = null;
+        }
+        this.renderFleet(dispatches);
+      });
     };
-    void tick();
-    this.fleetTimer = window.setInterval(() => void tick(), 7000);
+    tick();
+    this.fleetTimer = window.setInterval(tick, 7000);
   }
 
   private stopFleetBoard(): void {
@@ -946,7 +989,10 @@ export class GoalDispatchView extends ItemView {
     extra: Record<string, unknown> = {},
   ): Promise<Record<string, unknown> | null> {
     const viaSidecar = await sidecarResolveBody({ type: shape, ...extra });
-    if (viaSidecar !== null) return { resolved: true, body: viaSidecar };
+    if (viaSidecar !== null) {
+      this.substrateSeen = true;
+      return { resolved: true, body: viaSidecar };
+    }
     console.warn(`[GoalDispatchView] sidecar resolve unavailable for ${shape} — engaging discovery-routed direct fallback`);
     const url = await this.resolveShapeRoute(shape);
     if (!url) return null;
@@ -955,13 +1001,27 @@ export class GoalDispatchView extends ItemView {
 
   private startWorkBoard(): void {
     const tick = (): void => {
-      void this.renderGroupFeed();
-      void this.renderGaps();
-      void this.renderProjects();
-      void this.renderPulse();
+      void this.guardSection(this.groupEl, 'Group', () => this.renderGroupFeed());
+      void this.guardSection(this.gapsEl, 'Gaps', () => this.renderGaps());
+      void this.guardSection(this.projectsEl, 'Projects', () => this.renderProjects());
+      void this.guardSection(this.pulseEl, 'Pulse', () => this.renderPulse());
     };
     tick();
     this.workBoardTimer = window.setInterval(tick, 30000);
+    // Boot transient: the sidecar spawns in parallel with this view, so the
+    // first tick can find no conduit and render honest empties. Retry on a
+    // short cadence until ANY resolve answers (then the sections re-render
+    // with real data on that same fast tick), for at most a minute; the 30s
+    // cadence owns steady state. registerInterval → cleared on view close.
+    const fastRetry = window.setInterval(() => {
+      if (this.substrateSeen) {
+        window.clearInterval(fastRetry);
+        return;
+      }
+      tick();
+    }, 5000);
+    this.registerInterval(fastRetry);
+    window.setTimeout(() => window.clearInterval(fastRetry), 60_000);
   }
 
   private stopWorkBoard(): void {
@@ -1339,8 +1399,12 @@ export class GoalDispatchView extends ItemView {
         ageChip.setAttr('title', 'Age of the oldest open gap - the durability/latency edge of the close loop.');
       }
     }
-    const rhythms: Array<{ id: string; body: { family: string; axis: string; staleness: number; budget: number; alpha: number; beta: number } }> =
-      ((rhythmRes?.body as Record<string, unknown> | undefined)?.['impulses'] ?? []) as Array<{ id: string; body: { family: string; axis: string; staleness: number; budget: number; alpha: number; beta: number } }>;
+    const rhythmsRaw =
+      (((rhythmRes?.body as Record<string, unknown> | undefined)?.['impulses'] ?? []) as Array<{ id: string; body: { family: string; axis: string; staleness: number; budget: number; alpha: number; beta: number } }>);
+    // Defensive: an impulse without a body object (or a non-numeric
+    // staleness) must not throw in the sort/destructure below — that
+    // TypeError silently blanked the whole pulse strip.
+    const rhythms = rhythmsRaw.filter((r) => r && r.body && typeof r.body === 'object' && typeof r.body.staleness === 'number');
     if (rhythms.length > 0) {
       const sorted = [...rhythms].sort((a, b) => b.body.staleness - a.body.staleness);
       const rhythmRow = el.createDiv({ cls: 'sub-pulse-row sub-pulse-rhythms' });

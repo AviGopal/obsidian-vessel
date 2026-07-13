@@ -1353,3 +1353,12 @@ body {
 
 /* end of styles (placeholder replaced) */
 .__PLACEHOLDER_THAT_WONT_MATCH__ {
+
+/* Section render-failure card: a visible error instead of a blank section
+   (guardSection in goal-dispatch-view). */
+.sub-card--error {
+  border-left: 3px solid var(--sub-error, var(--text-error));
+}
+.sub-card--error .sub-section-header {
+  color: var(--sub-error, var(--text-error));
+}
