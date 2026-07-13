@@ -1342,8 +1342,11 @@ export class GoalDispatchView extends ItemView {
         ageChip.setAttr('title', 'Age of the oldest open gap - the durability/latency edge of the close loop.');
       }
     }
-    const rhythms: Array<{ id: string; body: { family: string; axis: string; staleness: number; budget: number; alpha: number; beta: number } }> =
-      ((rhythmRes?.body as Record<string, unknown> | undefined)?.['impulses'] ?? []) as Array<{ id: string; body: { family: string; axis: string; staleness: number; budget: number; alpha: number; beta: number } }>;
+    const rhythms = (((rhythmRes?.body as Record<string, unknown> | undefined)?.['impulses'] ?? []) as Array<unknown>).filter((r): r is { body: Record<string, unknown> & { staleness: number } } => {
+      if (!r || typeof r !== 'object') return false;
+      const rb = (r as Record<string, unknown>)['body'];
+      return !!rb && typeof rb === 'object' && typeof (rb as Record<string, unknown>)['staleness'] === 'number';
+    }) as Array<{ id: string; body: { family: string; axis: string; staleness: number; budget: number; alpha: number; beta: number } }>;
     if (rhythms.length > 0) {
       const sorted = [...rhythms].sort((a, b) => b.body.staleness - a.body.staleness);
       const rhythmRow = el.createDiv({ cls: 'sub-pulse-row sub-pulse-rhythms' });
