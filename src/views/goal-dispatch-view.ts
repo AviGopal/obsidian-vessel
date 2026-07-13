@@ -1525,14 +1525,43 @@ export class GoalDispatchView extends ItemView {
     const fleetSnap = JSON.stringify(dispatches);
     if (this.lastRenderedSnapshot.get('fleet') === fleetSnap) return;
     this.lastRenderedSnapshot.set('fleet', fleetSnap);
-    el.empty();
     const running = dispatches.filter((d) => d.status === 'running');
     this.completedDispatches = dispatches.filter((d) => d.status !== 'running');
-    el.createDiv({ cls: 'sub-section-header', text: `Fleet — ${running.length} in flight` });
-    if (running.length === 0) {
-      el.createDiv({ cls: 'sub-fleet-empty', text: 'No dispatches in flight.' });
+    let header = el.querySelector(':scope > .sub-section-header') as HTMLElement | null;
+    if (!header) {
+      el.empty();
+      header = el.createDiv({ cls: 'sub-section-header' });
     }
-    for (const d of running) this.renderFleetRow(el, d, true);
+    header.setText(`Fleet — ${running.length} in flight`);
+    const emptyNote = el.querySelector(':scope > .sub-fleet-empty') as HTMLElement | null;
+    if (running.length === 0 && !emptyNote) {
+      el.createDiv({ cls: 'sub-fleet-empty', text: 'No dispatches in flight.' });
+    } else if (running.length > 0 && emptyNote) {
+      emptyNote.remove();
+    }
+    const seen = new Set<string>();
+    for (const d of running) {
+      const key = String(d.dispatchId ?? d.id ?? '');
+      seen.add(key);
+      const rowSnap = JSON.stringify(d);
+      let wrap = el.querySelector(`:scope > [data-dispatch-key="${CSS.escape(key)}"]`) as HTMLElement | null;
+      if (wrap && wrap.dataset.rowSnap === rowSnap) {
+        el.appendChild(wrap);
+        continue;
+      }
+      if (!wrap) {
+        wrap = el.createDiv();
+        wrap.dataset.dispatchKey = key;
+      }
+      wrap.dataset.rowSnap = rowSnap;
+      wrap.empty();
+      el.appendChild(wrap);
+      this.renderFleetRow(wrap, d, true);
+    }
+    for (const stale of Array.from(el.querySelectorAll(':scope > [data-dispatch-key]'))) {
+      const k = (stale as HTMLElement).dataset.dispatchKey ?? '';
+      if (!seen.has(k)) stale.remove();
+    }
     this.renderCompleted();
   }
 
