@@ -539,7 +539,12 @@ export class ConceptDbClient {
     content?: unknown;
     metadata?: unknown;
   } | null> {
-    const resp = await sidecarResolveAuto(pointer, this.timeout);
+    // The 'concept' shape has multiple registrants fleet-wide (development-vessel
+    // advertises it too, and federated mirrors multiply the candidates); pin the
+    // resolve to concept-db so the federation ingress proxies to the graph owner.
+    // Ignored by the plain discovery-routed local path, where the content-shape
+    // guards in each caller catch a misroute and engage the REST fallback.
+    const resp = await sidecarResolveAuto({ _fedTargetVessel: 'concept-db-local', ...pointer }, this.timeout);
     if (resp === null || typeof resp !== 'object') {
       this.logger('warn', 'overlay resolve unavailable - engaging REST fallback', {
         type: String(pointer.type),
