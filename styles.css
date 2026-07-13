@@ -340,6 +340,21 @@ body {
 }
 
 .sub-section-header.is-toggle {
+}
+
+.sub-section-header.is-toggle:focus-visible,
+.sub-fleet-note.is-toggle:focus-visible,
+.sub-card:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 1px;
+  border-radius: var(--radius-s);
+}
+
+.sub-section-header.is-toggle:focus:not(:focus-visible),
+.sub-fleet-note.is-toggle:focus:not(:focus-visible),
+.sub-card:focus:not(:focus-visible) {
+  outline: none;
+}
   cursor: pointer;
 }
 
