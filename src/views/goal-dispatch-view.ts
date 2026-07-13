@@ -29,7 +29,7 @@ import { GoalHostClient, type VaultContext } from '../goals/goal-host-client';
 import { GoalNoteManager } from '../goals/goal-note-manager';
 import type { PendingSolicitation } from '../solicitations/solicitation-manager';
 import type { UiFeedbackKind } from '../feedback/ui-feedback-store';
-import { sidecarResolveBody } from '../sidecar-manager';
+import { sidecarResolveBody, sidecarHttpAuto } from '../sidecar-manager';
 
 export const VIEW_TYPE_GOAL_DISPATCH = 'obsidian-goal-dispatch';
 
@@ -335,6 +335,10 @@ export class GoalDispatchView extends ItemView {
   // default; polled on a slow cadence (they change far less than dispatches).
   private gapsEl: HTMLElement | null = null;
   private projectsEl: HTMLElement | null = null;
+  // Group activity feed: what the whole peering group is working on
+  // (fleetActivityFeed aggregate, with direct-resolve fallback legs).
+  private groupEl: HTMLElement | null = null;
+  private groupExpanded = true;
   private pulseEl: HTMLElement | null = null;
   private gapsExpanded = false;
   // per-gap causal-thread expansion (gap id -> expanded)
@@ -444,10 +448,13 @@ export class GoalDispatchView extends ItemView {
     this.fleetEl = contentEl.createDiv('sub-section sub-fleet');
     // 3. Completed goals — one-line count, expandable.
     this.completedEl = contentEl.createDiv('sub-section sub-completed');
-    // 4. Gaps — the substrate's self-improvement backlog (what it's working
+    // 4. Group — what the whole peering group is working on (dispatches
+    //    tagged by substrate, gap filings, boredom work, rhythms).
+    this.groupEl = contentEl.createDiv('sub-section sub-group');
+    // 5. Gaps — the substrate's self-improvement backlog (what it's working
     //    on fixing in itself), collapsed to a count.
     this.gapsEl = contentEl.createDiv('sub-section sub-gaps');
-    // 5. Projects — longer-lived work threads, collapsed to a count.
+    // 6. Projects — longer-lived work threads, collapsed to a count.
     this.projectsEl = contentEl.createDiv('sub-section sub-projects');
 
     // ── ONE scroll container: event feed + collapsed vault-touch feed ──
@@ -946,6 +953,7 @@ export class GoalDispatchView extends ItemView {
 
   private startWorkBoard(): void {
     const tick = (): void => {
+      void this.renderGroupFeed();
       void this.renderGaps();
       void this.renderProjects();
       void this.renderPulse();
@@ -958,6 +966,208 @@ export class GoalDispatchView extends ItemView {
     if (this.workBoardTimer !== null) {
       window.clearInterval(this.workBoardTimer);
       this.workBoardTimer = null;
+    }
+  }
+
+  /**
+   * Fetch the goal-host fleetActivityFeed aggregate through the sidecar.
+   * Primary: the shaped resolve (overlay-capable — works on a bare host).
+   * Progressive enhancement: some goal-host builds serve the shape only on
+   * /v2/impulses/resolve while the registered /resolve row still rejects it,
+   * so when the shaped resolve yields nothing usable, retry the v2 surface
+   * through the sidecar's shape-routed HTTP proxy. Returns null when the
+   * aggregate producer is missing entirely — the renderer then composes the
+   * same sections from direct resolves instead of going blank.
+   */
+  private async fetchFleetActivityFeed(): Promise<Record<string, unknown> | null> {
+    const viaResolve = await sidecarResolveBody({ type: 'fleetActivityFeed' });
+    if (viaResolve && Array.isArray(viaResolve.members)) return viaResolve;
+    const viaV2 = await sidecarHttpAuto({
+      shape: 'fleetActivityFeed',
+      method: 'POST',
+      path: '/v2/impulses/resolve',
+      body: { impulse: { pointer: { type: 'fleetActivityFeed' } } },
+    });
+    if (viaV2?.ok && viaV2.body && typeof viaV2.body === 'object') {
+      const outer = viaV2.body as Record<string, unknown>;
+      for (const candidate of [outer.body, outer.content, outer]) {
+        if (
+          candidate && typeof candidate === 'object' &&
+          Array.isArray((candidate as Record<string, unknown>).members)
+        ) {
+          return candidate as Record<string, unknown>;
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Group activity feed: what the whole peering group is working on — member
+   * dispatches tagged by substrate, gap filings from any member, boredom
+   * (condition-driven idle) work, and rhythm due-ness. Data path: the
+   * fleetActivityFeed aggregate via the sidecar; while that producer is
+   * missing or its legs land empty, the same sections are composed from
+   * direct overlay resolves (activeDispatches / substrateGap / rhythm
+   * poolImpulses) with an honest note — the panel never renders blank solely
+   * because the aggregate producer is absent.
+   */
+  private async renderGroupFeed(): Promise<void> {
+    const el = this.groupEl;
+    if (!el) return;
+    const feed = await this.fetchFleetActivityFeed();
+
+    const arr = (v: unknown): Array<Record<string, unknown>> =>
+      Array.isArray(v) ? (v as Array<Record<string, unknown>>) : [];
+    let members = feed ? arr(feed.members) : [];
+    let gaps = feed ? arr(feed.gaps) : [];
+    const boredom = feed ? arr(feed.boredom) : [];
+    let rhythms = feed ? arr(feed.rhythms) : [];
+    const supplemented: string[] = [];
+    const dispatchCountOf = (ms: Array<Record<string, unknown>>): number =>
+      ms.reduce((n, m) => n + arr(m.dispatches).length, 0);
+
+    if (dispatchCountOf(members) === 0) {
+      const dj = await this.goalHostResolve({ type: 'activeDispatches' });
+      const dispatches = arr((dj?.body as Record<string, unknown> | undefined)?.dispatches);
+      if (dispatches.length > 0) {
+        members = [
+          { substrate: 'local', reachable: true, dispatches },
+          ...members.filter((m) => m.substrate !== 'local'),
+        ];
+        supplemented.push('dispatches');
+      }
+    }
+    if (gaps.length === 0) {
+      const gj = await this.devVesselResolve('substrateGap', { limit: 100 });
+      const open = arr((gj?.body as Record<string, unknown> | undefined)?.gaps).filter((g) => g.status === 'open');
+      if (open.length > 0) {
+        gaps = open.map((g) => ({ substrate: 'local', ...g }));
+        supplemented.push('gaps');
+      }
+    }
+    if (rhythms.length === 0) {
+      const rj = await this.devVesselResolve('poolImpulse', { shape: 'timeShapedRhythm', limit: 12 });
+      const imps = arr((rj?.body as Record<string, unknown> | undefined)?.impulses);
+      if (imps.length > 0) {
+        rhythms = imps;
+        supplemented.push('rhythms');
+      }
+    }
+
+    el.empty();
+    if (members.length === 0 && gaps.length === 0 && boredom.length === 0 && rhythms.length === 0) {
+      el.createDiv({
+        cls: 'sub-fleet-note',
+        text: 'Group — no activity data reachable (aggregate feed missing and direct resolves silent)',
+      });
+      return;
+    }
+
+    const dispatchTotal = dispatchCountOf(members);
+    const header = el.createDiv({
+      cls: 'sub-section-header is-toggle',
+      text: `${this.groupExpanded ? '▾' : '▸'} Group — ${members.length} member${members.length === 1 ? '' : 's'} · ${dispatchTotal} dispatch${dispatchTotal === 1 ? '' : 'es'} · ${gaps.length} gap${gaps.length === 1 ? '' : 's'}`,
+    });
+    header.addEventListener('click', () => {
+      this.groupExpanded = !this.groupExpanded;
+      void this.renderGroupFeed();
+    });
+    if (!feed) {
+      el.createDiv({ cls: 'sub-fleet-note', text: 'aggregate feed unavailable — showing direct overlay resolves' });
+    } else if (supplemented.length > 0) {
+      el.createDiv({ cls: 'sub-fleet-note', text: `feed producer incomplete — ${supplemented.join(', ')} from direct resolves` });
+    }
+    if (!this.groupExpanded) return;
+
+    // Member dispatches, tagged by substrate.
+    for (const m of members) {
+      const name = String(m.substrate ?? 'unknown');
+      const reachable = m.reachable !== false;
+      el.createDiv({
+        cls: 'sub-fleet-note',
+        text: `${reachable ? '●' : '○'} ${name}${reachable ? '' : ' (unreachable)'}`,
+      });
+      const dispatches = arr(m.dispatches);
+      if (dispatches.length === 0 && reachable) {
+        el.createDiv({ cls: 'sub-fleet-empty', text: 'idle — no dispatches reported' });
+      }
+      for (const d of dispatches.slice(0, 8)) {
+        const row = el.createDiv('sub-card sub-card--fleet');
+        const running = d.status === 'running';
+        const dot = running ? '●' : d.reached === true ? '✓' : d.reached === false ? '✗' : '○';
+        const statusCls = running ? 'is-running' : d.reached === true ? 'is-reached' : 'is-not-reached';
+        row.createSpan({ cls: `sub-fleet-status ${statusCls}`, text: dot });
+        const goal = typeof d.goal === 'string' ? d.goal : '(no goal)';
+        row.createSpan({
+          cls: 'sub-fleet-goal',
+          text: goal.length > 54 ? goal.slice(0, 54) + '…' : goal,
+          attr: { title: goal },
+        });
+        row.createSpan({ cls: 'sub-chip', text: name, attr: { title: `substrate: ${name}` } });
+        const started = typeof d.startedAt === 'number' ? d.startedAt : 0;
+        if (started) row.createSpan({ cls: 'sub-fleet-elapsed', text: fmtRel(Date.now() - started) });
+      }
+    }
+
+    // Gap filings from any member.
+    if (gaps.length > 0) {
+      el.createDiv({ cls: 'sub-section-header', text: `Gap filings — ${gaps.length}` });
+      for (const g of gaps.slice(0, 8)) {
+        const row = el.createDiv('sub-card sub-gap-row');
+        const label = String(g.category ?? g.id ?? '(gap)');
+        row.createSpan({
+          cls: 'sub-gap-cat',
+          text: label.length > 38 ? label.slice(0, 38) + '…' : label,
+          attr: { title: String(g.id ?? label) },
+        });
+        row.createSpan({ cls: 'sub-chip', text: String(g.substrate ?? 'local'), attr: { title: `substrate: ${String(g.substrate ?? 'local')}` } });
+        const src = String(g.source ?? '');
+        if (src) {
+          row.createSpan({ cls: `sub-badge sub-badge--${src.replace(/[^a-z]/gi, '')}`, text: sourceLabel(src), attr: { title: `source: ${src}` } });
+        }
+        const summary = typeof g.summary === 'string' ? g.summary.replace(/^\[[^\]]*\]\s*/, '') : '';
+        if (summary) {
+          row.createDiv({
+            cls: 'sub-gap-summary',
+            text: summary.length > 100 ? summary.slice(0, 100) + '…' : summary,
+            attr: { title: summary },
+          });
+        }
+      }
+      if (gaps.length > 8) {
+        el.createDiv({ cls: 'sub-fleet-note', text: `+${gaps.length - 8} more gap filings` });
+      }
+    }
+
+    // Boredom (condition-driven idle) work — honest empty-state when absent.
+    el.createDiv({
+      cls: 'sub-section-header',
+      text: boredom.length > 0 ? `Boredom work — ${boredom.length}` : 'Boredom work — none reported',
+    });
+    for (const b of boredom.slice(0, 6)) {
+      const text = String(b.summary ?? b.goal ?? b.description ?? b.id ?? JSON.stringify(b).slice(0, 90));
+      const line = el.createDiv({ cls: 'sub-feed-line' });
+      line.createSpan({
+        cls: 'sub-feed-msg',
+        text: text.length > 100 ? text.slice(0, 100) + '…' : text,
+        attr: { title: text },
+      });
+      if (b.substrate) line.createSpan({ cls: 'sub-chip', text: String(b.substrate) });
+    }
+
+    // Rhythm due-ness meters (same visual grammar as the pulse strip).
+    if (rhythms.length > 0) {
+      const rhythmRow = el.createDiv({ cls: 'sub-pulse-row sub-pulse-rhythms' });
+      const METER = '▁▂▃▄▅▆▇█';
+      for (const r of rhythms.slice(0, 12)) {
+        const body = (r.body && typeof r.body === 'object' ? r.body : r) as Record<string, unknown>;
+        const family = String(body.family ?? body.id ?? r.id ?? 'rhythm');
+        const staleness = typeof body.staleness === 'number' ? body.staleness : 0;
+        const chip = rhythmRow.createSpan({ cls: 'sub-chip' });
+        chip.textContent = `${family} ${METER[Math.min(7, Math.floor(staleness * 8))]}`;
+        chip.title = `rhythm ${family} · staleness ${Math.round(staleness * 100)}%${r.substrate ? ` · ${String(r.substrate)}` : ''}`;
+      }
     }
   }
 
