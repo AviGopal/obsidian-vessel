@@ -11,7 +11,7 @@
 
 import { requestUrl } from 'obsidian';
 import { ObsidianVesselSettings } from './settings';
-import { getActiveSidecarPort } from './sidecar-manager';
+import { getActiveSidecarPort, sidecarHttp } from './sidecar-manager';
 
 // =============================================================================
 // Types
@@ -226,18 +226,11 @@ export class VesselClient {
 
     for (let attempt = 0; attempt < this.maxRetries; attempt++) {
       try {
-        const response = await this.fetchWithTimeout(
-          `${discoveryVesselEndpoint}/register`,
-          {
-            method: 'POST',
-            headers: {
+        const headers: Record<string, string> = {
               'Content-Type': 'application/json',
               ...(apiKey ? { 'Authorization': `ApiKey ${apiKey}` } : {}),
-            },
-            body: JSON.stringify(registration),
-          },
-          10000 // 10 second timeout
-        );
+            };
+        const response = await this.discoveryFetch('/register', { method: 'POST', headers, body: JSON.stringify(registration) }, 10000);
 
         if (!response.ok) {
           const errorText = await response.text();
@@ -306,8 +299,8 @@ export class VesselClient {
     this.logger('info', 'Deregistering vessel', { vesselId });
 
     try {
-      const response = await this.fetchWithTimeout(
-        `${discoveryVesselEndpoint}/vessels/${vesselId}`,
+      const response = await this.discoveryFetch(
+        `/vessels/${vesselId}`,
         {
           method: 'DELETE',
           headers: {
@@ -401,14 +394,15 @@ export class VesselClient {
         ttl: this.settings.registrationTtl,
       };
 
-      const response = await this.fetchWithTimeout(
-        `${discoveryVesselEndpoint}/register`,
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...(apiKey ? { 'Authorization': `ApiKey ${apiKey}` } : {}),
+      };
+      const response = await this.discoveryFetch(
+        '/register',
         {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(apiKey ? { 'Authorization': `ApiKey ${apiKey}` } : {}),
-          },
+          headers,
           body: JSON.stringify(registration),
         },
         10000
@@ -519,6 +513,35 @@ export class VesselClient {
   /**
    * Fetch with timeout support
    */
+  /**
+   * Discovery request, sidecar-first: routes over the federation overlay via the
+   * sidecar's /outbound/http (service:'discovery') so a spoke needs no configured
+   * discovery host:port; falls back to the direct discovery endpoint only when the
+   * sidecar is down. Adapts SidecarHttpResult to fetchWithTimeout's response shape.
+   */
+  private async discoveryFetch(
+    path: string,
+    options: RequestInit,
+    timeoutMs: number,
+  ): Promise<{ ok: boolean; status: number; statusText: string; text(): Promise<string>; json(): Promise<unknown> }> {
+    const via = await sidecarHttp(this.settings, {
+      service: 'discovery',
+      method: (options.method as string) || 'GET',
+      path,
+      body: options.body ? JSON.parse(options.body as string) : undefined,
+    }, timeoutMs);
+    if (via) {
+      return {
+        ok: via.ok,
+        status: via.status,
+        statusText: String(via.status),
+        text: () => Promise.resolve(typeof via.body === 'string' ? via.body : JSON.stringify(via.body)),
+        json: () => Promise.resolve(via.body),
+      };
+    }
+    return this.fetchWithTimeout(`${this.settings.discoveryVesselEndpoint}${path}`, options, timeoutMs);
+  }
+
   private async fetchWithTimeout(
     url: string,
     options: RequestInit,
