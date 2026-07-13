@@ -1401,6 +1401,7 @@ export class GoalDispatchView extends ItemView {
     if (this.lastRenderedSnapshot.get('pulse') === pulseSnapshot) return;
     this.lastRenderedSnapshot.set('pulse', pulseSnapshot);
     el.empty();
+    el.createDiv({ cls: 'sub-section-header', text: 'Pulse' });
     const tiles = el.createDiv({ cls: 'sub-pulse-tiles' });
     const addTile = (label: string, value: string, delta?: string, tooltip?: string): void => {
       const tile = tiles.createDiv({ cls: 'sub-stat-tile' });
