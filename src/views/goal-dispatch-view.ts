@@ -1860,6 +1860,9 @@ export class GoalDispatchView extends ItemView {
   private renderSolicitations(list: PendingSolicitation[]): void {
     const el = this.solicitationsEl;
     if (!el) return;
+    const solSnap = JSON.stringify(list);
+    if (this.lastRenderedSnapshot.get('solicitations') === solSnap) return;
+    this.lastRenderedSnapshot.set('solicitations', solSnap);
     el.empty();
     if (list.length === 0) return;
     for (const sol of list) {
