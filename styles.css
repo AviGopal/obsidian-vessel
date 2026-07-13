@@ -215,6 +215,7 @@ body {
   font-weight: 600;
   font-size: var(--sub-font-s);
   color: var(--sub-text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .sub-solicitation-answer {
@@ -351,6 +352,7 @@ body {
   font-size: 1.15em;
   font-weight: 600;
   color: var(--text-normal);
+  font-variant-numeric: tabular-nums;
 }
 
 .sub-stat-delta {
@@ -380,7 +382,7 @@ body {
   flex: 1;
   height: 4px;
   border-radius: 2px;
-  background: var(--background-modifier-border);
+  background: rgba(var(--interactive-accent-rgb), 0.15);
   overflow: hidden;
 }
 .sub-rhythm-fill {
