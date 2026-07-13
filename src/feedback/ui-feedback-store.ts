@@ -8,6 +8,7 @@
  * (`substrateGap_write`) so it enters the gap → scenario → drafter funnel.
  */
 
+import { sidecarResolveAuto } from '../sidecar-manager';
 import { requestUrl } from 'obsidian';
 export type UiFeedbackSurface = 'panel' | 'goal-note' | 'improvement-note';
 
@@ -95,9 +96,7 @@ export async function forwardUiFeedbackToGapStore(
   if (apiKey) {
     headers['Authorization'] = `ApiKey ${apiKey}`;
   }
-  const body = JSON.stringify({
-    impulse: {
-      pointer: {
+  const pointer = {
         type: 'substrateGap_write',
         gap: {
           id: gapId,
@@ -114,9 +113,15 @@ export async function forwardUiFeedbackToGapStore(
             vessel_id: fb.vessel_id,
           },
         },
-      },
-    },
-  });
+  };
+  // Overlay-first: route the shaped gap write over the federation sidecar
+  // (/outbound/resolve) so it works on a spoke without a reachable dev-vessel
+  // host:port; fall back to the direct endpoint only when the sidecar is down.
+  const via = await sidecarResolveAuto(pointer, 15_000);
+  if (via != null) {
+    return { forwarded: true, status: 200, gapId };
+  }
+  const body = JSON.stringify({ impulse: { pointer } });
   try {
     const resp = await requestUrl({
       url,
