@@ -281,6 +281,8 @@ export class GoalDispatchView extends ItemView {
   private outputEl: HTMLElement | null = null;   // feed-lines region inside scrollEl
 
   // State
+  private pollInterval: number | null = null;
+  private lastRenderedSnapshot: Map<string, string> = new Map();
   private ws: WebSocket | null = null;
   private wsReconnectTimer: number | null = null;
   private activeExecutionId: string | null = null;
@@ -1183,6 +1185,9 @@ export class GoalDispatchView extends ItemView {
     if (!el) return;
     const j = await this.devVesselResolve('substrateGap', { limit: 200 });
     const gaps = ((j?.body as Record<string, unknown> | undefined)?.gaps ?? []) as Array<Record<string, unknown>>;
+    const gapsSnap = JSON.stringify(gaps);
+    if (this.lastRenderedSnapshot.get('gaps') === gapsSnap) return;
+    this.lastRenderedSnapshot.set('gaps', gapsSnap);
     el.empty();
     if (gaps.length === 0) return;
     const open = gaps.filter((g) => g.status === 'open');
@@ -1421,6 +1426,9 @@ export class GoalDispatchView extends ItemView {
   private renderFleet(dispatches: Array<Record<string, unknown>>): void {
     const el = this.fleetEl;
     if (!el) return;
+    const fleetSnap = JSON.stringify(dispatches);
+    if (this.lastRenderedSnapshot.get('fleet') === fleetSnap) return;
+    this.lastRenderedSnapshot.set('fleet', fleetSnap);
     el.empty();
     const running = dispatches.filter((d) => d.status === 'running');
     this.completedDispatches = dispatches.filter((d) => d.status !== 'running');
