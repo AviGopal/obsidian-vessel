@@ -414,6 +414,8 @@ body {
   font-size: var(--sub-font-s);
   font-weight: 600;
   color: var(--sub-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
   user-select: none;
 }
 
