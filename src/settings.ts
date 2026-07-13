@@ -18,9 +18,6 @@ export interface ObsidianVesselSettings {
   /** API key for authentication */
   apiKey: string;
 
-  /** Organization ID for multi-tenant isolation */
-  orgId: string;
-
   // ==========================================================================
   // Sync Preferences
   // ==========================================================================
@@ -36,9 +33,6 @@ export interface ObsidianVesselSettings {
 
   /** Whether to sync on plugin load */
   syncOnStart: boolean;
-
-  /** Maximum number of historical executions to sync */
-  historicalSyncLimit: number;
 
   /** Interval between automatic syncs (in minutes) */
   syncIntervalMinutes: number;
@@ -103,33 +97,15 @@ export interface ObsidianVesselSettings {
   // Note Formatting Settings
   // ==========================================================================
 
-  /** Note template style */
-  noteTemplate: 'detailed' | 'compact' | 'custom';
-
-  /** Custom template string (used when noteTemplate is 'custom') */
-  customTemplate: string;
-
   /** Include tool call details in execution notes */
   includeToolCalls: boolean;
 
   /** Include file diffs in execution notes */
   includeDiffs: boolean;
 
-  /** Show tool calls in formatted notes (alias for includeToolCalls) */
-  showToolCalls: boolean;
-
-  /** Show cost estimates in formatted notes */
-  showCostEstimates: boolean;
-
-  /** Show token usage in formatted notes */
-  showTokenUsage: boolean;
-
   // ==========================================================================
   // Canvas Settings
   // ==========================================================================
-
-  /** Automatically update canvases when new executions arrive */
-  canvasAutoUpdate: boolean;
 
   /** Layout algorithm for activity canvases */
   canvasLayout: 'hierarchical' | 'force-directed' | 'timeline' | 'radial';
@@ -143,12 +119,6 @@ export interface ObsidianVesselSettings {
 
   /** WebSocket URL for real-time updates */
   websocketUrl: string;
-
-  /** Enable automatic sync */
-  autoSync: boolean;
-
-  /** Sync interval in milliseconds (alias for syncIntervalMinutes * 60000) */
-  syncInterval: number;
 
   // ==========================================================================
   // Concept-DB Frontend Settings
@@ -242,12 +212,6 @@ export interface ObsidianVesselSettings {
   /** The hub federation-transport ingress circuit multiaddr; when set with the sidecar on, all outbound resolve/dispatch routes over libp2p to the hub instead of dialing host:ports. */
   federationIngressMultiaddr: string;
 
-  /** Discovery-vessel base URL to register with (typically the remote hub). */
-  federationDiscoveryUrl: string;
-
-  /** API key for the federation discovery registration; falls back to `apiKey` when empty. */
-  federationApiKey: string;
-
   /** Stable vessel id to advertise (seeds the libp2p identity — keep constant across restarts). */
   federationVesselId: string;
 
@@ -284,7 +248,6 @@ export const DEFAULT_SETTINGS: ObsidianVesselSettings = {
   // Connection
   activityApiUrl: 'http://localhost:18080',
   apiKey: '',
-  orgId: '',
 
   // Vessel registration
   vesselId: '',  // Will be generated on first load if empty
@@ -309,7 +272,6 @@ export const DEFAULT_SETTINGS: ObsidianVesselSettings = {
   activityTemplatesFolder: 'Obsidian/Templates',
   canvasFolder: 'Obsidian/Canvases',
   syncOnStart: true,
-  historicalSyncLimit: 100,
   syncIntervalMinutes: 5,
   syncBatchSize: 50,
   preserveUserContent: true,
@@ -320,23 +282,15 @@ export const DEFAULT_SETTINGS: ObsidianVesselSettings = {
   allowedOrigins: ['http://localhost:*', 'http://127.0.0.1:*'],
 
   // Note formatting
-  noteTemplate: 'detailed',
-  customTemplate: '',
   includeToolCalls: true,
   includeDiffs: true,
-  showToolCalls: true,
-  showCostEstimates: true,
-  showTokenUsage: true,
 
   // Canvas
-  canvasAutoUpdate: true,
   canvasLayout: 'hierarchical',
   maxNodesPerCanvas: 100,
 
   // WebSocket
   websocketUrl: '',  // Will be derived from activityApiUrl if empty
-  autoSync: true,
-  syncInterval: 300000,  // 5 minutes in ms
 
   // Concept-DB Frontend
   enableConceptDbSync: false,
@@ -367,8 +321,6 @@ export const DEFAULT_SETTINGS: ObsidianVesselSettings = {
   enableFederationSidecar: false,
   federationRelayMultiaddr: '',
   federationIngressMultiaddr: '',
-  federationDiscoveryUrl: '',
-  federationApiKey: '',
   federationVesselId: 'obsidian-host-vessel',
   federationHealthPort: 8402,
   federationBunPath: 'bun',
@@ -399,11 +351,6 @@ export function validateSettings(settings: ObsidianVesselSettings): string[] {
   // Validate sync interval
   if (settings.syncIntervalMinutes < 1 || settings.syncIntervalMinutes > 1440) {
     errors.push('Sync interval must be between 1 and 1440 minutes');
-  }
-
-  // Validate historical sync limit
-  if (settings.historicalSyncLimit < 1 || settings.historicalSyncLimit > 10000) {
-    errors.push('Historical sync limit must be between 1 and 10000');
   }
 
   // Validate folder paths (must not start with / or contain ..)
