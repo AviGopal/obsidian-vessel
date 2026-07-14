@@ -63,14 +63,23 @@ local substrate:
 | Goal-host endpoint | `http://localhost:18210` |
 | Concept-DB endpoint | `http://localhost:18260` |
 | API key | `make -C scripts/substrate show-key` (operator key) or `issue-key NAME=<you>` |
-| Server port | `27182` |
+| Server port | `27182` (verify: `curl -s http://localhost:27182/health`) |
+| Sidecar health port | `8402` (verify: `curl -s http://127.0.0.1:8402/health`, when the federation sidecar is enabled) |
 | Advertised host | `host.docker.internal` (same machine) — or a routable IP / the libp2p sidecar for remote |
+
+> **Default ports only.** `install.sh` and the table above hardcode the default
+> fleet ports (`18080`/`18100`/`18210`/`18260`). If the substrate runs on a
+> non-default `PORT_OFFSET` (e.g. a clean-room instance on `38080`/`38100`/…),
+> `install.sh --local` won't reach it — install with `--no-federation` and then
+> set the four endpoints to the offset ports by hand in the plugin's settings tab
+> (or edit `data.json`).
 
 **Remote / behind NAT:** the libp2p **federation sidecar** makes the plugin
 discovery-reachable over the relay while it stays a plain local HTTP server.
 `install.sh` configures this automatically (it derives the relay multiaddr from your
 discovery host and enables the sidecar); after a manual install, set the Federation
 settings (relay multiaddr, discovery URL, enable sidecar) in the plugin settings tab.
+Once enabled, verify the sidecar is up with `curl -s http://127.0.0.1:8402/health`.
 
 ## Concept-db frontend
 
