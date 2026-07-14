@@ -41,12 +41,10 @@ export function renderSparkline(
 
   if (values.length === 0) return svg;
 
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max === min ? 1 : max - min;
-
   const xOf = (i: number): number => pad + (i / Math.max(values.length - 1, 1)) * (w - pad * 2);
-  const yOf = (v: number): number => (h - pad) - ((v - min) / range) * (h - pad * 2);
+  // Map value to [0,1] range, then to y-coordinate.
+  // Assumes values are already normalized between 0 and 1.
+  const yOf = (v: number) => (h - pad) - v * (h - pad * 2);
 
   // Area fill
   const areaPoints: string[] = [];
@@ -71,7 +69,7 @@ export function renderSparkline(
 
   // Target hairline
   if (opts.target !== undefined) {
-    const ty = yOf(Math.max(min, Math.min(max, opts.target)));
+    const ty = yOf(opts.target);
     const dash = document.createElementNS(SVG_NS, "line");
     dash.setAttribute("x1", String(pad));
     dash.setAttribute("y1", String(ty));
