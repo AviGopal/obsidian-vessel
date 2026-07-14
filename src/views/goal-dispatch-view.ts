@@ -1735,6 +1735,7 @@ export class GoalDispatchView extends ItemView {
         before,
         after,
         Array.isArray(step.newShapes) ? step.newShapes : undefined,
+        producers,
       );
       prevPool = after;
     });
