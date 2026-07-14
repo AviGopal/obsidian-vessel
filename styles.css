@@ -167,6 +167,9 @@ body {
   padding: var(--sub-space-2);
   background: var(--sub-bg-card);
   font-size: var(--sub-font-s);
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 /* Solicitation: the substrate asking the human — highest priority, pinned. */
@@ -396,6 +399,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .sub-section:empty {
@@ -478,6 +483,9 @@ body {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: clip;
 }
 
 .sub-fleet-chips {
@@ -1291,6 +1299,8 @@ body {
   flex-direction: column;
   gap: var(--sub-space-1);
   margin-top: var(--sub-space-1);
+  min-width: 0;
+  max-width: 100%;
 }
 .sub-step {
   padding: var(--sub-space-1) var(--sub-space-2);
@@ -1331,6 +1341,8 @@ body {
   color: var(--sub-text-muted);
   line-height: 1.5;
   margin: 2px 0 2px var(--sub-space-3);
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 /* Source badges (thompson / satisfier / bridge / recovery / improvise / shadow). */
@@ -1361,6 +1373,8 @@ body {
   font-size: var(--sub-font-s);
   color: var(--sub-text-faint);
   font-style: italic;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .sub-alt-line--excluded { opacity: 0.85; }
 
@@ -1370,6 +1384,8 @@ body {
   flex-direction: column;
   gap: 2px;
   margin: 2px 0 2px var(--sub-space-3);
+  min-width: 0;
+  max-width: 100%;
 }
 .sub-pool-arrow {
   font-family: var(--font-monospace);
