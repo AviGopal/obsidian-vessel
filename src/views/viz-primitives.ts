@@ -1,7 +1,7 @@
 // viz-primitives.ts — pure SVG visualization primitives for the dispatch panel.
 // No imports, no Obsidian APIs, no side effects.
 
-const SVG_NS = "https://www.w3.org/2000/svg";
+const SVG_NS = "http://www.w3.org/2000/svg";
 
 function makeSvg(width: number, height: number, label: string): SVGSVGElement {
   const svg = document.createElementNS(SVG_NS, "svg") as SVGSVGElement;
