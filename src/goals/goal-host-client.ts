@@ -7,7 +7,7 @@
  */
 
 import { requestUrl } from 'obsidian';
-import { sidecarHttpAuto } from '../sidecar-manager';
+import { sidecarHttpAuto, sidecarResolveBody } from '../sidecar-manager';
 
 export interface GoalDispatchResult {
   executionId: string;
@@ -136,8 +136,8 @@ export class GoalHostClient {
    */
   async getWalkState(dispatchId: string): Promise<Record<string, unknown>> {
     try {
-      const j = await this.http('/resolve', { impulse: { pointer: { type: 'goalWalkState', dispatchId } } });
-      return (j.body as Record<string, unknown>) ?? {};
+      const body = await sidecarResolveBody({ type: 'goalWalkState', dispatchId });
+      return (body as Record<string, unknown>) ?? {};
     } catch {
       return {};
     }
