@@ -391,7 +391,7 @@ export class VesselClient {
         auth_scheme: 'ApiKey',
         resolve_timeout_ms: this.settings.resolveTimeoutMs ?? 10000,
         metadata: { vaultPath: this.vaultPath, pluginVersion: '0.1.0' },
-        ...(sidecarAddrs.length > 0 ? { libp2p_multiaddr: sidecarAddrs } : {}),
+        ...(sidecarAddrs.length > 0 ? { libp2p_multiaddr: sidecarAddrs, protocol: 'libp2p' } : {}),
         ttl: this.settings.registrationTtl,
       };
 
