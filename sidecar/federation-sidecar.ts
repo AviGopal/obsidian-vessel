@@ -120,12 +120,36 @@ function remapEndpoint(endpoint: string): string {
 }
 
 interface ShapeOwner { base: string; resolvePath: string; vesselId: string; multiaddrs: string[] }
-const ownerCache = new Map<string, { owner: ShapeOwner; ts: number }>();
+const ownersCache = new Map<string, { owners: ShapeOwner[]; ts: number }>();
 const OWNER_CACHE_TTL_MS = 60_000;
+const isLoopback = (u: string) => /^https?:\/\/(127\.0\.0\.1|localhost)[:/]/.test(u);
 
-async function lookupShapeOwner(shape: string): Promise<ShapeOwner | null> {
-  const cached = ownerCache.get(shape);
-  if (cached && Date.now() - cached.ts < OWNER_CACHE_TTL_MS) return cached.owner;
+function ownerFromRow(v: any, idOf: (x: any) => string): ShapeOwner {
+  // Remap the (possibly in-container) endpoint ourselves: the offset is derived
+  // from discovery's own mapped port, which stays correct when the substrate runs
+  // on shifted host ports. public_endpoint is only trusted when it isn't loopback.
+  const pub = typeof v.public_endpoint === 'string' ? v.public_endpoint.replace(/\/+$/, '') : '';
+  return {
+    base: pub && !isLoopback(pub) ? pub : remapEndpoint(String(v.endpoint)),
+    // resolve_endpoint may be advertised as a full (loopback) URL; take only its
+    // path so it can't concatenate with base into an invalid ("fetch() URL is
+    // invalid") fetch URL.
+    resolvePath: (() => { const re = String(v.resolve_endpoint || '/v2/impulses/resolve'); try { return /^https?:\/\//.test(re) ? new URL(re).pathname : re; } catch { return '/v2/impulses/resolve'; } })(),
+    vesselId: idOf(v) || 'unknown',
+    multiaddrs: Array.isArray(v.libp2p_multiaddr) ? v.libp2p_multiaddr.filter((m: unknown) => typeof m === 'string') : [],
+  };
+}
+
+// Return ALL owners of a shape, ranked for failover: overlay-dialable rows
+// (protocol:libp2p + circuit multiaddr) first — a federated shape is served by
+// several instances and any one may be offline, so the resolver tries them in
+// turn — then genuinely-remote HTTP endpoints. A single loopback row (endpoint
+// 127.0.0.1, resolve_endpoint often a full loopback URL) is useless off-box on
+// its own; committing to it strands cross-host resolves (fleetActivityFeed →
+// empty metrics/boredom in the panel).
+async function lookupShapeOwners(shape: string): Promise<ShapeOwner[]> {
+  const cached = ownersCache.get(shape);
+  if (cached && Date.now() - cached.ts < OWNER_CACHE_TTL_MS) return cached.owners;
   try {
     const res = await fetch(DISCOVERY + '/resolve', {
       method: 'POST',
@@ -133,67 +157,60 @@ async function lookupShapeOwner(shape: string): Promise<ShapeOwner | null> {
       body: JSON.stringify({ pointer: { type: 'vesselCapability', shape } }),
       signal: AbortSignal.timeout(8_000),
     });
-    if (!res.ok) return null;
+    if (!res.ok) return [];
     const body: any = await res.json().catch(() => ({}));
     const vessels: any[] = body?.content?.vessels ?? body?.vessels ?? [];
     // Never route back to ourselves (the plugin's own shapes resolve locally).
     const idOf = (x: any) => String(x?.vesselId ?? x?.vessel_id ?? '');
-    const v = vessels.find((x) => x?.endpoint && idOf(x) !== VESSEL_ID && !idOf(x).startsWith('obsidian-'));
-    if (!v) return null;
-    // Remap the (possibly in-container) endpoint ourselves: the offset is
-    // derived from discovery's own mapped port, which stays correct when the
-    // substrate runs on shifted host ports. public_endpoint is only trusted
-    // when it isn't loopback-guessed (discovery computes it with a fixed
-    // +10000 that breaks on shifted layouts).
-    const pub = typeof v.public_endpoint === 'string' ? v.public_endpoint.replace(/\/+$/, '') : '';
-    const owner: ShapeOwner = {
-      base: pub && !/^https?:\/\/127\.0\.0\.1[:/]/.test(pub) ? pub : remapEndpoint(String(v.endpoint)),
-      resolvePath: String(v.resolve_endpoint || '/v2/impulses/resolve'),
-      vesselId: idOf(v) || 'unknown',
-      multiaddrs: Array.isArray(v.libp2p_multiaddr) ? v.libp2p_multiaddr.filter((m: unknown) => typeof m === 'string') : [],
-    };
-    ownerCache.set(shape, { owner, ts: Date.now() });
-    return owner;
+    const owners = vessels
+      .filter((x) => x?.endpoint && idOf(x) !== VESSEL_ID && !idOf(x).startsWith('obsidian-'))
+      .map((v) => ownerFromRow(v, idOf))
+      // multiaddr-bearing owners first (overlay failover), stable otherwise.
+      .sort((a, b) => (b.multiaddrs.length ? 1 : 0) - (a.multiaddrs.length ? 1 : 0));
+    ownersCache.set(shape, { owners, ts: Date.now() });
+    return owners;
   } catch {
-    return null;
+    return [];
   }
+}
+
+async function lookupShapeOwner(shape: string): Promise<ShapeOwner | null> {
+  return (await lookupShapeOwners(shape))[0] ?? null;
 }
 
 async function resolveViaDiscoveryHttp(pointer: any): Promise<any> {
   const shape = String(pointer?.type ?? '');
-  const owner = await lookupShapeOwner(shape);
-  if (!owner) return { error: `no vessel advertises shape "${shape}" in discovery (${DISCOVERY})` };
-  // Owners registered behind a federation transport advertise protocol:libp2p
-  // with a circuit multiaddr and only a peer-loopback HTTP endpoint — dial the
-  // overlay when we have a node; the HTTP path below stays as fallback.
-  if (vl && resolveViaLibp2pFn && owner.multiaddrs.length > 0) {
-    try {
-      const res = await resolveViaLibp2pFn(vl, owner.multiaddrs[0], pointer);
-      return { shape, resolved_by: owner.vesselId, ok: true, ...(typeof res === 'object' && res !== null ? res : { body: res }) };
-    } catch {
-      /* fall through to HTTP */
+  const owners = await lookupShapeOwners(shape);
+  if (owners.length === 0) return { error: `no vessel advertises shape "${shape}" in discovery (${DISCOVERY})` };
+  const errors: string[] = [];
+  // (1) Overlay failover: try each federated instance's circuit(s) until one
+  // answers. Several instances serve the same shape and some are offline.
+  if (vl && resolveViaLibp2pFn) {
+    for (const owner of owners) {
+      for (const ma of owner.multiaddrs) {
+        try {
+          const res = await resolveViaLibp2pFn(vl, ma, pointer);
+          return { shape, resolved_by: owner.vesselId, ok: true, ...(typeof res === 'object' && res !== null ? res : { body: res }) };
+        } catch (e) { errors.push(`overlay ${owner.vesselId}: ${String((e as Error)?.message ?? e)}`); }
+      }
     }
   }
-  // A federated owner (multiaddr advertised) is reachable only over the libp2p
-  // overlay; its HTTP `base` was laundered by remapEndpoint into a same-host
-  // loopback that is dead off-box (location independence, law 11). If the overlay
-  // dial above failed or `vl` was absent, do NOT fetch that loopback — fail with a
-  // clear error instead of silently hitting a URL that only works when co-located.
-  if (owner.multiaddrs.length > 0) {
-    return { error: `no overlay route to ${owner.vesselId}: federated vessel reachable only over the libp2p overlay (dial failed or unavailable); refusing to fetch host-laundered loopback ${owner.base}` };
+  // (2) HTTP fallback to genuinely-remote (non-loopback) endpoints only — never a
+  // host-laundered loopback (dead off-box, location independence / law 11).
+  for (const owner of owners) {
+    if (isLoopback(owner.base)) continue;
+    try {
+      const res = await fetch(owner.base + owner.resolvePath, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(API_KEY ? { Authorization: 'ApiKey ' + API_KEY } : {}) },
+        body: JSON.stringify({ impulse: { pointer } }),
+        signal: AbortSignal.timeout(30_000),
+      });
+      const body = await res.json().catch(() => ({}));
+      return { shape, resolved_by: owner.vesselId, status: res.status, ok: res.ok, ...(typeof body === 'object' && body !== null ? body : { body }) };
+    } catch (e) { errors.push(`http ${owner.vesselId} (${owner.base}): ${String((e as Error)?.message ?? e)}`); }
   }
-  try {
-    const res = await fetch(owner.base + owner.resolvePath, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...(API_KEY ? { Authorization: 'ApiKey ' + API_KEY } : {}) },
-      body: JSON.stringify({ impulse: { pointer } }),
-      signal: AbortSignal.timeout(30_000),
-    });
-    const body = await res.json().catch(() => ({}));
-    return { shape, resolved_by: owner.vesselId, status: res.status, ok: res.ok, ...(typeof body === 'object' && body !== null ? body : { body }) };
-  } catch (e) {
-    return { error: `resolve against ${owner.vesselId} (${owner.base}) failed: ${String((e as Error)?.message ?? e)}` };
-  }
+  return { error: `no reachable route for "${shape}" (${owners.length} candidate(s) tried): ${errors.slice(0, 4).join('; ')}` };
 }
 
 // ── libp2p transport (federated mode only) ──────────────────────────────────
