@@ -174,6 +174,14 @@ async function resolveViaDiscoveryHttp(pointer: any): Promise<any> {
       /* fall through to HTTP */
     }
   }
+  // A federated owner (multiaddr advertised) is reachable only over the libp2p
+  // overlay; its HTTP `base` was laundered by remapEndpoint into a same-host
+  // loopback that is dead off-box (location independence, law 11). If the overlay
+  // dial above failed or `vl` was absent, do NOT fetch that loopback — fail with a
+  // clear error instead of silently hitting a URL that only works when co-located.
+  if (owner.multiaddrs.length > 0) {
+    return { error: `no overlay route to ${owner.vesselId}: federated vessel reachable only over the libp2p overlay (dial failed or unavailable); refusing to fetch host-laundered loopback ${owner.base}` };
+  }
   try {
     const res = await fetch(owner.base + owner.resolvePath, {
       method: 'POST',
