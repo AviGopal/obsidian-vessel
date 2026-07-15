@@ -11,7 +11,6 @@ import { sendJson, sendError, parseJsonBody } from './server/routes';
 import { VesselClient } from './vessel-client';
 import { SidecarManager, sidecarResolve } from './sidecar-manager';
 import { ActivityAPIClient } from './api-client';
-import { SyncService } from './sync/index';
 import { ConceptSyncService, makeObsidianNoteWriter } from './sync/concept-sync';
 import { ConceptWritebackService } from './sync/concept-writeback';
 import { ConceptBusListener } from './sync/concept-bus-listener';
@@ -20,9 +19,7 @@ import { GraphBackboneSyncService } from './sync/graph-backbone-sync';
 import { VesselSyncService } from './sync/vessel-sync';
 import { syncImprovements } from './sync/improvement-sync';
 import { ConceptDbClient } from './concept-db-client';
-import { ExecutionCanvasBuilder } from './canvas/index';
 import { ConceptCanvasBuilder } from './canvas/concept-canvas';
-import { ExecutionFormatter, TemplateFormatter } from './formatters/index';
 import { StatusBarManager } from './status-bar';
 import { registerCommands } from './commands';
 import { resolve, listResolverTypes } from './resolvers/index';
@@ -110,7 +107,6 @@ export interface VesselStatus {
  * Architecture:
  * - HTTPServer: Exposes impulse resolution endpoints to external systems
  * - VesselClient: Registers with activity-api and maintains heartbeat
- * - SyncService: Syncs execution traces bidirectionally
  * - Resolvers: Type-specific impulse resolution (note, search, canvas, etc.)
  */
 export default class ObsidianVesselPlugin extends Plugin {
@@ -121,8 +117,6 @@ export default class ObsidianVesselPlugin extends Plugin {
   vesselClient: VesselClient | null = null;
   sidecarManager: SidecarManager | null = null;
   apiClient: ActivityAPIClient | null = null;
-  syncService: SyncService | null = null;
-  canvasBuilder: ExecutionCanvasBuilder | null = null;
   conceptCanvasBuilder: ConceptCanvasBuilder | null = null;
   statusBarManager: StatusBarManager | null = null;
 
@@ -157,8 +151,6 @@ export default class ObsidianVesselPlugin extends Plugin {
   uiFeedbackStore: UiFeedbackStore = new UiFeedbackStore(200);
 
   // Formatters
-  executionFormatter: ExecutionFormatter | null = null;
-  templateFormatter: TemplateFormatter | null = null;
 
   // State
   private startTime: number = Date.now();
@@ -233,11 +225,6 @@ export default class ObsidianVesselPlugin extends Plugin {
     // Settings must be loaded first as all other components depend on configuration
     await this.loadSettings();
 
-    // Phase 2: Initialize formatters
-    // Formatters are stateless utilities, safe to initialize early
-    this.executionFormatter = new ExecutionFormatter(this.settings);
-    this.templateFormatter = new TemplateFormatter();
-
     // Phase 3: Initialize API client
     // API client is needed for vessel registration and sync
     this.apiClient = new ActivityAPIClient(
@@ -266,20 +253,6 @@ export default class ObsidianVesselPlugin extends Plugin {
       this.startFederationSidecar();
     }
 
-    // Phase 7: Initialize sync service
-    // Sync service handles bidirectional execution trace synchronization
-    this.syncService = new SyncService(
-      this.app,
-      this.settings,
-      this.apiClient,
-      this,
-      this.executionFormatter!
-    );
-    await this.syncService.initialize();
-
-    // Phase 8: Initialize canvas builder
-    // Canvas builder creates visual execution graphs
-    this.canvasBuilder = new ExecutionCanvasBuilder(this.app, this.settings);
     this.conceptCanvasBuilder = new ConceptCanvasBuilder(this.app, this.settings);
 
     // Phase 8b: Initialize concept-db frontend (opt-in)
@@ -475,16 +448,6 @@ export default class ObsidianVesselPlugin extends Plugin {
       });
     }
 
-    // Phase 12: Initial sync (if configured)
-    // Delay to let Obsidian fully initialize its workspace
-    if (this.settings.syncOnStart) {
-      setTimeout(() => {
-        this.syncService?.syncHistorical().catch(error => {
-          console.error('[Obsidian Vessel] Initial sync failed:', error);
-        });
-      }, 2000);
-    }
-
     console.log('[Obsidian Vessel] Plugin loaded successfully');
     console.log(`[Obsidian Vessel] Registered resolver types: ${listResolverTypes().join(', ')}`);
   }
@@ -552,9 +515,6 @@ export default class ObsidianVesselPlugin extends Plugin {
       console.error('[Obsidian Vessel] Error during deregistration:', error);
     }
 
-    // Cleanup sync service (close connections)
-    this.syncService?.cleanup();
-
     // Stop concept-db frontend services
     this.conceptBusListener?.stop();
     this.conceptWriteback?.stop();
@@ -598,11 +558,7 @@ export default class ObsidianVesselPlugin extends Plugin {
     this.sidecarManager = null;
     this.vesselClient = null;
     this.apiClient = null;
-    this.syncService = null;
-    this.canvasBuilder = null;
     this.statusBarManager = null;
-    this.executionFormatter = null;
-    this.templateFormatter = null;
 
     console.log('[Obsidian Vessel] Plugin unloaded');
   }
@@ -622,11 +578,6 @@ export default class ObsidianVesselPlugin extends Plugin {
    */
   async saveSettings() {
     await this.saveData(this.settings);
-
-    // Notify services of settings change
-    if (this.executionFormatter) {
-      this.executionFormatter = new ExecutionFormatter(this.settings);
-    }
   }
 
   /**
@@ -939,14 +890,13 @@ export default class ObsidianVesselPlugin extends Plugin {
       try {
         const activeFile = this.app.workspace.getActiveFile()?.path ?? null;
         const syncStatus = this.conceptSync?.getStatus();
-        const realtimeSyncStatus = this.syncService?.getStatus();
-        const goalLeaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_GOAL_DISPATCH);
+          const goalLeaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_GOAL_DISPATCH);
         sendJson(res, {
           activeFile,
           lastSyncAt: syncStatus?.lastPullAt ?? null,
           totalConceptNotes: syncStatus?.syncedCount ?? 0,
           serverPort: this.settings.serverPort,
-          websocketConnected: realtimeSyncStatus?.realtimeConnected ?? false,
+          websocketConnected: this.vesselClient?.isRegistered() ?? false,
           goalDispatchOpen: goalLeaves.length > 0,
         });
       } catch (err) {
@@ -1087,17 +1037,6 @@ export default class ObsidianVesselPlugin extends Plugin {
 
     // Re-register
     await this.registerVessel();
-
-    // Re-initialize sync service
-    this.syncService?.cleanup();
-    this.syncService = new SyncService(
-      this.app,
-      this.settings,
-      this.apiClient,
-      this,
-      this.executionFormatter!
-    );
-    await this.syncService.initialize();
 
     console.log('[Obsidian Vessel] Reconnection complete');
   }
@@ -1341,14 +1280,12 @@ export default class ObsidianVesselPlugin extends Plugin {
    * Get current vessel status
    */
   getStatus(): VesselStatus {
-    const syncStatus = this.syncService?.getStatus();
-
     return {
       apiConnected: this.vesselClient?.isRegistered() || false,
-      realtimeConnected: syncStatus?.realtimeConnected || false,
+      realtimeConnected: false,
       serverRunning: this.httpServer !== null,
-      lastSyncedAt: syncStatus?.lastSyncedAt || null,
-      syncedCount: syncStatus?.syncedCount || 0,
+      lastSyncedAt: null,
+      syncedCount: 0,
       resolutionCount: this.resolutionCount,
       syncing: this.syncing
     };
@@ -1366,212 +1303,6 @@ export default class ObsidianVesselPlugin extends Plugin {
    */
   setSyncing(syncing: boolean) {
     this.syncing = syncing;
-  }
-
-  /**
-   * Create a note from an execution trace
-   *
-   * @param executionId - The execution trace ID
-   * @returns The created file, or null if failed
-   */
-  async createNoteFromExecution(executionId: string): Promise<TFile | null> {
-    if (!this.apiClient || !this.executionFormatter) {
-      new Notice('API client or formatter not initialized');
-      return null;
-    }
-
-    try {
-      // Fetch execution trace from API
-      const execution = await this.apiClient.getExecutionTrace(executionId);
-      if (!execution) {
-        new Notice(`Execution not found: ${executionId}`);
-        return null;
-      }
-
-      // Format as markdown
-      const content = this.executionFormatter.format(execution);
-
-      // Build file path with date organization
-      const date = new Date(execution.executed_at).toISOString().split('T')[0];
-      const path = `${this.settings.executionNotesFolder}/${date}/${executionId}.md`;
-
-      // Ensure folder exists
-      const folderPath = path.substring(0, path.lastIndexOf('/'));
-      await this.ensureFolderExists(folderPath);
-
-      // Create the file
-      const file = await this.app.vault.create(path, content);
-
-      // Open the new file
-      await this.app.workspace.openLinkText(path, '', true);
-
-      new Notice(`Created note: ${file.basename}`);
-      return file;
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error('[Obsidian Vessel] Failed to create note:', error);
-      new Notice(`Failed to create note: ${errorMessage}`);
-      return null;
-    }
-  }
-
-  /**
-   * Create a note from an activity template
-   *
-   * @param template - The activity template
-   * @returns The created/updated file, or null if failed
-   */
-  async createNoteFromTemplate(template: ActivityTemplate): Promise<TFile | null> {
-    if (!this.templateFormatter) {
-      new Notice('Template formatter not initialized');
-      return null;
-    }
-
-    try {
-      // Format as markdown
-      const content = this.templateFormatter.format(template);
-
-      // Build file path
-      const path = `${this.settings.activityTemplatesFolder}/${template.activity_id}.md`;
-
-      // Ensure folder exists
-      const folderPath = path.substring(0, path.lastIndexOf('/'));
-      await this.ensureFolderExists(folderPath);
-
-      // Check if file already exists
-      const existing = this.app.vault.getAbstractFileByPath(path);
-      if (existing instanceof TFile) {
-        // Update existing file
-        await this.app.vault.modify(existing, content);
-        await this.app.workspace.openLinkText(path, '', true);
-        new Notice(`Updated template note: ${existing.basename}`);
-        return existing;
-      }
-
-      // Create new file
-      const file = await this.app.vault.create(path, content);
-      await this.app.workspace.openLinkText(path, '', true);
-      new Notice(`Created template note: ${file.basename}`);
-      return file;
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error('[Obsidian Vessel] Failed to create template note:', error);
-      new Notice(`Failed to create template note: ${errorMessage}`);
-      return null;
-    }
-  }
-
-  /**
-   * Open the execution canvas view
-   * Shows recent executions as a visual graph
-   */
-  async openExecutionCanvas(): Promise<void> {
-    if (!this.canvasBuilder || !this.apiClient) {
-      new Notice('Canvas builder or API client not initialized');
-      return;
-    }
-
-    try {
-      // Fetch recent executions
-      const response = await this.apiClient.listExecutionTraces({ limit: 20 });
-
-      if (!response?.executions || response.executions.length === 0) {
-        new Notice('No execution traces found');
-        return;
-      }
-
-      // Build canvas
-      await this.canvasBuilder.buildExecutionCanvas(response.executions);
-
-      // Open canvas file
-      const path = `${this.settings.canvasFolder}/executions.canvas`;
-      await this.app.workspace.openLinkText(path, '', true);
-
-      new Notice(`Opened execution canvas with ${response.executions.length} traces`);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error('[Obsidian Vessel] Failed to open canvas:', error);
-      new Notice(`Failed to open canvas: ${errorMessage}`);
-    }
-  }
-
-  /**
-   * Open the composition canvas view
-   * Shows activity relationships and impulse flows as a visual graph
-   */
-  async openCompositionCanvas(): Promise<void> {
-    if (!this.canvasBuilder || !this.apiClient) {
-      new Notice('Canvas builder or API client not initialized');
-      return;
-    }
-
-    try {
-      // Fetch composition graph
-      const graph = await this.apiClient.getCompositionGraph({ limit: 50 });
-
-      if (!graph?.nodes || graph.nodes.length === 0) {
-        new Notice('No composition graph data found');
-        return;
-      }
-
-      // Build canvas
-      await this.canvasBuilder.buildCompositionCanvas(graph);
-
-      // Open canvas file
-      const path = `${this.settings.canvasFolder}/composition-graph.canvas`;
-      await this.app.workspace.openLinkText(path, '', true);
-
-      new Notice(`Opened composition canvas with ${graph.totalNodes} activities and ${graph.totalEdges} relationships`);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error('[Obsidian Vessel] Failed to open composition canvas:', error);
-      new Notice(`Failed to open composition canvas: ${errorMessage}`);
-    }
-  }
-
-  /**
-   * Ensure a folder path exists, creating intermediate folders as needed
-   */
-  private async ensureFolderExists(folderPath: string): Promise<void> {
-    const parts = folderPath.split('/').filter(p => p.length > 0);
-    let currentPath = '';
-
-    for (const part of parts) {
-      currentPath = currentPath ? `${currentPath}/${part}` : part;
-      const existing = this.app.vault.getAbstractFileByPath(currentPath);
-
-      if (!existing) {
-        try {
-          await this.app.vault.createFolder(currentPath);
-        } catch (error) {
-          // Folder might have been created by another process
-          if (!this.app.vault.getAbstractFileByPath(currentPath)) {
-            throw error;
-          }
-        }
-      }
-    }
-  }
-
-  /**
-   * Manually trigger a sync
-   */
-  async triggerSync(): Promise<void> {
-    if (!this.syncService) {
-      new Notice('Sync service not initialized');
-      return;
-    }
-
-    this.syncing = true;
-    try {
-      await this.syncService.syncHistorical();
-      new Notice('Sync completed successfully');
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      new Notice(`Sync failed: ${errorMessage}`);
-    } finally {
-      this.syncing = false;
-    }
   }
 
   /**

@@ -244,49 +244,6 @@ export class ObsidianVesselSettingTab extends PluginSettingTab {
     });
 
     new Setting(containerEl)
-      .setName('Execution Notes Folder')
-      .setDesc('Folder where execution trace notes will be created')
-      .addText(text => text
-        .setPlaceholder(DEFAULT_SETTINGS.executionNotesFolder)
-        .setValue(this.plugin.settings.executionNotesFolder)
-        .onChange(async (value) => {
-          this.plugin.settings.executionNotesFolder = value;
-          await this.plugin.saveSettings();
-        }));
-
-    new Setting(containerEl)
-      .setName('Activity Templates Folder')
-      .setDesc('Folder where activity template notes will be created')
-      .addText(text => text
-        .setPlaceholder(DEFAULT_SETTINGS.activityTemplatesFolder)
-        .setValue(this.plugin.settings.activityTemplatesFolder)
-        .onChange(async (value) => {
-          this.plugin.settings.activityTemplatesFolder = value;
-          await this.plugin.saveSettings();
-        }));
-
-    new Setting(containerEl)
-      .setName('Canvas Folder')
-      .setDesc('Folder where generated canvases will be stored')
-      .addText(text => text
-        .setPlaceholder(DEFAULT_SETTINGS.canvasFolder)
-        .setValue(this.plugin.settings.canvasFolder)
-        .onChange(async (value) => {
-          this.plugin.settings.canvasFolder = value;
-          await this.plugin.saveSettings();
-        }));
-
-    new Setting(containerEl)
-      .setName('Sync on Start')
-      .setDesc('Automatically sync execution data when Obsidian starts')
-      .addToggle(toggle => toggle
-        .setValue(this.plugin.settings.syncOnStart)
-        .onChange(async (value) => {
-          this.plugin.settings.syncOnStart = value;
-          await this.plugin.saveSettings();
-        }));
-
-    new Setting(containerEl)
       .setName('Sync Interval')
       .setDesc('Minutes between automatic syncs (1-60)')
       .addSlider(slider => slider
@@ -435,33 +392,6 @@ export class ObsidianVesselSettingTab extends PluginSettingTab {
             new Notice('All settings are valid!');
           } else {
             new Notice(`Settings errors:\n${errors.join('\n')}`);
-          }
-        }));
-
-    new Setting(containerEl)
-      .setName('Sync Now')
-      .setDesc('Manually trigger a sync with the Activity API')
-      .addButton(button => button
-        .setButtonText('Sync')
-        .setCta()
-        .onClick(async () => {
-          button.setDisabled(true);
-          button.setButtonText('Syncing...');
-
-          try {
-            if (typeof this.plugin.triggerSync === 'function') {
-              await this.plugin.triggerSync();
-              new Notice('Sync completed');
-              this.display();
-            } else {
-              new Notice('Sync not available');
-            }
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            new Notice(`Sync failed: ${message}`);
-          } finally {
-            button.setDisabled(false);
-            button.setButtonText('Sync');
           }
         }));
 

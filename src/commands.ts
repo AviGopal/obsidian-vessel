@@ -6,100 +6,9 @@
 
 import { Notice, Plugin } from 'obsidian';
 import type ObsidianVesselPlugin from './main';
-import { VesselStatusModal } from './modals/vessel-status-modal';
-import { ExecutionIdModal } from './modals/execution-id-modal';
-import { ExecutionSearchModal } from './modals/execution-search-modal';
-import { TemplatesBrowserModal } from './modals/templates-browser-modal';
 import { sidecarResolveBody } from './sidecar-manager';
 
 export function registerCommands(plugin: ObsidianVesselPlugin): void {
-
-  // Force Sync Command
-  plugin.addCommand({
-    id: 'obsidian-force-sync',
-    name: 'Obsidian: Force sync executions',
-    icon: 'refresh-cw',
-    callback: async () => {
-      if (!plugin.syncService) {
-        new Notice('Sync service not initialized');
-        return;
-      }
-      const notice = new Notice('Syncing executions...', 0);
-      try {
-        const count = await plugin.syncService.syncHistorical((current, total) => {
-          notice.setMessage(`Syncing ${current}/${total}...`);
-        });
-        notice.setMessage(`Synced ${count} executions`);
-        setTimeout(() => notice.hide(), 3000);
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        notice.setMessage(`Sync failed: ${errorMessage}`);
-        setTimeout(() => notice.hide(), 5000);
-      }
-    }
-  });
-
-  // Open Live Canvas
-  plugin.addCommand({
-    id: 'obsidian-open-live-canvas',
-    name: 'Obsidian: Open execution canvas',
-    icon: 'layout-dashboard',
-    callback: async () => {
-      await plugin.openExecutionCanvas();
-    }
-  });
-
-  // Open Composition Graph Canvas
-  plugin.addCommand({
-    id: 'obsidian-open-composition-canvas',
-    name: 'Obsidian: Show activity composition graph',
-    icon: 'network',
-    callback: async () => {
-      await plugin.openCompositionCanvas();
-    }
-  });
-
-  // Show Vessel Status
-  plugin.addCommand({
-    id: 'obsidian-vessel-status',
-    name: 'Obsidian: Show vessel status',
-    icon: 'activity',
-    callback: () => {
-      new VesselStatusModal(plugin.app, plugin).open();
-    }
-  });
-
-  // Create Note from Execution ID
-  plugin.addCommand({
-    id: 'obsidian-create-execution-note',
-    name: 'Obsidian: Create note from execution ID',
-    icon: 'file-plus',
-    callback: async () => {
-      new ExecutionIdModal(plugin.app, async (executionId) => {
-        await plugin.createNoteFromExecution(executionId);
-      }).open();
-    }
-  });
-
-  // Search Executions
-  plugin.addCommand({
-    id: 'obsidian-search-executions',
-    name: 'Obsidian: Search executions',
-    icon: 'search',
-    callback: () => {
-      new ExecutionSearchModal(plugin.app, plugin).open();
-    }
-  });
-
-  // Browse Templates
-  plugin.addCommand({
-    id: 'obsidian-browse-templates',
-    name: 'Obsidian: Browse activity templates',
-    icon: 'layout-template',
-    callback: () => {
-      new TemplatesBrowserModal(plugin.app, plugin).open();
-    }
-  });
 
   // Reconnect to API
   plugin.addCommand({
@@ -117,26 +26,6 @@ export function registerCommands(plugin: ObsidianVesselPlugin): void {
         notice.setMessage(`Reconnection failed: ${errorMessage}`);
         setTimeout(() => notice.hide(), 5000);
       }
-    }
-  });
-
-  // Show Recent Executions
-  plugin.addCommand({
-    id: 'obsidian-recent-executions',
-    name: 'Obsidian: Show recent executions',
-    icon: 'clock',
-    callback: () => {
-      new ExecutionSearchModal(plugin.app, plugin, { recent: true }).open();
-    }
-  });
-
-  // Show Failed Executions
-  plugin.addCommand({
-    id: 'obsidian-failed-executions',
-    name: 'Obsidian: Show failed executions',
-    icon: 'alert-circle',
-    callback: () => {
-      new ExecutionSearchModal(plugin.app, plugin, { filter: 'failed' }).open();
     }
   });
 

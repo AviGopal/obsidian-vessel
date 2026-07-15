@@ -23,16 +23,13 @@ export interface ObsidianVesselSettings {
   // ==========================================================================
 
   /** Folder for execution trace notes */
-  executionNotesFolder: string;
 
   /** Folder for activity template notes */
-  activityTemplatesFolder: string;
 
   /** Folder for generated canvases */
   canvasFolder: string;
 
   /** Whether to sync on plugin load */
-  syncOnStart: boolean;
 
   /** Interval between automatic syncs (in minutes) */
   syncIntervalMinutes: number;
@@ -98,20 +95,16 @@ export interface ObsidianVesselSettings {
   // ==========================================================================
 
   /** Include tool call details in execution notes */
-  includeToolCalls: boolean;
 
   /** Include file diffs in execution notes */
-  includeDiffs: boolean;
 
   // ==========================================================================
   // Canvas Settings
   // ==========================================================================
 
   /** Layout algorithm for activity canvases */
-  canvasLayout: 'hierarchical' | 'force-directed' | 'timeline' | 'radial';
 
   /** Maximum nodes per canvas */
-  maxNodesPerCanvas: number;
 
   // ==========================================================================
   // WebSocket Settings
@@ -268,10 +261,7 @@ export const DEFAULT_SETTINGS: ObsidianVesselSettings = {
   isHumanVessel: true,
 
   // Sync preferences
-  executionNotesFolder: 'Obsidian/Executions',
-  activityTemplatesFolder: 'Obsidian/Templates',
   canvasFolder: 'Obsidian/Canvases',
-  syncOnStart: true,
   syncIntervalMinutes: 5,
   syncBatchSize: 50,
   preserveUserContent: true,
@@ -282,12 +272,8 @@ export const DEFAULT_SETTINGS: ObsidianVesselSettings = {
   allowedOrigins: ['http://localhost:*', 'http://127.0.0.1:*'],
 
   // Note formatting
-  includeToolCalls: true,
-  includeDiffs: true,
 
   // Canvas
-  canvasLayout: 'hierarchical',
-  maxNodesPerCanvas: 100,
 
   // WebSocket
   websocketUrl: '',  // Will be derived from activityApiUrl if empty
@@ -355,8 +341,6 @@ export function validateSettings(settings: ObsidianVesselSettings): string[] {
 
   // Validate folder paths (must not start with / or contain ..)
   const folderPaths = [
-    settings.executionNotesFolder,
-    settings.activityTemplatesFolder,
     settings.canvasFolder,
   ];
 
