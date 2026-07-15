@@ -195,10 +195,16 @@ async function resolveViaDiscoveryHttp(pointer: any): Promise<any> {
       }
     }
   }
-  // (2) HTTP fallback to genuinely-remote (non-loopback) endpoints only — never a
-  // host-laundered loopback (dead off-box, location independence / law 11).
+  // (2) HTTP fallback. Skip a loopback base ONLY when the owner also has an
+  // overlay (multiaddr) route — that owner is overlay-only (its 127.0.0.1 is a
+  // host-laundered, off-box-dead address) and was already tried in the overlay
+  // loop above. A loopback owner with NO multiaddrs is a host-published HTTP
+  // endpoint (e.g. goal-host at 127.0.0.1:18210 on a same-machine host); it is
+  // genuinely reachable and is the ONLY route to that shape, so it must be
+  // dialed rather than discarded. Without this, multi-owner shapes like
+  // fleetActivityFeed resolve to nothing and the panel's metrics/pulse go blank.
   for (const owner of owners) {
-    if (isLoopback(owner.base)) continue;
+    if (isLoopback(owner.base) && owner.multiaddrs.length > 0) continue;
     try {
       const res = await fetch(owner.base + owner.resolvePath, {
         method: 'POST',
