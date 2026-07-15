@@ -212,7 +212,7 @@ export class VesselClient {
 
     const sidecarAddrs = await this.fetchSidecarMultiaddr();
     if (sidecarAddrs.length > 0) {
-      (registration as unknown as Record<string, unknown>)['libp2p_multiaddr'] = sidecarAddrs[0];
+      (registration as unknown as Record<string, unknown>)['libp2p_multiaddr'] = sidecarAddrs;
       (registration as unknown as Record<string, unknown>)['protocol'] = 'libp2p';
     }
 
