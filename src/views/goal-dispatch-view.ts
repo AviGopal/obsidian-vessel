@@ -1740,6 +1740,9 @@ export class GoalDispatchView extends ItemView {
       : after.filter((s) => !beforeSet.has(s));
     if (after.length === 0 && added.length === 0) return;
     const wrap = parent.createDiv('sub-pool-delta');
+    // Contribution stated as a sentence; the chips remain as annotations.
+    const sentence = poolDeltaSentence(before, after);
+    if (sentence) wrap.createDiv({ cls: 'sub-pool-sentence', text: sentence });
     const chipTitle = (shape: string): string => { const p = producers?.get(shape); return p ? shape + ' — produced by ' + p : shape; };
     if (added.length > 0) {
       const chips = wrap.createDiv('sub-fleet-chips');
