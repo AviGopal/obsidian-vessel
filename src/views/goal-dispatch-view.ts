@@ -1472,6 +1472,23 @@ export class GoalDispatchView extends ItemView {
     } else if (running.length > 0 && emptyNote) {
       emptyNote.remove();
     }
+
+    // Runner group head: local in-flight cards all execute on goal-host;
+    // the hue key matches the pulse runner chips.
+    let groupHead = el.querySelector(':scope > .sub-group-head') as HTMLElement | null;
+    if (running.length > 0 && !groupHead) {
+      groupHead = el.createDiv({ cls: 'sub-group-head' });
+      groupHead.createSpan({ cls: 'sub-runner-dot is-goalhost' });
+      groupHead.createSpan({ text: 'goal-host' });
+      groupHead.createSpan({ cls: 'sub-group-n' });
+    } else if (running.length === 0 && groupHead) {
+      groupHead.remove();
+      groupHead = null;
+    }
+    if (groupHead) {
+      const n = groupHead.querySelector('.sub-group-n') as HTMLElement | null;
+      if (n) n.setText(String(running.length));
+    }
     const seen = new Set<string>();
     for (const d of running) {
       const key = String(d.dispatchId ?? d.id ?? '');
