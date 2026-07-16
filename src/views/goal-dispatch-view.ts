@@ -386,6 +386,12 @@ export class GoalDispatchView extends ItemView {
     contentEl.empty();
     contentEl.addClass('obsidian-goal-dispatch-view');
 
+    // Identity strip: which surface this panel is, at a glance.
+    const panelHead = contentEl.createDiv('sub-panel-head');
+    panelHead.createSpan({ cls: 'sub-panel-dot' });
+    panelHead.createSpan({ cls: 'sub-panel-title', text: 'Substrate' });
+    panelHead.createSpan({ cls: 'sub-panel-sub', text: `this vessel · ${this.app.vault.getName()}` });
+
     // ── Omnibox: single-line input, expands to multiline on focus ──
     const omnibox = contentEl.createDiv('sub-omnibox');
     this.omniboxWrapEl = omnibox;
