@@ -185,11 +185,12 @@ export class VesselClient {
     this.vaultPath = vaultPath;
     this.serverPort = port;
 
-    const { vesselId, vesselName, discoveryVesselEndpoint, advertisedHost, shapes, apiKey } = this.settings;
+    const { vesselId, vesselName, shapes, apiKey } = this.settings;
 
     // Endpoint the SUBSTRATE (in the container) uses to reach this host-side
-    // plugin: the container->host gateway, not localhost.
-    const endpoint = `http://${advertisedHost || 'host.docker.internal'}:${port}`;
+    // plugin: the container->host gateway, not localhost. On a federated spoke
+    // the sidecar's libp2p multiaddr (attached below) is the real reach path.
+    const endpoint = `http://host.docker.internal:${port}`;
 
     // Discovery RegisterRequest. systemVessel:true is REQUIRED or the substrate's
     // org-scoped vesselRegistry query hides it (the original bug). Resolve
@@ -272,7 +273,7 @@ export class VesselClient {
   }
 
   private async fetchSidecarMultiaddr(): Promise<string[]> {
-    if (!this.settings.enableFederationSidecar) return [];
+    if (!this.settings.federationRelayMultiaddr) return [];
     const healthUrl = 'http://127.0.0.1:' + String(getActiveSidecarPort(this.settings)) + '/health';
     try {
       const response = await this.fetchWithTimeout(healthUrl, { method: 'GET' }, 2000);
@@ -295,7 +296,7 @@ export class VesselClient {
       return;
     }
 
-    const { vesselId, discoveryVesselEndpoint, apiKey } = this.settings;
+    const { vesselId, apiKey } = this.settings;
 
     this.logger('info', 'Deregistering vessel', { vesselId });
 
@@ -371,7 +372,7 @@ export class VesselClient {
       return;
     }
 
-    const { vesselId, vesselName, discoveryVesselEndpoint, advertisedHost, shapes, apiKey } = this.settings;
+    const { vesselId, vesselName, shapes, apiKey } = this.settings;
 
     try {
       // Re-registering with discovery is idempotent and refreshes the TTL while
@@ -382,7 +383,7 @@ export class VesselClient {
         vesselId,
         vesselName,
         version: '0.1.0',
-        endpoint: `http://${advertisedHost || 'host.docker.internal'}:${this.serverPort}`,
+        endpoint: `http://host.docker.internal:${this.serverPort}`,
         shapes,
         protocol: 'http',
         systemVessel: true,
@@ -493,7 +494,6 @@ export class VesselClient {
     const needsReregister =
       newSettings.vesselId !== this.settings.vesselId ||
       newSettings.vesselName !== this.settings.vesselName ||
-      newSettings.activityApiUrl !== this.settings.activityApiUrl ||
       JSON.stringify(newSettings.shapes) !== JSON.stringify(this.settings.shapes) ||
       newSettings.resolveTimeoutMs !== this.settings.resolveTimeoutMs;
 
@@ -515,10 +515,10 @@ export class VesselClient {
    * Fetch with timeout support
    */
   /**
-   * Discovery request, sidecar-first: routes over the federation overlay via the
-   * sidecar's /outbound/http (service:'discovery') so a spoke needs no configured
-   * discovery host:port; falls back to the direct discovery endpoint only when the
-   * sidecar is down. Adapts SidecarHttpResult to fetchWithTimeout's response shape.
+   * Discovery request via the single sidecar conduit: routes over the
+   * federation overlay via the sidecar's /outbound/http (service:'discovery')
+   * so no discovery host:port is ever configured. A down sidecar yields a 503
+   * synthetic response. Adapts SidecarHttpResult to the response shape.
    */
   private async discoveryFetch(
     path: string,
@@ -531,16 +531,24 @@ export class VesselClient {
       path,
       body: options.body ? JSON.parse(options.body as string) : undefined,
     }, timeoutMs);
-    if (via) {
+    if (!via) {
+      // Single conduit: no direct discovery endpoint. A down sidecar means the
+      // registration simply cannot land this cycle; the caller retries.
       return {
-        ok: via.ok,
-        status: via.status,
-        statusText: String(via.status),
-        text: () => Promise.resolve(typeof via.body === 'string' ? via.body : JSON.stringify(via.body)),
-        json: () => Promise.resolve(via.body),
+        ok: false,
+        status: 503,
+        statusText: 'sidecar conduit unavailable',
+        text: () => Promise.resolve('sidecar conduit unavailable'),
+        json: () => Promise.resolve({}),
       };
     }
-    return this.fetchWithTimeout(`${this.settings.discoveryVesselEndpoint}${path}`, options, timeoutMs);
+    return {
+      ok: via.ok,
+      status: via.status,
+      statusText: String(via.status),
+      text: () => Promise.resolve(typeof via.body === 'string' ? via.body : JSON.stringify(via.body)),
+      json: () => Promise.resolve(via.body),
+    };
   }
 
   private async fetchWithTimeout(

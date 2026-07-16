@@ -208,7 +208,7 @@ export class ObsidianVesselSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Test Connection')
-      .setDesc('Verify connection to the Activity API')
+      .setDesc('Verify the federation sidecar conduit is up (the plugin\'s single substrate path)')
       .addButton(button => button
         .setButtonText('Test')
         .setCta()
@@ -217,11 +217,11 @@ export class ObsidianVesselSettingTab extends PluginSettingTab {
           button.setButtonText('Testing...');
 
           try {
-            const response = await fetch(`${this.plugin.settings.activityApiUrl}/health`);
+            const response = await fetch(`http://127.0.0.1:${this.plugin.settings.federationHealthPort}/health`);
             if (response.ok) {
-              new Notice('Connection successful!');
+              new Notice('Sidecar conduit is up!');
             } else {
-              new Notice(`Connection failed: HTTP ${response.status}`);
+              new Notice(`Sidecar conduit check failed: HTTP ${response.status}`);
             }
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);

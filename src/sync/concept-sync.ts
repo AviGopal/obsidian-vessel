@@ -160,7 +160,7 @@ export class ConceptSyncService {
   async start(): Promise<void> {
     if (this.timer) return;
     this.logger('info', 'starting concept-sync', {
-      endpoint: this.settings.conceptDbEndpoint,
+      endpoint: 'sidecar conduit (concept shape)',
       intervalSec: this.settings.conceptDbSyncIntervalSec,
     });
     // first run; swallow errors so the interval still installs

@@ -9,7 +9,6 @@
  */
 
 import { sidecarResolveAuto } from '../sidecar-manager';
-import { requestUrl } from 'obsidian';
 export type UiFeedbackSurface = 'panel' | 'goal-note' | 'improvement-note';
 
 export type UiFeedbackKind =
@@ -72,30 +71,20 @@ export class UiFeedbackStore {
  * enters the gap → scenario → drafter funnel.
  *
  * Contract (verified against dev-vessel resolvers, e.g.
- * db-contention-observer.ts): POST {devVesselEndpoint}/v2/impulses/resolve
- * with envelope { impulse: { pointer: { type: "substrateGap_write", gap:
- * { id, category, source, summary, detected_at, status,
- *   classification_metadata } } } }.
+ * db-contention-observer.ts): a shaped resolve of { type: "substrateGap_write",
+ * gap: { id, category, source, summary, detected_at, status,
+ *   classification_metadata } } routed through the single sidecar conduit.
  * Gap id key: `ui-feedback-<region>-<kind>` (stable per region+kind so
  * repeat complaints upsert rather than flood).
- *
- * STUB: implementation is authored by the substrate (feature_compose).
  */
 export async function forwardUiFeedbackToGapStore(
   fb: UiFeedback,
-  devVesselEndpoint: string,
-  apiKey?: string,
 ): Promise<ForwardResult> {
   const slug = fb.region
     .replace(/[^a-zA-Z0-9_-]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 60);
   const gapId = `ui-feedback-${slug}-${fb.kind}`;
-  const url = `${devVesselEndpoint.replace(/\/+$/, '')}/v2/impulses/resolve`;
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (apiKey) {
-    headers['Authorization'] = `ApiKey ${apiKey}`;
-  }
   const pointer = {
         type: 'substrateGap_write',
         gap: {
@@ -114,25 +103,13 @@ export async function forwardUiFeedbackToGapStore(
           },
         },
   };
-  // Overlay-first: route the shaped gap write over the federation sidecar
+  // Single conduit: route the shaped gap write over the federation sidecar
   // (/outbound/resolve) so it works on a spoke without a reachable dev-vessel
-  // host:port; fall back to the direct endpoint only when the sidecar is down.
+  // host:port. A null result means the sidecar is down and the write did not
+  // land this attempt.
   const via = await sidecarResolveAuto(pointer, 15_000);
   if (via != null) {
     return { forwarded: true, status: 200, gapId };
   }
-  const body = JSON.stringify({ impulse: { pointer } });
-  try {
-    const resp = await requestUrl({
-      url,
-      method: 'POST',
-      headers,
-      body,
-      throw: false,
-    });
-    return { forwarded: resp.status < 300, status: resp.status, gapId };
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { forwarded: false, status: message, gapId };
-  }
+  return { forwarded: false, status: 'sidecar conduit unavailable', gapId };
 }

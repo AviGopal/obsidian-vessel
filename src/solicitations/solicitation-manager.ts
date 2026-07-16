@@ -1,4 +1,3 @@
-import { requestUrl } from 'obsidian';
 import { sidecarResolveOutcome } from '../sidecar-manager';
 /**
  * Solicitation manager (WS5: the human is a resolver).
@@ -38,13 +37,11 @@ export class SolicitationManager {
   private pending = new Map<string, PendingSolicitation>();
   private listeners = new Set<SolicitationListener>();
   private lastHeartbeatAt = new Map<string, number>();
-  private goalHostEndpoint: string;
-  private apiKey: string;
   private notify: (message: string) => void;
 
-  constructor(opts: { goalHostEndpoint: string; apiKey?: string; notify?: (message: string) => void }) {
-    this.goalHostEndpoint = opts.goalHostEndpoint.replace(/\/+$/, '');
-    this.apiKey = opts.apiKey ?? '';
+  // The single sidecar conduit holds the endpoint and API key; every write
+  // routes through sidecarResolveOutcome, so this manager needs neither.
+  constructor(opts: { notify?: (message: string) => void } = {}) {
     this.notify = opts.notify ?? (() => {});
   }
 
@@ -88,34 +85,16 @@ export class SolicitationManager {
   }
 
   /**
-   * Deliver a write shape to goal-host. Primary route: a shaped resolve
-   * through the federation sidecar (crosses the overlay — the answer travels
-   * even when goal-host is only libp2p-reachable). The direct goal-host
-   * /resolve POST survives as an explicitly LOGGED fallback for sidecar-down
-   * local setups (requestUrl, not fetch: the app://obsidian.md renderer is
-   * CORS-blocked against vessels that serve no CORS headers).
-   * Returns an HTTP-like status (0 on transport failure) so callers can
-   * distinguish "solicitation gone server-side" (404) from unreachable.
+   * Deliver a write shape to goal-host through the single sidecar conduit: a
+   * shaped resolve that crosses the overlay (the answer travels even when
+   * goal-host is only libp2p-reachable). Returns an HTTP-like status (0 on
+   * transport failure) so callers can distinguish "solicitation gone
+   * server-side" (404) from unreachable.
    */
   private async post(shape: string, body: Record<string, unknown>): Promise<{ ok: boolean; status: number }> {
     const outcome = await sidecarResolveOutcome({ type: shape, ...body });
     if (outcome !== null) return { ok: outcome.ok, status: outcome.status };
-    console.warn(`[SolicitationManager] sidecar resolve unavailable for ${shape} — engaging direct goal-host fallback`);
-    try {
-      const resp = await requestUrl({
-        url: `${this.goalHostEndpoint}/resolve`,
-        method: 'POST',
-        throw: false,
-        headers: {
-          'Content-Type': 'application/json',
-          ...(this.apiKey ? { Authorization: `ApiKey ${this.apiKey}` } : {}),
-        },
-        body: JSON.stringify({ type: shape, ...body }),
-      });
-      return { ok: resp.status >= 200 && resp.status < 300, status: resp.status };
-    } catch {
-      return { ok: false, status: 0 };
-    }
+    return { ok: false, status: 0 };
   }
 
   /**
@@ -181,8 +160,9 @@ export class SolicitationManager {
     for (const sol of [...this.pending.values()]) {
       if (sol.status !== 'pending') continue;
       if (sol.dispatchId) {
-        // Primary: the goalWalkState shape over the sidecar (overlay-capable);
-        // the direct /executions/:id GET survives as a LOGGED local fallback.
+        // The goalWalkState shape over the single sidecar conduit
+        // (overlay-capable). When the sidecar is down, keep the card and retry
+        // on the next sweep.
         const oc = await sidecarResolveOutcome({ type: 'goalWalkState', dispatchId: sol.dispatchId });
         if (oc !== null) {
           if (oc.status === 404) {
@@ -197,20 +177,6 @@ export class SolicitationManager {
           }
           continue;
         }
-        console.warn('[SolicitationManager] sidecar resolve unavailable for goalWalkState — engaging direct goal-host fallback');
-        try {
-          const r = await requestUrl({
-            url: `${this.goalHostEndpoint}/executions/${sol.dispatchId}`,
-            method: 'GET',
-            throw: false,
-            headers: this.apiKey ? { Authorization: `ApiKey ${this.apiKey}` } : {},
-          });
-          const status = r.status === 200 ? ((r.json as { status?: string } | null)?.status ?? null) : null;
-          if (r.status === 404 || (status !== null && status !== 'running')) {
-            this.expire(sol.solicitationId);
-            continue;
-          }
-        } catch { /* goal-host unreachable — keep the card, retry next sweep */ }
       } else {
         // No dispatch to check against: hard-expire after the advertised
         // timeout plus generous composing slack (heartbeats may have
@@ -219,11 +185,6 @@ export class SolicitationManager {
         if (age > sol.timeoutMs + 10 * 60_000) this.expire(sol.solicitationId);
       }
     }
-  }
-
-  updateEndpoint(goalHostEndpoint: string, apiKey?: string): void {
-    this.goalHostEndpoint = goalHostEndpoint.replace(/\/+$/, '');
-    if (apiKey !== undefined) this.apiKey = apiKey;
   }
 
   clear(): void {

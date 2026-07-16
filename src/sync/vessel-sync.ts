@@ -113,7 +113,7 @@ export class VesselSyncService {
   async start(): Promise<void> {
     if (this.timer) return;
     this.log('starting', {
-      endpoint: this.settings.discoveryVesselEndpoint,
+      endpoint: 'sidecar conduit (service:discovery)',
       folder: this.settings.vesselFolder,
     });
     this.syncAll().catch((err) => this.log('initial sync failed', { error: String(err) }));
@@ -149,63 +149,15 @@ export class VesselSyncService {
   }
 
   private async fetchVessels(): Promise<DiscoveryVesselEntry[]> {
-    const base = this.settings.discoveryVesselEndpoint.replace(/\/$/, '');
-    const apiKey = this.settings.apiKey;
-    const headers: Record<string, string> = { Accept: 'application/json' };
-    if (apiKey) headers['Authorization'] = `ApiKey ${apiKey}`;
-
-    // Sidecar-first: discovery is the sidecar's own fixed point, so this works
-    // with zero endpoint config and no CORS (loopback). The direct strategies
-    // below remain as same-host fallback.
+    // Single conduit: discovery is the sidecar's own fixed point, so this works
+    // with zero endpoint config and no CORS (loopback).
     const viaSidecar = await sidecarHttp(this.settings, { service: 'discovery', path: '/registry/stats' });
     if (viaSidecar && viaSidecar.ok && viaSidecar.body) {
       const data = viaSidecar.body as RegistryStatsResponse;
       const list = data.vessels ?? data.registrations ?? [];
       if (list.length > 0) return list;
     }
-    this.log('sidecar conduit yielded no vessels — engaging direct discovery fallback');
-
-    // Strategy 1: GET /registry/stats
-    try {
-      const resp = await fetch(`${base}/registry/stats`, { headers });
-      if (resp.ok) {
-        const data: RegistryStatsResponse = await resp.json();
-        const list = data.vessels ?? data.registrations ?? [];
-        if (list.length > 0) return list;
-      }
-    } catch (err) {
-      this.log('registry/stats failed', { error: String(err) });
-    }
-
-    // Strategy 2: GET /shapes — returns per-vessel shape map
-    try {
-      const resp = await fetch(`${base}/shapes`, { headers });
-      if (resp.ok) {
-        const data = await resp.json();
-        // shapes endpoint may return { vessels: [...] } or { shapes: { vesselId: [...] } }
-        if (Array.isArray(data.vessels)) return data.vessels;
-        if (data.shapes && typeof data.shapes === 'object') {
-          return Object.entries(data.shapes as Record<string, string[]>).map(
-            ([vessel_id, shapes]) => ({ vessel_id, shapes }),
-          );
-        }
-      }
-    } catch (err) {
-      this.log('shapes fallback failed', { error: String(err) });
-    }
-
-    // Strategy 3: GET /vessels (legacy)
-    try {
-      const resp = await fetch(`${base}/vessels`, { headers });
-      if (resp.ok) {
-        const data = await resp.json();
-        if (Array.isArray(data)) return data;
-        if (Array.isArray(data.vessels)) return data.vessels;
-      }
-    } catch (err) {
-      this.log('vessels fallback failed', { error: String(err) });
-    }
-
+    this.log('sidecar conduit yielded no vessels');
     return [];
   }
 

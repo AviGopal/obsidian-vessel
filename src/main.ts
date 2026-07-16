@@ -1,4 +1,4 @@
-import { App, Plugin, PluginManifest, TFile, Notice, requestUrl } from 'obsidian';
+import { App, Plugin, PluginManifest, TFile, Notice } from 'obsidian';
 import type { CachedMetadata } from 'obsidian';
 import { GoalDispatchView, VIEW_TYPE_GOAL_DISPATCH } from './views/goal-dispatch-view';
 import { GoalInputModal } from './views/goal-input-modal';
@@ -670,8 +670,6 @@ export default class ObsidianVesselPlugin extends Plugin {
       // Registered ALWAYS (capability), while discovery ADVERTISEMENT of the
       // human shapes is presence-conditioned (startPresenceAdvertiser).
       this.solicitationManager = this.solicitationManager ?? new SolicitationManager({
-        goalHostEndpoint: this.settings.goalHostEndpoint,
-        apiKey: this.settings.apiKey,
         notify: (m: string) => new Notice(m),
       });
       const solicitations = this.solicitationManager;
@@ -724,44 +722,18 @@ export default class ObsidianVesselPlugin extends Plugin {
           this.settings.federationRelayMultiaddr ||
           this.settings.activityApiUrl
             ? async (pointer) => {
-                const sidecarRes = await sidecarResolve(this.settings, pointer as Record<string, unknown>, 15_000); // Changed to use the imported sidecarResolve
-                if (sidecarRes?.body != null) { // Check for body or content explicitly
-                  return { success: true, content: sidecarRes.body ?? sidecarRes.content, metadata: sidecarRes.metadata };
-                }
-
-                if (!this.settings.activityApiUrl) {
-                  console.debug(`[Obsidian Vessel] Substrate proxy: ${JSON.stringify(pointer)} not resolved by sidecar, and activityApiUrl is not set. Skipping direct HTTP fetch.`);
-                  return null;
-                }
-
-                // If sidecar didn't resolve, try direct HTTP fetch if activityApiUrl is set
-                console.debug(`[Obsidian Vessel] Substrate proxy: ${JSON.stringify(pointer)} not resolved by sidecar, trying direct HTTP`);
-                const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-                if (this.settings.apiKey) { // Using apiKey from settings, not activityApiKey
-                  headers['Authorization'] = `ApiKey ${this.settings.apiKey}`;
-                }
-                const base = this.settings.activityApiUrl.replace(/\/+$/, ''); // Assuming activityApiUrl is part of this.settings
-                const directFetchUrl = `${base}/v2/impulses/resolve`; // Always POST to /resolve
-                
                 try {
-                  const resp = await fetch(directFetchUrl, {
-                    method: 'POST',
-                    headers,
-                    body: JSON.stringify({ impulse: { pointer } }),
-                  });
-
-                  if (!resp.ok) {
-                    const errorText = await resp.text();
-                    console.error(`[Obsidian Vessel] Substrate proxy direct HTTP fetch failed for ${JSON.stringify(pointer)}: ${resp.status} ${resp.statusText} - ${errorText}`);
-                    return null; // Return null on HTTP error
+                  // Single conduit: the sidecar routes the pointer to whichever
+                  // vessel owns it (locally or over the federation overlay). No
+                  // direct endpoint fallback — the sidecar is the only path.
+                  const via = await sidecarResolve(this.settings, pointer as Record<string, unknown>, 15_000);
+                  const viaContent = via?.content ?? via?.body ?? null;
+                  if (viaContent != null) {
+                    return { success: true, content: viaContent, metadata: via?.metadata };
                   }
-                  const j = await resp.json() as { content?: unknown; body?: unknown; metadata?: unknown };
-                  const content = j?.content ?? j?.body ?? null;
-                  if (content == null) return null;
-                  return { success: true, content, metadata: j?.metadata };
-                } catch (error) {
-                  console.error(`[Obsidian Vessel] Substrate proxy direct HTTP fetch error for ${JSON.stringify(pointer)}:`, error);
-                  return null; // Return null on network/parsing error
+                  return null;
+                } catch {
+                  return null;
                 }
               }
             : undefined,
@@ -1095,10 +1067,11 @@ export default class ObsidianVesselPlugin extends Plugin {
     this.conceptWriteback?.stop();
     this.conceptSync?.stop();
 
-    const apiKey = this.settings.conceptDbApiKey || this.settings.apiKey;
+    // The single sidecar conduit resolves the `concept` shape to concept-db;
+    // this client needs no direct endpoint (baseUrl is inert).
     this.conceptDbClient = new ConceptDbClient(
-      this.settings.conceptDbEndpoint,
-      apiKey,
+      '',
+      this.settings.apiKey,
     );
 
     const writer = makeObsidianNoteWriter(this.app);
@@ -1228,17 +1201,6 @@ export default class ObsidianVesselPlugin extends Plugin {
   }
 
   /**
-   * Development-vessel endpoint for gap-store forwarding. No dedicated
-   * setting: derived from the goal-host endpoint so the same build works
-   * in-container (:8210 → :8090) and on the host (:18210 → :18090).
-   */
-  private devVesselEndpoint(): string {
-    return this.settings.goalHostEndpoint.includes(':8210')
-      ? 'http://127.0.0.1:8090'
-      : 'http://127.0.0.1:18090';
-  }
-
-  /**
    * Capture a uiFeedback complaint: store it (obsidian:ui_feedback read
    * shape) and forward it to the dev-vessel gap store keyed
    * ui-feedback-<region>-<kind> so it enters the drafter funnel.
@@ -1258,7 +1220,7 @@ export default class ObsidianVesselPlugin extends Plugin {
       created_at: new Date().toISOString(),
     };
     this.uiFeedbackStore.add(fb);
-    void forwardUiFeedbackToGapStore(fb, this.devVesselEndpoint(), this.settings.apiKey)
+    void forwardUiFeedbackToGapStore(fb)
       .then((r) => {
         if (!r.forwarded) console.warn('[Obsidian Vessel] uiFeedback gap forward failed:', r.status);
       })
@@ -1517,20 +1479,9 @@ export default class ObsidianVesselPlugin extends Plugin {
       if (viaContent != null) {
         ok = true;
       } else {
-        // sidecar down / not overlay-reachable — fall back to the direct activity-api endpoint
-        const resp = await requestUrl({
-          url: activityApiUrl.replace(/\/+$/, '') + '/v2/impulses/resolve',
-          method: 'POST',
-          headers: {
-            'Authorization': 'ApiKey ' + this.settings.apiKey,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ impulse: { pointer } }),
-          throw: false,
-        });
-        const body = resp.json as { success?: boolean; error?: string } | undefined;
-        ok = resp.status < 300 && body?.success !== false;
-        if (!ok) detail = body?.error ?? 'HTTP ' + resp.status;
+        // Single conduit: no direct endpoint. A down sidecar means the verdict
+        // cannot land this attempt.
+        detail = 'sidecar conduit unavailable — verdict not recorded';
       }
     } catch (error) {
       detail = error instanceof Error ? error.message : String(error);

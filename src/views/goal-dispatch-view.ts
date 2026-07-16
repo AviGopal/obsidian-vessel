@@ -23,7 +23,7 @@
  * - Component grammar: sub-card / sub-chip / sub-feed-line (see styles.css)
  */
 
-import { ItemView, WorkspaceLeaf, TFile, Notice, Menu, MarkdownView, MarkdownRenderer, requestUrl, Modal, App } from 'obsidian';
+import { ItemView, WorkspaceLeaf, TFile, Notice, Menu, MarkdownView, MarkdownRenderer, Modal, App } from 'obsidian';
 
 class TextPromptModal extends Modal {
 	private resolve: (v: string | null) => void;
@@ -385,11 +385,6 @@ export class GoalDispatchView extends ItemView {
   private gapDetailExpanded: Set<string> = new Set();
   private projectsExpanded = false;
   private workBoardTimer: number | null = null;
-  // shape -> resolved host-reachable resolve URL, via discovery (the one fixed
-  // point). Cached briefly so the 30s work-board poll doesn't re-hit discovery
-  // every tick. Connections flow through discovery shapes, never hardcoded
-  // vessel endpoints (discovery derives host-reachable public_endpoints).
-  private shapeRouteCache = new Map<string, { url: string; at: number }>();
 
   constructor(leaf: WorkspaceLeaf, plugin: ObsidianVesselPlugin) {
     super(leaf);
@@ -659,7 +654,7 @@ export class GoalDispatchView extends ItemView {
       return;
     }
 
-    const { goalHostEndpoint, apiKey } = this.plugin.settings;
+    const { apiKey } = this.plugin.settings;
 
     if (!apiKey) {
       new Notice('Obsidian: API key not configured. Set it in plugin settings.');
@@ -681,7 +676,7 @@ export class GoalDispatchView extends ItemView {
     const ctx = this.collectVaultContext();
     this.appendVaultContextSummary(ctx);
     try {
-      const client = new GoalHostClient(goalHostEndpoint, apiKey);
+      const client = new GoalHostClient();
 
       // Start buffering WS events NOW — the execution may complete and fire
       // its events BEFORE the poll returns the executionId (auto-draft LLM
@@ -738,7 +733,6 @@ export class GoalDispatchView extends ItemView {
         const relevanceShapes = [...ctx.available_shapes];
         this.pendingRelevance.set(executionId, (succeeded: boolean) => {
           void client.recordImpulseRelevance(
-            this.plugin.settings.activityApiUrl,
             executionId,
             variantId,
             relevanceShapes,
@@ -852,43 +846,15 @@ export class GoalDispatchView extends ItemView {
   // ---------------------------------------------------------------------------
 
   /**
-   * POST JSON via Obsidian's requestUrl (NOT fetch) — the Electron renderer
-   * blocks cross-origin fetch with CORS, so every panel network call must go
-   * through requestUrl like the rest of the plugin (see GoalHostClient). Returns
-   * parsed JSON or null on any non-2xx / transport error.
-   */
-  private async postJson(url: string, body: unknown): Promise<Record<string, unknown> | null> {
-    try {
-      const r = await requestUrl({
-        url,
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(this.plugin.settings.apiKey ? { Authorization: `ApiKey ${this.plugin.settings.apiKey}` } : {}),
-        },
-        body: JSON.stringify(body),
-        throw: false,
-      });
-      if (r.status < 200 || r.status >= 300) return null;
-      return r.json as Record<string, unknown>;
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * Resolve a goal-host shape. Primary route: a shaped resolve through the
-   * federation sidecar's /outbound/resolve — it crosses the overlay, so the
-   * panel works on a bare host holding only hub credentials + the relay
-   * multiaddr. The configured goal-host endpoint survives only as an
-   * explicitly LOGGED fallback for sidecar-down local setups.
+   * Resolve a goal-host shape through the single sidecar conduit's
+   * /outbound/resolve — it crosses the overlay, so the panel works on a bare
+   * host holding only hub credentials + the relay multiaddr. Returns null when
+   * the sidecar is unreachable.
    */
   private async goalHostResolve(body: Record<string, unknown>): Promise<Record<string, unknown> | null> {
     const viaSidecar = await sidecarResolveBody(body);
     if (viaSidecar !== null) return { resolved: true, body: viaSidecar };
-    console.warn(`[GoalDispatchView] sidecar resolve unavailable for ${String(body.type)} — engaging direct goal-host fallback`);
-    const base = this.plugin.settings.goalHostEndpoint.replace(/\/+$/, '');
-    return this.postJson(`${base}/resolve`, body);
+    return null;
   }
 
   private startFleetBoard(): void {
@@ -932,53 +898,9 @@ export class GoalDispatchView extends ItemView {
   // ---------------------------------------------------------------------------
 
   /**
-   * FALLBACK-ONLY route derivation: which host-reachable URL serves a shape,
-   * by asking discovery (the ONE fixed point) and probing the candidate
-   * endpoints. The PRIMARY route for every shape is the sidecar resolve in
-   * devVesselResolve below — this direct path only engages (logged) when the
-   * sidecar is down, and it only works when the vessels are host-reachable
-   * (i.e. a local substrate; never on a bare federated host). Cached ~60s.
-   */
-  private async resolveShapeRoute(shape: string): Promise<string | null> {
-    const cached = this.shapeRouteCache.get(shape);
-    if (cached && Date.now() - cached.at < 60000) return cached.url;
-    const disco = (this.plugin.settings.discoveryVesselEndpoint || '').replace(/\/+$/, '');
-    if (!disco) return null;
-    try {
-      const j = await this.postJson(`${disco}/resolve`, { pointer: { type: 'vesselCapability', shape } });
-      if (!j) return null;
-      const vessels = ((j.content as Record<string, unknown> | undefined)?.vessels ?? []) as Array<Record<string, unknown>>;
-      const v = vessels[0];
-      if (!v) return null;
-      const candidates = [String(v.public_endpoint || ''), String(v.endpoint || '')].map((s) => s.replace(/\/+$/, '')).filter((s, i, a) => s && a.indexOf(s) === i);
-        let base = candidates[0] ?? '';
-        for (const cand of candidates) {
-        try {
-          const probe = await requestUrl({ url: cand + '/health', method: 'GET', throw: false });
-          if (probe.status >= 200 && probe.status < 300) { base = cand; break; }
-        } catch { /* try next candidate */ }
-      }
-      if (!base) return null;
-      // resolve_endpoint may be a path ("/v2/impulses/resolve") or an absolute
-      // (in-container) URL — take just its path and hang it off the reachable base.
-      const rawResolve = String(v.resolve_endpoint || '/resolve');
-      let path = rawResolve;
-      if (/^https?:\/\//.test(rawResolve)) {
-        try { const u = new URL(rawResolve); path = u.pathname + u.search; } catch { path = '/resolve'; }
-      }
-      const url = base + (path.startsWith('/') ? path : `/${path}`);
-      this.shapeRouteCache.set(shape, { url, at: Date.now() });
-      return url;
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * Resolve a shape by name, sidecar-first (crosses the federation overlay;
-   * reaches libp2p-only producers that host-reachable HTTP cannot). Falls back
-   * — with a warn log — to the discovery-derived direct endpoint route, which
-   * only exists on hosts that can reach the vessels directly.
+   * Resolve a shape by name through the single sidecar conduit (crosses the
+   * federation overlay; reaches libp2p-only producers that host-reachable HTTP
+   * cannot). Returns null when the sidecar is unreachable.
    */
   private async devVesselResolve(
     shape: string,
@@ -986,10 +908,7 @@ export class GoalDispatchView extends ItemView {
   ): Promise<Record<string, unknown> | null> {
     const viaSidecar = await sidecarResolveBody({ type: shape, ...extra });
     if (viaSidecar !== null) return { resolved: true, body: viaSidecar };
-    console.warn(`[GoalDispatchView] sidecar resolve unavailable for ${shape} — engaging discovery-routed direct fallback`);
-    const url = await this.resolveShapeRoute(shape);
-    if (!url) return null;
-    return this.postJson(url, { impulse: { type: shape, ...extra } });
+    return null;
   }
 
   private async guardSection(el: HTMLElement | null, name: string, render: () => void | Promise<void>): Promise<void> {
@@ -2100,7 +2019,7 @@ export class GoalDispatchView extends ItemView {
     const dispatchId = this.activeDispatchId;
     if (!dispatchId) return;
     try {
-      const client = new GoalHostClient(this.plugin.settings.goalHostEndpoint, this.plugin.settings.apiKey);
+      const client = new GoalHostClient();
       const record = await client.getDispatchRecord(dispatchId);
       const reached = record.reached as boolean | null;
       const reason = record.goalReachReason as string | null;

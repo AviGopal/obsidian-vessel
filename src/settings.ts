@@ -120,12 +120,6 @@ export interface ObsidianVesselSettings {
   /** Enable mirroring concept-db into the vault (opt-in). */
   enableConceptDbSync: boolean;
 
-  /** Concept-db HTTP endpoint (default: local substrate host port). */
-  conceptDbEndpoint: string;
-
-  /** API key for concept-db; falls back to `apiKey` if empty. */
-  conceptDbApiKey: string;
-
   /** Vault sub-folder where concept notes live. */
   conceptDbSyncRoot: string;
 
@@ -145,9 +139,6 @@ export interface ObsidianVesselSettings {
   // ==========================================================================
   // Goal Dispatch Settings
   // ==========================================================================
-
-  /** HTTP endpoint for goal-host-vessel (default: local substrate). */
-  goalHostEndpoint: string;
 
   /** Enable the Goal Dispatch sidebar and command. */
   enableGoalDispatch: boolean;
@@ -176,16 +167,12 @@ export interface ObsidianVesselSettings {
    * composition graph) as tagged, wikilinked notes for Obsidian's native graph. */
   enableGraphBackbone: boolean;
 
-  /** Discovery-vessel HTTP endpoint. */
-  discoveryVesselEndpoint: string;
-
-
   /**
-   * Hostname the SUBSTRATE (in the container) uses to reach this host-side
-   * plugin. Inside the container `localhost` is the container itself, so the
-   * advertised endpoint must be the container->host gateway.
+   * Discovery-vessel HTTP endpoint. Consumed only by the federation sidecar's
+   * local (non-relay) discovery routing (DISCOVERY_URL); blank in relay-based
+   * deployments, where discovery is derived from the relay host.
    */
-  advertisedHost: string;
+  discoveryVesselEndpoint: string;
 
   // ==========================================================================
   // Federation Sidecar Settings
@@ -204,9 +191,6 @@ export interface ObsidianVesselSettings {
   federationRelayMultiaddr: string;
   /** The hub federation-transport ingress circuit multiaddr; when set with the sidecar on, all outbound resolve/dispatch routes over libp2p to the hub instead of dialing host:ports. */
   federationIngressMultiaddr: string;
-
-  /** Stable vessel id to advertise (seeds the libp2p identity — keep constant across restarts). */
-  federationVesselId: string;
 
   /** Plain-HTTP liveness port for the sidecar (loopback only; real reachability is the relay circuit). */
   federationHealthPort: number;
@@ -280,15 +264,12 @@ export const DEFAULT_SETTINGS: ObsidianVesselSettings = {
 
   // Concept-DB Frontend
   enableConceptDbSync: false,
-  conceptDbEndpoint: 'http://127.0.0.1:18260',
-  conceptDbApiKey: '',
   conceptDbSyncRoot: 'concept-db',
   conceptDbSyncIntervalSec: 300,
   enableConceptDbWriteback: false,
   conceptDbSyncSourceTypes: [],
 
   // Goal Dispatch
-  goalHostEndpoint: 'http://127.0.0.1:18210',
   enableGoalDispatch: true,
 
   // Activity Family Sync
@@ -301,13 +282,11 @@ export const DEFAULT_SETTINGS: ObsidianVesselSettings = {
   enableGraphBackbone: true,
   // Host-mapped discovery port (in-container :8100 is published on host :18100).
   discoveryVesselEndpoint: 'http://127.0.0.1:18100',
-  advertisedHost: 'host.docker.internal',
 
   // Federation Sidecar
   enableFederationSidecar: false,
   federationRelayMultiaddr: '',
   federationIngressMultiaddr: '',
-  federationVesselId: 'obsidian-host-vessel',
   federationHealthPort: 8402,
   federationBunPath: 'bun',
 

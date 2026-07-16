@@ -358,7 +358,7 @@ export class SidecarManager {
 
     const env: NodeJS.ProcessEnv = {
       ...process.env,
-      OBSIDIAN_VESSEL_ID: this.settings.federationVesselId || '',
+      OBSIDIAN_VESSEL_ID: this.settings.vesselId || '',
       RELAY_MULTIADDR: this.settings.federationRelayMultiaddr,
       DISCOVERY_URL: this.discoveryUrl(),
       API_KEY: this.settings.apiKey || '',

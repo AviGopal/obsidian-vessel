@@ -6,7 +6,6 @@
  * app://obsidian.md origin.
  */
 
-import { requestUrl } from 'obsidian';
 import { sidecarHttpAuto, sidecarResolveBody } from '../sidecar-manager';
 
 export interface GoalDispatchResult {
@@ -43,10 +42,9 @@ export interface VaultContext {
 }
 
 export class GoalHostClient {
-  constructor(
-    private endpoint: string,
-    private apiKey: string,
-  ) {}
+  // The single sidecar conduit holds the endpoint and API key; this client
+  // needs neither — every call routes through sidecarHttpAuto / sidecarResolve.
+  constructor() {}
 
   /**
    * Sidecar-first transport: route through the federation sidecar (the
@@ -57,20 +55,9 @@ export class GoalHostClient {
   private async http(path: string, body?: unknown, method?: string): Promise<Record<string, unknown>> {
     const m = method || (body != null ? 'POST' : 'GET');
     const via = await sidecarHttpAuto({ shape: 'goal_execution', method: m, path, body });
-    if (via) {
-      if (!via.ok) throw new Error(`goal-host ${path} failed with status ${via.status}`);
-      return (via.body ?? {}) as Record<string, unknown>;
-    }
-    const r = await requestUrl({
-      url: this.endpoint.replace(/\/+$/, '') + path,
-      method: m,
-      headers: {
-        'Authorization': 'ApiKey ' + this.apiKey,
-        ...(body != null ? { 'Content-Type': 'application/json' } : {}),
-      },
-      body: body != null ? JSON.stringify(body) : undefined,
-    });
-    return r.json as Record<string, unknown>;
+    if (!via) throw new Error(`goal-host ${path} failed: sidecar conduit unavailable`);
+    if (!via.ok) throw new Error(`goal-host ${path} failed with status ${via.status}`);
+    return (via.body ?? {}) as Record<string, unknown>;
   }
 
   /**
@@ -183,7 +170,6 @@ export class GoalHostClient {
    * reflects the actual trace outcome.
    */
   async recordImpulseRelevance(
-    activityApiUrl: string,
     executionId: string,
     variantId: string,
     shapes: string[],
@@ -199,18 +185,7 @@ export class GoalHostClient {
           execution_succeeded: succeeded,
           pointer_type: shape,
         };
-        const via = await sidecarHttpAuto({ shape: 'impulseRelevance', method: 'POST', path: '/v2/activities/impulse-relevance', body: payload });
-        if (!via) {
-          await requestUrl({
-            url: `${activityApiUrl}/v2/activities/impulse-relevance`,
-            method: 'POST',
-            headers: {
-              'Authorization': `ApiKey ${this.apiKey}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(payload),
-          });
-        }
+        await sidecarHttpAuto({ shape: 'impulseRelevance', method: 'POST', path: '/v2/activities/impulse-relevance', body: payload });
       } catch {
         // relevance writes are best-effort — don't surface errors to the user
       }

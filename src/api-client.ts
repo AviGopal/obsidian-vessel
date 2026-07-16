@@ -584,111 +584,30 @@ export class ActivityAPIClient {
     path: string,
     options: { method?: string; body?: unknown; noRetry?: boolean } = {}
   ): Promise<T> {
-    const { method = 'GET', body, noRetry = false } = options;
+    const { method = 'GET', body } = options;
 
-    const url = `${this.baseUrl}${path}`;
-    const headers: Record<string, string> = {
-      'Accept': 'application/json',
-    };
-
-    if (this.apiKey) {
-      headers['Authorization'] = `Bearer ${this.apiKey}`;
-    }
-
-    if (body) {
-      headers['Content-Type'] = 'application/json';
-    }
-
-    // Sidecar-first: the federation sidecar is the plugin's substrate conduit —
-    // it holds the API key and reaches the substrate identically whether local
-    // or remote (relay overlay). null → sidecar not up → direct endpoint below.
+    // Single conduit: the federation sidecar is the plugin's only substrate
+    // path — it holds the API key and reaches the substrate identically whether
+    // local or remote (relay overlay). A null result means the sidecar is not
+    // up; a non-ok result is the owner's authoritative answer.
     const viaSidecar = await sidecarHttpAuto({ shape: 'activityExecutionTrace', method, path, body }, this.timeout);
-    if (viaSidecar && viaSidecar.ok) {
-      return viaSidecar.body as T;
+    if (!viaSidecar) {
+      this.logger('warn', 'sidecar conduit unavailable', { path });
+      throw new ActivityAPIError('sidecar conduit unavailable', 503);
     }
-    if (viaSidecar) {
-      // On a federated spoke the sidecar can proxy this REST path to a
-      // resolve-only transport surface (:8401/:18401), which 404s or refuses
-      // everything but /v2/impulses/resolve — so a sidecar-proxied failure is
-      // never authoritative for REST. Log it and try the configured direct
-      // endpoint before giving up (activity-family/templates sync went empty
-      // on spokes when the proxied 404 was thrown as final).
-      this.logger('warn', 'sidecar-proxied request failed — trying direct endpoint', {
-        path,
-        status: viaSidecar.status,
-        via: viaSidecar.via,
-      });
-    } else {
-      this.logger('warn', 'sidecar conduit unavailable — engaging direct activity-api fallback', { path });
+    if (!viaSidecar.ok) {
+      const eb = viaSidecar.body as APIError | string | null;
+      throw new ActivityAPIError(
+        eb && typeof eb === 'object' && eb.error
+          ? eb.error
+          : typeof eb === 'string'
+          ? eb
+          : `Request failed with status ${viaSidecar.status}`,
+        viaSidecar.status,
+        eb && typeof eb === 'object' ? eb : undefined,
+      );
     }
-
-    const maxAttempts = noRetry ? 1 : this.maxRetries;
-    let lastError: Error | null = null;
-
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { requestUrl } = require('obsidian');
-
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      try {
-        const timeoutId = setTimeout(() => { this.logger('warn', 'request exceeded timeout; requestUrl is not cancellable', { path }); }, this.timeout);
-
-        try {
-          const r = await requestUrl({ url, method, headers, body: body ? JSON.stringify(body) : undefined, throw: false });
-          const response = { ok: r.status >= 200 && r.status < 300, status: r.status, json: async () => r.json, text: async () => r.text };
-
-          clearTimeout(timeoutId);
-
-          if (!response.ok) {
-            let errorBody: APIError | string;
-            try {
-              errorBody = await response.json();
-            } catch {
-              errorBody = await response.text();
-            }
-
-            throw new ActivityAPIError(
-              typeof errorBody === 'object' && errorBody.error
-                ? errorBody.error
-                : typeof errorBody === 'string'
-                ? errorBody
-                : `Request failed with status ${response.status}`,
-              response.status,
-              typeof errorBody === 'object' ? errorBody : undefined
-            );
-          }
-
-          return await response.json();
-        } finally {
-          clearTimeout(timeoutId);
-        }
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
-
-        // Don't retry on client errors (4xx) except for 429 (rate limit)
-        if (error instanceof ActivityAPIError) {
-          if (error.status >= 400 && error.status < 500 && error.status !== 429) {
-            throw error;
-          }
-        }
-
-        // Don't retry on abort (timeout)
-        if (lastError.name === 'AbortError') {
-          throw new ActivityAPIError('Request timed out', 408);
-        }
-
-        if (attempt < maxAttempts - 1) {
-          const delay = this.calculateBackoffDelay(attempt);
-          this.logger('debug', `Retrying request in ${delay}ms`, {
-            path,
-            attempt: attempt + 1,
-            maxAttempts,
-          });
-          await this.sleep(delay);
-        }
-      }
-    }
-
-    throw lastError || new Error('Request failed after retries');
+    return viaSidecar.body as T;
   }
 
   /**

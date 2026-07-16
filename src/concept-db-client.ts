@@ -186,69 +186,6 @@ export function stripConceptPrefix(id: string): string {
  * wrapped as `concept:⟨...⟩`; we strip those too.
  */
 /**
- * HTTP transport that prefers Obsidian's `requestUrl()` API (CORS-free,
- * Electron-native) when the plugin runs inside Obsidian, and falls back
- * to global `fetch()` otherwise (probe scripts, tests).
- *
- * Obsidian's fetch() inherits Chromium's CORS preflight against the
- * `app://obsidian.md` origin and is blocked by substrate vessels that
- * don't ship Access-Control-Allow-Origin headers (concept_pL2ZFsPkzZz7
- * adjacent issue). requestUrl() bypasses the CORS layer entirely.
- */
-// Lazy synchronous lookup of Obsidian's requestUrl. The 'obsidian'
-// module is marked external by esbuild AND resolved by Obsidian's
-// plugin loader as a CommonJS module — `require('obsidian')` works
-// inside Obsidian and throws in Node (caught + cached as null).
-let obsidianRequestUrl: ((p: {
-  url: string;
-  method?: string;
-  headers?: Record<string, string>;
-  body?: string;
-  throw?: boolean;
-}) => Promise<{ status: number; text: string }>) | null | undefined;
-
-function getObsidianRequestUrl() {
-  if (obsidianRequestUrl !== undefined) return obsidianRequestUrl;
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const ob = require('obsidian') as { requestUrl?: typeof obsidianRequestUrl };
-    obsidianRequestUrl = ob?.requestUrl ?? null;
-  } catch {
-    obsidianRequestUrl = null;
-  }
-  return obsidianRequestUrl;
-}
-
-async function doHttp(
-  url: string,
-  method: string,
-  headers: Record<string, string>,
-  body: string | undefined,
-  timeoutMs: number,
-): Promise<{ status: number; text: string }> {
-  const reqUrl = getObsidianRequestUrl();
-  if (reqUrl) {
-    const r = await reqUrl({ url, method, headers, body, throw: false });
-    return { status: r.status, text: r.text };
-  }
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, {
-      method,
-      headers,
-      body,
-      signal: controller.signal,
-    });
-    const text = await response.text();
-    return { status: response.status, text };
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
-
-/**
  * Wrapped neighbor row as concept-db's REST route emits it.
  * GET /concepts/:id/neighbors → { neighbors: RawNeighborRow[] }
  */
@@ -580,70 +517,23 @@ export class ConceptDbClient {
     path: string,
     options: { method?: string; body?: unknown; noRetry?: boolean } = {}
   ): Promise<T> {
-    const { method = 'GET', body, noRetry = false } = options;
-    const url = `${this.baseUrl}${path}`;
-    const headers: Record<string, string> = { Accept: 'application/json' };
-    if (this.apiKey) headers['Authorization'] = `ApiKey ${this.apiKey}`;
-    if (body) headers['Content-Type'] = 'application/json';
+    const { method = 'GET', body } = options;
 
-    // Sidecar-first: route through the federation sidecar (the plugin's
-    // substrate conduit — identical local or remote) by the concept shape;
-    // fall back to the direct endpoint below when the sidecar is not up.
+    // Single conduit: the federation sidecar is the plugin's only substrate
+    // path (the concept shape resolves to concept-db). A null result means the
+    // sidecar is not up; a non-ok result is the owner's authoritative answer.
     const viaSidecar = await sidecarHttpAuto({ shape: 'concept', method, path, body }, this.timeout);
-    if (viaSidecar) {
-      if (!viaSidecar.ok) {
-        const eb = viaSidecar.body as { error?: unknown } | null;
-        throw new ConceptDbError(
-          eb && typeof eb === 'object' && eb.error ? String(eb.error) : `Request failed with status ${viaSidecar.status}`,
-          viaSidecar.status
-        );
-      }
-      return viaSidecar.body as T;
+    if (!viaSidecar) {
+      throw new ConceptDbError('sidecar conduit unavailable', 503);
     }
-
-    const maxAttempts = noRetry ? 1 : this.maxRetries;
-    let lastError: Error | null = null;
-
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      try {
-        const { status, text } = await doHttp(
-          url,
-          method,
-          headers,
-          body !== undefined ? JSON.stringify(body) : undefined,
-          this.timeout,
-        );
-        if (status < 200 || status >= 300) {
-          let errorBody: unknown;
-          try {
-            errorBody = JSON.parse(text);
-          } catch {
-            errorBody = text;
-          }
-          const message =
-            typeof errorBody === 'object' && errorBody && 'error' in errorBody
-              ? String((errorBody as { error: unknown }).error)
-              : typeof errorBody === 'string' && errorBody.length > 0
-              ? errorBody
-              : `Request failed with status ${status}`;
-          throw new ConceptDbError(message, status);
-        }
-        return JSON.parse(text) as T;
-      } catch (err) {
-        lastError = err instanceof Error ? err : new Error(String(err));
-        if (err instanceof ConceptDbError) {
-          if (err.status >= 400 && err.status < 500 && err.status !== 429) throw err;
-        }
-        if (lastError.name === 'AbortError') {
-          throw new ConceptDbError('Request timed out', 408);
-        }
-        if (attempt < maxAttempts - 1) {
-          const delay = Math.min(this.baseRetryDelay * Math.pow(2, attempt), 30000);
-          await new Promise((r) => setTimeout(r, delay));
-        }
-      }
+    if (!viaSidecar.ok) {
+      const eb = viaSidecar.body as { error?: unknown } | null;
+      throw new ConceptDbError(
+        eb && typeof eb === 'object' && eb.error ? String(eb.error) : `Request failed with status ${viaSidecar.status}`,
+        viaSidecar.status
+      );
     }
-    throw lastError || new Error('Request failed after retries');
+    return viaSidecar.body as T;
   }
 }
 

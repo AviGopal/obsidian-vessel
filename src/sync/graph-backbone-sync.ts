@@ -66,23 +66,14 @@ export class GraphBackboneSyncService {
   private authHeaders(): Record<string, string> {
     return { 'Content-Type': 'application/json', ...(this.settings.apiKey ? { Authorization: `ApiKey ${this.settings.apiKey}` } : {}) };
   }
-  private async postJson(url: string, body: unknown): Promise<Record<string, unknown> | null> {
-    try {
-      const r = await requestUrl({ url, method: 'POST', headers: this.authHeaders(), body: JSON.stringify(body), throw: false });
-      if (r.status < 200 || r.status >= 300) return null;
-      return r.json as Record<string, unknown>;
-    } catch { return null; }
-  }
   /**
-   * POST a pointer to discovery /resolve — sidecar-first (the conduit reaches
-   * discovery locally or over the federation), direct endpoint as fallback.
+   * POST a pointer to discovery /resolve through the single sidecar conduit
+   * (reaches discovery locally or over the federation overlay).
    */
   private async discoveryResolve(pointer: Record<string, unknown>): Promise<Record<string, unknown> | null> {
     const via = await sidecarHttpAuto({ service: 'discovery', method: 'POST', path: '/resolve', body: { pointer } });
     if (via && via.ok) return (via.body ?? null) as Record<string, unknown> | null;
-    const disco = (this.settings.discoveryVesselEndpoint || '').replace(/\/+$/, '');
-    if (!disco) return null;
-    return this.postJson(`${disco}/resolve`, { pointer });
+    return null;
   }
 
   /**
@@ -266,23 +257,12 @@ export class GraphBackboneSyncService {
   //         backbone Activities/ note). Opening the dispatch note → local graph
   //         = its compositional context (pool ↔ activities ↔ produced shapes).
   private async syncDispatches(): Promise<number> {
-    // Shaped resolves through the sidecar are the primary route (they cross
-    // the federation overlay — no REST base needed at all); the discovery-
-    // derived goal-host REST base survives only as a LOGGED fallback for
-    // sidecar-down local setups.
-    let resolveShaped = async (pointer: Record<string, unknown>): Promise<Record<string, unknown> | null> =>
+    // Shaped resolves through the single sidecar conduit are the only route
+    // (they cross the federation overlay — no REST base needed at all).
+    const resolveShaped = async (pointer: Record<string, unknown>): Promise<Record<string, unknown> | null> =>
       sidecarResolveBody(pointer);
-    let listBody = await resolveShaped({ type: 'activeDispatches' });
-    if (listBody === null) {
-      const base = await this.resolveRestBase('goal_execution', this.settings.goalHostEndpoint); // goal-host
-      if (!base) return 0;
-      console.warn(`[GraphBackboneSync] sidecar resolve unavailable — using direct goal-host REST base ${base}`);
-      resolveShaped = async (pointer: Record<string, unknown>): Promise<Record<string, unknown> | null> => {
-        const r = await this.postJson(`${base}/resolve`, pointer);
-        return (r?.body ?? null) as Record<string, unknown> | null;
-      };
-      listBody = await resolveShaped({ type: 'activeDispatches' });
-    }
+    const listBody = await resolveShaped({ type: 'activeDispatches' });
+    if (listBody === null) return 0;
     const dispatches = ((listBody?.dispatches ?? []) as Array<Record<string, unknown>>);
     if (dispatches.length === 0) return 0;
     const recent = [...dispatches]
