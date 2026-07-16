@@ -719,35 +719,52 @@ export default class ObsidianVesselPlugin extends Plugin {
         // System-managed resolvers: shapes this vault doesn't own are forwarded to the
         // substrate (activity-api) so the plugin is a window into the whole fleet, not
         // just its built-in shapes. Inert when no activityApiUrl is configured.
-        substrateProxy: this.settings.activityApiUrl
-          ? async (pointer) => {
-              try {
-                // Sidecar-first: the conduit routes the pointer to whichever
-                // vessel owns it (locally or over the federation overlay).
-                const via = await sidecarResolve(this.settings, pointer as Record<string, unknown>, 15_000);
-                const viaContent = via?.content ?? via?.body ?? null;
-                if (viaContent != null) {
-                  return { success: true, content: viaContent, metadata: via?.metadata };
+        substrateProxy:
+          this.settings.enableFederationSidecar ||
+          this.settings.federationRelayMultiaddr ||
+          this.settings.activityApiUrl
+            ? async (pointer) => {
+                const sidecarRes = await sidecarResolve(this.settings, pointer as Record<string, unknown>, 15_000); // Changed to use the imported sidecarResolve
+                if (sidecarRes?.body != null) { // Check for body or content explicitly
+                  return { success: true, content: sidecarRes.body ?? sidecarRes.content, metadata: sidecarRes.metadata };
                 }
-                const base = this.settings.activityApiUrl.replace(/\/+$/, '');
-                const resp = await fetch(`${base}/v2/impulses/resolve`, {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    ...(this.settings.apiKey ? { Authorization: `ApiKey ${this.settings.apiKey}` } : {}),
-                  },
-                  body: JSON.stringify({ impulse: { pointer } }),
-                });
-                if (!resp.ok) return null;
-                const j = (await resp.json()) as { content?: unknown; body?: unknown; metadata?: unknown };
-                const content = j?.content ?? j?.body ?? null;
-                if (content == null) return null;
-                return { success: true, content, metadata: j?.metadata };
-              } catch {
-                return null;
+
+                if (!this.settings.activityApiUrl) {
+                  console.debug(`[Obsidian Vessel] Substrate proxy: ${JSON.stringify(pointer)} not resolved by sidecar, and activityApiUrl is not set. Skipping direct HTTP fetch.`);
+                  return null;
+                }
+
+                // If sidecar didn't resolve, try direct HTTP fetch if activityApiUrl is set
+                console.debug(`[Obsidian Vessel] Substrate proxy: ${JSON.stringify(pointer)} not resolved by sidecar, trying direct HTTP`);
+                const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+                if (this.settings.apiKey) { // Using apiKey from settings, not activityApiKey
+                  headers['Authorization'] = `ApiKey ${this.settings.apiKey}`;
+                }
+                const base = this.settings.activityApiUrl.replace(/\/+$/, ''); // Assuming activityApiUrl is part of this.settings
+                const directFetchUrl = `${base}/v2/impulses/resolve`; // Always POST to /resolve
+                
+                try {
+                  const resp = await fetch(directFetchUrl, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({ impulse: { pointer } }),
+                  });
+
+                  if (!resp.ok) {
+                    const errorText = await resp.text();
+                    console.error(`[Obsidian Vessel] Substrate proxy direct HTTP fetch failed for ${JSON.stringify(pointer)}: ${resp.status} ${resp.statusText} - ${errorText}`);
+                    return null; // Return null on HTTP error
+                  }
+                  const j = await resp.json() as { content?: unknown; body?: unknown; metadata?: unknown };
+                  const content = j?.content ?? j?.body ?? null;
+                  if (content == null) return null;
+                  return { success: true, content, metadata: j?.metadata };
+                } catch (error) {
+                  console.error(`[Obsidian Vessel] Substrate proxy direct HTTP fetch error for ${JSON.stringify(pointer)}:`, error);
+                  return null; // Return null on network/parsing error
+                }
               }
-            }
-          : undefined,
+            : undefined,
       });
 
       await this.httpServer.start();
