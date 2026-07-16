@@ -13,7 +13,6 @@ import { SidecarManager, sidecarResolve } from './sidecar-manager';
 import { ActivityAPIClient } from './api-client';
 import { ConceptSyncService, makeObsidianNoteWriter } from './sync/concept-sync';
 import { ConceptWritebackService } from './sync/concept-writeback';
-import { ConceptBusListener } from './sync/concept-bus-listener';
 import { ActivityFamilySyncService } from './sync/activity-family-sync';
 import { GraphBackboneSyncService } from './sync/graph-backbone-sync';
 import { VesselSyncService } from './sync/vessel-sync';
@@ -124,7 +123,6 @@ export default class ObsidianVesselPlugin extends Plugin {
   conceptDbClient: ConceptDbClient | null = null;
   conceptSync: ConceptSyncService | null = null;
   conceptWriteback: ConceptWritebackService | null = null;
-  conceptBusListener: ConceptBusListener | null = null;
 
   // Activity Family and Vessel sync services
   activityFamilySync: ActivityFamilySyncService | null = null;
@@ -516,7 +514,6 @@ export default class ObsidianVesselPlugin extends Plugin {
     }
 
     // Stop concept-db frontend services
-    this.conceptBusListener?.stop();
     this.conceptWriteback?.stop();
     this.conceptSync?.stop();
     this.graphBackboneSync?.stop();
@@ -719,8 +716,7 @@ export default class ObsidianVesselPlugin extends Plugin {
         // just its built-in shapes. Inert when no activityApiUrl is configured.
         substrateProxy:
           this.settings.enableFederationSidecar ||
-          this.settings.federationRelayMultiaddr ||
-          this.settings.activityApiUrl
+          this.settings.federationRelayMultiaddr
             ? async (pointer) => {
                 try {
                   // Single conduit: the sidecar routes the pointer to whichever
@@ -1063,7 +1059,6 @@ export default class ObsidianVesselPlugin extends Plugin {
    */
   async initializeConceptDbFrontend(): Promise<void> {
     // Stop existing instances if any
-    this.conceptBusListener?.stop();
     this.conceptWriteback?.stop();
     this.conceptSync?.stop();
 
@@ -1091,13 +1086,10 @@ export default class ObsidianVesselPlugin extends Plugin {
       this.conceptWriteback.start();
     }
 
-    // Phase 4: subscribe to the activity-api WS bus for live updates
-    this.conceptBusListener = new ConceptBusListener(
-      this.settings,
-      this.conceptSync,
-      this.conceptDbClient,
-    );
-    this.conceptBusListener.start();
+    // Concept freshness is maintained by the periodic ConceptSyncService above
+    // (re-materializes on a cadence through the sidecar conduit). Low-latency
+    // concept push is intentionally deferred to a future `conceptChangesSince`
+    // poll-shape rather than a raw WS bus subscription.
 
     // Make the client/sync available to the impulse resolvers
     setConceptDbResolverContext(this.conceptDbClient, this.settings);

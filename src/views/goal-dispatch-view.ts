@@ -74,34 +74,11 @@ export const VIEW_TYPE_GOAL_DISPATCH = 'obsidian-goal-dispatch';
 // Execution context tracking
 // ---------------------------------------------------------------------------
 
-interface TaskCtx {
-  index: number;
-  description: string;
-  startedAt: number;
-}
-
-interface ExecCtx {
-  variantId?: string;
-  tasks: Map<string, TaskCtx>;
-}
 
 /** Shorten a variant/resolver/vessel id to a readable slug (last 2 segments). */
 function shortId(id: string): string {
   const parts = id.split(/[-_:]/);
   return parts.slice(-2).join('-');
-}
-
-/** Human label for resolver tier. */
-function tierLabel(tier: string | undefined): string {
-  if (tier === 'deterministic') return 'fast';
-  if (tier === 'pattern') return 'cached';
-  if (tier === 'llm') return 'llm';
-  return tier ?? '';
-}
-
-/** Format milliseconds as a compact duration string (sub-second precision). */
-function fmtDuration(ms: number): string {
-  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
 }
 
 /** Compact relative elapsed: "42s", "7m", "3h", "2d". No ISO anywhere. */
@@ -292,21 +269,6 @@ function extractReachRationale(body: Record<string, unknown>): string {
  * list narrow — if a new infrastructure template floods the panel, add
  * it here rather than building a general suppression policy.
  */
-const HIDDEN_TEMPLATE_FRAGMENTS = [
-  'slot-binding',
-  'Slot Binding',
-  'validator-dispatch',
-  'Validator Dispatch',
-  'create-shape-provider-goal',
-  'Create Shape-Provider Goal',
-  'mitosis-pending-observer-tick',
-];
-
-function isHiddenTemplate(name: string | undefined): boolean {
-  if (!name) return false;
-  return HIDDEN_TEMPLATE_FRAGMENTS.some((f) => name.includes(f));
-}
-
 export class GoalDispatchView extends ItemView {
   private plugin: ObsidianVesselPlugin;
 
@@ -320,8 +282,12 @@ export class GoalDispatchView extends ItemView {
   // State
   private pollInterval: number | null = null;
   private lastRenderedSnapshot: Map<string, string> = new Map();
-  private ws: WebSocket | null = null;
-  private wsReconnectTimer: number | null = null;
+  // Live per-walk-step progress for the active dispatch: a ~2.5s poll of the
+  // goalWalkState shape through the sidecar. Replaces the old activity-api /ws
+  // bus, which bypassed the federation sidecar and was dead in production.
+  private walkPollTimer: number | null = null;
+  private renderedStepCount = 0;
+  private answerRendered = false;
   private activeExecutionId: string | null = null;
   private activeDispatchId: string | null = null;
   private goalFile: TFile | null = null;
@@ -330,27 +296,12 @@ export class GoalDispatchView extends ItemView {
   private elapsedTimer: number | null = null;
   private dispatchStartedAt: number | null = null;
 
-  // Execution context: tracks activity name + task descriptions per execId
-  private execCtxs = new Map<string, ExecCtx>();
   // Deferred impulse-relevance writes: fired only when the execution actually
   // settles, with the real outcome.
   private pendingRelevance = new Map<string, (succeeded: boolean) => void>();
 
-  // Event buffer: accumulate WS messages while waiting for the real executionId
-  // from the poll. Keyed by execId so we can replay just the right one.
-  private eventBuffer = new Map<string, Array<Record<string, unknown>>>();
-  private buffering = false;
-
   // Concepts minted during the active dispatch — appended to the goal note on completion.
   private mintedConcepts: Array<{ id: string; summary?: string }> = [];
-
-  // Suppressed infrastructure events for the active dispatch. Per HIDDEN_TEMPLATE_FRAGMENTS:
-  // when an activity.started fires for one of those templates we register its execId here
-  // and silently drop every subsequent event on that execId, incrementing the counter so
-  // the user can see how many were collapsed without their content flooding the panel.
-  private hiddenExecIds = new Set<string>();
-  private suppressedCount = 0;
-  private suppressedSummaryLine: HTMLElement | null = null;
 
   // Fleet board (WS6): in-flight dispatches pinned above the feed; completed
   // dispatches collapse to a one-line count (expandable).
@@ -408,9 +359,6 @@ export class GoalDispatchView extends ItemView {
     this.buildUI();
     // Apply any Substrate/theme-tokens.md overrides to this panel root.
     void this.plugin.refreshThemeTokens();
-    if (this.plugin.settings.enableGoalDispatch) {
-      this.connectWS();
-    }
     this.startFleetBoard();
     this.startWorkBoard();
     this.startSolicitationCards();
@@ -418,7 +366,7 @@ export class GoalDispatchView extends ItemView {
   }
 
   async onClose(): Promise<void> {
-    this.disconnectWS();
+    this.stopWalkPoll();
     this.stopFleetBoard();
     this.stopWorkBoard();
     this.unsubscribeSolicitations?.();
@@ -664,11 +612,7 @@ export class GoalDispatchView extends ItemView {
     this.dispatching = true;
     this.setDispatchBtnState(true);
     this.clearOutput();
-    this.execCtxs.clear();
     this.mintedConcepts = [];
-    this.hiddenExecIds.clear();
-    this.suppressedCount = 0;
-    this.suppressedSummaryLine = null;
     this.dispatchStartedAt = Date.now();
     this.appendMessage(`⟶ Goal: "${goal}"`);
 
@@ -678,14 +622,11 @@ export class GoalDispatchView extends ItemView {
     try {
       const client = new GoalHostClient();
 
-      // Start buffering WS events NOW — the execution may complete and fire
-      // its events BEFORE the poll returns the executionId (auto-draft LLM
-      // calls can take 30+ seconds while the actual execution runs in <100ms).
-      this.eventBuffer.clear();
-      this.buffering = true;
-      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-        this.connectWS();
-      }
+      // Reset live walk-progress state for this dispatch. Progress is rendered
+      // from a poll of goalWalkState (started once the execution_id is known),
+      // not a WS event stream.
+      this.renderedStepCount = 0;
+      this.answerRendered = false;
 
       // Step 1: dispatch → 202 with dispatchId
       const result = await client.dispatchGoal(goal, ctx);
@@ -706,29 +647,21 @@ export class GoalDispatchView extends ItemView {
       const { executionId, variantId: dispatchVariantId } = await client.pollExecutionId(dispatchId);
       if (this.elapsedTimer !== null) { window.clearInterval(this.elapsedTimer); this.elapsedTimer = null; }
 
-      // Step 3: replay buffered events for this execution_id, then switch to live
-      // (elapsedTimer is cleared above on success; catch block clears on failure)
-      this.buffering = false;
+      // Step 3: the execution_id is known — start polling goalWalkState for
+      // live per-step progress (elapsedTimer is cleared above on success; catch
+      // block clears on failure).
       this.activeExecutionId = executionId;
 
-      // Seed execCtx from poll response so we have the variant name before
-      // execution_started events arrive (or in case they were already buffered).
       if (dispatchVariantId) {
-        const ctx2 = this.getExecCtx(executionId);
-        ctx2.variantId = ctx2.variantId ?? dispatchVariantId;
         this.appendMessage(`◈ Activity: ${dispatchVariantId}`);
       }
       this.appendMessage('─'.repeat(36), 'divider');
 
-      const buffered = this.eventBuffer.get(executionId) ?? [];
-      if (buffered.length > 0) {
-        for (const msg of buffered) this.processWSEvent(msg);
-      }
-      this.eventBuffer.clear();
+      this.startWalkPoll();
 
       // Defer impulse-relevance feedback until the execution settles: firing here
       // reported success before the outcome existed and corrupted the corpus.
-      const variantId = this.execCtxs.get(executionId)?.variantId ?? dispatchVariantId;
+      const variantId = dispatchVariantId;
       if (variantId && ctx?.available_shapes?.length) {
         const relevanceShapes = [...ctx.available_shapes];
         this.pendingRelevance.set(executionId, (succeeded: boolean) => {
@@ -752,7 +685,7 @@ export class GoalDispatchView extends ItemView {
       const msg = error instanceof Error ? error.message : String(error);
       this.appendMessage(`Error dispatching goal: ${msg}`, 'error');
       new Notice(`Goal dispatch failed: ${msg}`);
-      this.buffering = false;
+      this.stopWalkPoll();
       this.dispatching = false;
       this.setDispatchBtnState(false);
     }
@@ -873,6 +806,7 @@ export class GoalDispatchView extends ItemView {
         )
       ) {
         if (this.elapsedTimer !== null) { window.clearInterval(this.elapsedTimer); this.elapsedTimer = null; }
+        this.stopWalkPoll();
         this.dispatching = false;
         this.setDispatchBtnState(false);
         this.activeDispatchId = null;
@@ -1590,7 +1524,9 @@ export class GoalDispatchView extends ItemView {
         ev.stopPropagation();
         this.activeDispatchId = String(d.dispatchId ?? '');
         this.activeExecutionId = execId;
-        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) this.connectWS();
+        this.renderedStepCount = 0;
+        this.answerRendered = false;
+        this.startWalkPoll();
         this.appendMessage(`⇢ attached to dispatch ${String(d.dispatchId ?? '').slice(0, 8)} (execution ${execId.slice(0, 12)}…)`);
       });
     }
@@ -2066,73 +2002,101 @@ export class GoalDispatchView extends ItemView {
   }
 
   // ---------------------------------------------------------------------------
-  // WebSocket
+  // Walk-state poll (live dispatch progress)
+  //
+  // Replaces the old activity-api `/ws` event bus. That bus bypassed the
+  // federation sidecar and connected to `websocketUrl || activityApiUrl`, both
+  // blank in production — so it was dead. Instead, while a dispatch is active we
+  // poll the goalWalkState shape through the sidecar (~2.5s) and render the
+  // walk's steps as they land. Granularity is per-walk-step, coarser than the
+  // old per-event feed, but the events it replaces never actually arrived.
   // ---------------------------------------------------------------------------
 
-  private connectWS(): void {
-    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
-      return;
-    }
+  private startWalkPoll(): void {
+    this.stopWalkPoll();
+    if (!this.activeExecutionId) return;
+    void this.pollWalkOnce();
+    this.walkPollTimer = window.setInterval(() => void this.pollWalkOnce(), 2500);
+  }
 
-    const wsUrl = (() => {
-      let ep = this.plugin.settings.websocketUrl || this.plugin.settings.activityApiUrl;
-      ep = ep.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:');
-      ep = ep.replace(/\/$/, '');
-      if (!ep.endsWith('/ws')) ep = ep + '/ws';
-      return ep;
-    })();
-    const apiKey = this.plugin.settings.apiKey;
-
-    try {
-      this.ws = new window.WebSocket(wsUrl);
-
-      this.ws.onopen = () => {
-        console.log('[GoalDispatchView] WS connected');
-        // Authenticate
-        this.ws!.send(JSON.stringify({ type: 'authenticate', token: apiKey }));
-      };
-
-      this.ws.onmessage = (ev) => {
-        this.handleWSMessage(ev.data as string);
-      };
-
-      this.ws.onerror = (ev) => {
-        console.warn('[GoalDispatchView] WS error', ev);
-      };
-
-      this.ws.onclose = () => {
-        console.log('[GoalDispatchView] WS closed, scheduling reconnect');
-        this.ws = null;
-        // Reconnect after 3s if the view is still open
-        if (this.dispatching) {
-          this.wsReconnectTimer = window.setTimeout(() => {
-            this.wsReconnectTimer = null;
-            this.connectWS();
-          }, 3000);
-        }
-      };
-    } catch (error) {
-      console.error('[GoalDispatchView] Failed to create WS:', error);
+  private stopWalkPoll(): void {
+    if (this.walkPollTimer !== null) {
+      window.clearInterval(this.walkPollTimer);
+      this.walkPollTimer = null;
     }
   }
 
-  private disconnectWS(): void {
-    if (this.wsReconnectTimer !== null) {
-      window.clearTimeout(this.wsReconnectTimer);
-      this.wsReconnectTimer = null;
-    }
-    if (this.ws) {
-      this.ws.onclose = null; // prevent reconnect loop
-      this.ws.close();
-      this.ws = null;
-    }
+  private async pollWalkOnce(): Promise<void> {
+    const execId = this.activeExecutionId;
+    if (!execId) return;
+    const j = await this.goalHostResolve({ type: 'goalWalkState', execution_id: execId });
+    const body = (j?.body ?? null) as Record<string, unknown> | null;
+    if (!body) return;
+    this.renderWalkProgress(body);
   }
 
-  private getExecCtx(execId: string): ExecCtx {
-    if (!this.execCtxs.has(execId)) {
-      this.execCtxs.set(execId, { tasks: new Map() });
+  /**
+   * Render live dispatch progress from a polled goalWalkState snapshot.
+   * Appends a feed line for each newly-observed walk step (selected producer,
+   * source, rationale, and any newly-produced shapes), renders the authored
+   * answer once when present, and settles the dispatch (reach verdict, note
+   * completion, deferred impulse-relevance) when the walk reaches a terminal
+   * status.
+   */
+  private renderWalkProgress(body: Record<string, unknown>): void {
+    const steps = Array.isArray(body.steps) ? (body.steps as WalkStep[]) : [];
+    for (let i = this.renderedStepCount; i < steps.length; i++) {
+      const step = steps[i];
+      const sel = step.selected ?? {};
+      const n = (step.index ?? i) + 1;
+      const tmpl = sel.templateId ? shortId(sel.templateId) : 'step';
+      const parts = [`▶ Step ${n}: ${tmpl}`];
+      const src = sourceLabel(sel.source);
+      if (src && src !== 'step') parts.push(`[${src}]`);
+      if (step.rationale) {
+        const r = preview(step.rationale, 80);
+        if (r) parts.push(r);
+      }
+      this.appendMessage(parts.join('  '), step.status === 'failed' ? 'failure' : 'task');
+      if (Array.isArray(step.newShapes) && step.newShapes.length > 0) {
+        this.appendMessage(`  ◎ ${step.newShapes.join(', ')}`, 'impulse');
+      }
     }
-    return this.execCtxs.get(execId)!;
+    this.renderedStepCount = Math.max(this.renderedStepCount, steps.length);
+
+    // Authored answer (question goals): render once, prominently.
+    const answerBody = typeof body.answerBody === 'string' ? body.answerBody.trim() : '';
+    if (answerBody && !this.answerRendered) {
+      this.answerRendered = true;
+      this.appendAnswerBlock(answerBody, undefined);
+    }
+
+    // Settle when the walk reports a terminal status. `status` is the template
+    // exit; `reached` is the honest verdict — either being present-and-terminal
+    // ends the dispatch.
+    const status = String(body.status ?? '');
+    const reached = body.reached as boolean | null | undefined;
+    const terminal =
+      status === 'completed' ||
+      status === 'failed' ||
+      (status !== 'running' && (reached === true || reached === false));
+    if (terminal && this.dispatching) {
+      const ok = status !== 'failed' && reached !== false;
+      this.appendMessage(`${ok ? '✓' : '✗'} Execution ${ok ? 'complete' : 'failed'}`, ok ? 'success' : 'failure');
+      if (this.goalFile) {
+        this.goalNoteManager.markComplete(this.goalFile, ok ? 'completed' : 'failed', this.mintedConcepts);
+      }
+      this.dispatching = false;
+      this.setDispatchBtnState(false);
+      void this.renderReachVerdict();
+      const settleId = this.activeExecutionId ?? '';
+      const fireRelevance = this.pendingRelevance.get(settleId);
+      if (fireRelevance) {
+        this.pendingRelevance.delete(settleId);
+        fireRelevance(ok);
+      }
+      this.stopWalkPoll();
+    }
   }
 
   /**
@@ -2156,310 +2120,5 @@ export class GoalDispatchView extends ItemView {
       });
     }
     this.scrollToBottom();
-  }
-
-  /**
-   * Increment the suppressed-event counter and update (or create) a single
-   * collapsed summary line in the output so the user can see the count
-   * without the events themselves flooding the panel.
-   */
-  private bumpSuppressed(): void {
-    this.suppressedCount++;
-    if (!this.outputEl) return;
-    const text = `· ${this.suppressedCount} infrastructure event${this.suppressedCount === 1 ? '' : 's'} suppressed (binding / validators / scope)`;
-    if (this.suppressedSummaryLine) {
-      const msgSpan = this.suppressedSummaryLine.querySelector('.sub-feed-msg');
-      if (msgSpan) msgSpan.textContent = text;
-      return;
-    }
-    const line = this.outputEl.createDiv('sub-feed-line sub-t-suppressed');
-    line.createSpan({ cls: 'sub-feed-ts', text: this.feedTs() });
-    line.createSpan({ cls: 'sub-feed-msg', text });
-    this.suppressedSummaryLine = line;
-    this.scrollToBottom();
-  }
-
-  private handleWSMessage(raw: string): void {
-    let msg: Record<string, unknown>;
-    try {
-      msg = JSON.parse(raw);
-    } catch {
-      return;
-    }
-    if (!this.dispatching && !this.activeExecutionId) return;
-
-    // While buffering (waiting for poll to return executionId), stash events
-    // keyed by execId so we can replay just the right one afterward.
-    if (this.buffering) {
-      const d = (msg.data ?? msg) as Record<string, unknown>;
-      const eid = (d.execution_id ?? d.executionId) as string | undefined;
-      if (eid) {
-        if (!this.eventBuffer.has(eid)) this.eventBuffer.set(eid, []);
-        this.eventBuffer.get(eid)!.push(msg);
-      }
-      return;
-    }
-
-    this.processWSEvent(msg);
-  }
-
-  private processWSEvent(msg: Record<string, unknown>): void {
-    const type = msg.type as string | undefined;
-    if (!type) return;
-
-    // Events nest their payload under `data`; older broadcasts hoist to top.
-    const data = (msg.data ?? msg) as Record<string, unknown>;
-    const execId = (data.execution_id ?? data.executionId) as string | undefined;
-    const taskId = (data.task_id ?? data.taskId) as string | undefined;
-
-    // Strict filter: root execution + registered sub-executions.
-    const isRoot = !execId || execId === this.activeExecutionId;
-    if (!isRoot && !this.execCtxs.has(execId ?? '')) return;
-
-    // Suppress infrastructure sub-activities (slot-binding, validator-dispatch,
-    // shape-provider-goal escalation, etc.). Their templateName is checked on
-    // activity.started; if hidden, the execId is recorded and all subsequent
-    // events on that execId are dropped + counted. The root execution and
-    // concept events are never suppressed.
-    if (!isRoot && execId && this.hiddenExecIds.has(execId)) {
-      this.bumpSuppressed();
-      return;
-    }
-    if (
-      !isRoot &&
-      execId &&
-      (type === 'activity.started' || type === 'execution_started' || type === 'execution.started')
-    ) {
-      const variantName = (data.template_name ?? data.templateName ?? data.templateId ?? data.variant_id) as string | undefined;
-      if (isHiddenTemplate(variantName)) {
-        this.hiddenExecIds.add(execId);
-        this.bumpSuppressed();
-        return;
-      }
-    }
-
-    const pad = isRoot ? '' : '  ';
-    const cpd = isRoot ? '  ' : '    ';
-
-    switch (type) {
-
-      // ── execution lifecycle ───────────────────────────────────────────────
-      case 'activity.started':
-      case 'execution_started':
-      case 'execution.started': {
-        const variantId = (data.template_name ?? data.templateName ?? data.variant_id ?? data.variantId ?? data.templateId) as string | undefined;
-        if (execId) {
-          const ctx = this.getExecCtx(execId); // registers it, passes future filter
-          ctx.variantId = variantId;
-        }
-        if (isRoot && variantId) {
-          // Show the activity name for the root execution
-          this.appendMessage(`◈ Activity: ${variantId}`);
-        } else if (!isRoot && variantId) {
-          this.appendMessage(`${pad}↳ Sub-activity: ${variantId}`, 'sub');
-        }
-        break;
-      }
-
-      // ── task lifecycle ────────────────────────────────────────────────────
-      case 'task.started': {
-        const idx = (data.task_index ?? data.taskIndex) as number | undefined;
-        const desc = (data.description ?? data.task_description) as string | undefined;
-        if (execId && taskId) {
-          const ctx = this.getExecCtx(execId);
-          ctx.tasks.set(taskId, { index: idx ?? 0, description: desc ?? taskId, startedAt: Date.now() });
-        }
-        const n = idx !== undefined ? `${idx + 1}` : '?';
-        this.appendMessage(`${pad}▶ Task ${n}: ${desc ?? taskId}`, 'task');
-        break;
-      }
-
-      case 'task.completed': {
-        const success = (data.success ?? data.succeeded) as boolean | undefined;
-        const durationMs = (data.duration_ms ?? data.durationMs) as number | undefined;
-        const error = (data.error ?? data.error_message) as string | undefined;
-        const outputIds = (data.output_impulse_ids ?? data.outputImpulseIds) as string[] | undefined;
-        const inputIds = (data.input_impulse_ids ?? data.inputImpulseIds) as string[] | undefined;
-        const idx = ((data.task_index ?? data.taskIndex) as number | undefined)
-          ?? (execId && taskId ? this.execCtxs.get(execId)?.tasks.get(taskId)?.index : undefined);
-        const n = idx !== undefined ? `${idx + 1}` : '?';
-        const durStr = durationMs ? `  ${fmtDuration(durationMs)}` : '';
-        const outStr = outputIds?.length ? `  → ${outputIds.length} output${outputIds.length > 1 ? 's' : ''}` : '';
-        const inStr = inputIds?.length ? `  ← ${inputIds.length} in` : '';
-
-        if (success === false) {
-          const errStr = error ? `  ${error.slice(0, 100)}` : '';
-          this.appendMessage(`${pad}✗ Task ${n} failed${errStr}`, 'failure');
-        } else {
-          this.appendMessage(`${pad}✓ Task ${n} done${durStr}${inStr}${outStr}`, 'task');
-        }
-        break;
-      }
-
-      // ── resolver events ───────────────────────────────────────────────────
-      case 'tool.call': {
-        const toolName = (data.tool_name ?? data.tool) as string | undefined;
-        const tier = (data.resolver_tier ?? data.resolverTier) as string | undefined;
-        const latMs = (data.latency_ms ?? data.latencyMs) as number | undefined;
-        const cost = (data.cost_usd ?? data.costUsd) as number | undefined;
-        const tl = tierLabel(tier);
-        const parts: string[] = [`⚙ ${toolName ?? '?'}`];
-        if (tl) parts.push(`[${tl}]`);
-        if (latMs) parts.push(fmtDuration(latMs));
-        if (cost && cost > 0) parts.push(`$${cost.toFixed(4)}`);
-        this.appendMessage(`${cpd}${parts.join('  ')}`, 'tool');
-        break;
-      }
-
-      case 'impulse.resolved': {
-        const shape = (data.shape ?? data.impulse_id ?? data.impulseId) as string | undefined;
-        const resolverId = (data.resolver_id ?? data.resolverId) as string | undefined;
-        const vessel = (data.vessel_id ?? data.vesselId) as string | undefined;
-        const body = data.body;
-        const latMs = (data.latency_ms ?? data.latencyMs) as number | undefined;
-
-        const parts: string[] = [`◎ ${shape ?? '?'}`];
-        if (resolverId) parts.push(`via ${shortId(resolverId)}`);
-        if (vessel && vessel !== resolverId) parts.push(`@ ${shortId(vessel)}`);
-        if (latMs) parts.push(fmtDuration(latMs));
-
-        // Body preview: show what context was actually loaded
-        if (body !== undefined && body !== null) {
-          const b = body as Record<string, unknown> | string;
-          if (typeof b === 'object' && b.truncated) {
-            parts.push(`↯ ${preview(b.summary, 50)}`);
-          } else {
-            const p = preview(body, 60);
-            if (p) parts.push(`"${p}"`);
-          }
-        }
-        this.appendMessage(`${cpd}${parts.join('  ')}`, 'impulse');
-        break;
-      }
-
-      // ── concept lifecycle ─────────────────────────────────────────────────
-      case 'concept.created':
-      case 'concept_created': {
-        // concept-db's bus payload wraps the concept as `data.concept = {...}`.
-        // Older / unprefixed payloads hoisted fields to data.* directly. Read both.
-        const conceptObj = (data.concept ?? data) as Record<string, unknown>;
-        const conceptId = (conceptObj.id ?? data.concept_id ?? data.conceptId) as string | undefined;
-        const content = conceptObj.content as string | undefined;
-        const summary = (conceptObj.summary ?? data.summary ?? data.title) as string | undefined;
-        const shape = (conceptObj.shape ?? data.shape ?? conceptObj.source_type ?? data.source_type) as string | undefined;
-
-        if (conceptId && isRoot) {
-          this.mintedConcepts.push({ id: conceptId, summary });
-        }
-
-        const parts: string[] = ['◆'];
-        if (shape) parts.push(shape);
-        parts.push(`Concept: ${conceptId ? shortId(conceptId) : '?'}`);
-        const previewText = summary ?? content;
-        if (previewText) {
-          const p = preview(previewText, 60);
-          if (p) parts.push(`"${p}"`);
-        }
-        this.appendMessage(`${pad}${parts.join('  ')}`, 'concept');
-
-        // When the concept is the goal's authored answer (shape goalAnswer or
-        // origin=summarize-and-emit-concept), render the full answer as a
-        // distinct block so the user reads the response directly in the panel.
-        // Without this they'd see only a 60-char preview and have to open the
-        // vault note or query concept-db to read the actual answer.
-        const meta = (conceptObj.pointer as Record<string, unknown> | undefined)?.metadata as Record<string, unknown> | undefined;
-        const origin = meta?.origin as string | undefined;
-        const isGoalAnswer = shape === 'goalAnswer' || origin === 'summarize-and-emit-concept';
-        if (isRoot && isGoalAnswer && content) {
-          this.appendAnswerBlock(content, conceptId);
-        }
-        break;
-      }
-
-      case 'concept.linked':
-      case 'concept_linked': {
-        const from = (data.from_concept_id ?? data.fromConceptId ?? data.from) as string | undefined;
-        const to = (data.to_concept_id ?? data.toConceptId ?? data.to) as string | undefined;
-        const edgeType = (data.edge_type ?? data.edgeType ?? data.relation) as string | undefined;
-        const parts: string[] = [
-          `↔ Linked ${from ? shortId(from) : '?'} ↔ ${to ? shortId(to) : '?'}`,
-        ];
-        if (edgeType) parts.push(`(${edgeType})`);
-        this.appendMessage(`${pad}${parts.join('  ')}`, 'concept-link');
-        break;
-      }
-
-      case 'concept.usage':
-        // Silently skip — too noisy for the dispatch view.
-        break;
-
-      // ── execution completion ──────────────────────────────────────────────
-      case 'activity.completed':
-      case 'execution.completed':
-      case 'execution_completed': {
-        const success = (data.success ?? data.succeeded) as boolean | undefined;
-        const durationMs = (data.duration_ms ?? data.durationMs) as number | undefined;
-        const cost = (data.cost ?? data.cost_usd) as number | undefined;
-        const durStr = durationMs ? `  ${fmtDuration(durationMs)}` : '';
-        const costStr = cost && cost > 0 ? `  $${cost.toFixed(4)}` : '';
-
-        if (isRoot) {
-          const ok = success !== false;
-          this.appendMessage(
-            `${ok ? '✓' : '✗'} Execution ${ok ? 'complete' : 'failed'}${durStr}${costStr}`,
-            ok ? 'success' : 'failure',
-          );
-          if (this.goalFile) {
-            this.goalNoteManager.markComplete(
-              this.goalFile,
-              ok ? 'completed' : 'failed',
-              this.mintedConcepts,
-            );
-          }
-          this.dispatching = false;
-          this.setDispatchBtnState(false);
-          void this.renderReachVerdict();
-          // Fire the deferred impulse-relevance write with the real outcome.
-          const settleId = execId ?? this.activeExecutionId ?? '';
-          const fireRelevance = this.pendingRelevance.get(settleId);
-          if (fireRelevance) {
-            this.pendingRelevance.delete(settleId);
-            fireRelevance(ok);
-          }
-        } else {
-          const ok = success !== false;
-          this.appendMessage(`${pad}${ok ? '✓' : '✗'} Sub-activity done${durStr}`, ok ? 'sub' : 'failure');
-        }
-        break;
-      }
-
-      case 'activity.failed':
-      case 'execution.failed': {
-        if (isRoot) {
-          const err = (data.error ?? data.error_message) as string | undefined;
-          this.appendMessage(`✗ Execution failed${err ? `  ${err.slice(0, 80)}` : ''}`, 'failure');
-          if (this.goalFile) this.goalNoteManager.markComplete(this.goalFile, 'failed', this.mintedConcepts);
-          this.dispatching = false;
-          this.setDispatchBtnState(false);
-          void this.renderReachVerdict();
-        } else {
-          this.appendMessage(`${pad}✗ Sub-activity failed`, 'failure');
-        }
-        break;
-      }
-
-      default: {
-        // Unknown event — show type so nothing is silently swallowed
-        if (isRoot) this.appendMessage(`• ${type}`, undefined);
-        break;
-      }
-    }
-
-    if (this.goalFile) {
-      this.goalNoteManager.appendEvent(
-        this.goalFile,
-        `- ${new Date().toISOString()} ${type} exec=${execId ?? ''} task=${taskId ?? ''}`,
-      );
-    }
   }
 }

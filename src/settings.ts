@@ -107,13 +107,6 @@ export interface ObsidianVesselSettings {
   /** Maximum nodes per canvas */
 
   // ==========================================================================
-  // WebSocket Settings
-  // ==========================================================================
-
-  /** WebSocket URL for real-time updates */
-  websocketUrl: string;
-
-  // ==========================================================================
   // Concept-DB Frontend Settings
   // ==========================================================================
 
@@ -258,9 +251,6 @@ export const DEFAULT_SETTINGS: ObsidianVesselSettings = {
   // Note formatting
 
   // Canvas
-
-  // WebSocket
-  websocketUrl: '',  // Will be derived from activityApiUrl if empty
 
   // Concept-DB Frontend
   enableConceptDbSync: false,
