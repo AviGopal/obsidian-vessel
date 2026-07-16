@@ -1682,6 +1682,15 @@ export class GoalDispatchView extends ItemView {
       header.createSpan({ cls: `sub-chip ${ok ? 'sub-chip--ok' : 'sub-chip--warn'} sub-step-status`, text: step.status });
     }
 
+    // Narrative why-line: the posterior stated as evidence a person acts on,
+    // with the strongest held-back rival inline as the counterfactual.
+    const rivalsAll = (Array.isArray(step.candidates) ? step.candidates : []).filter((c) => c.templateId && c.templateId !== sel.templateId);
+    node.createDiv({ cls: 'sub-step-why', text: posteriorSentence(sel, rivalsAll.length) });
+    const topRival = [...rivalsAll].sort((a, b) => (b.sampledScore ?? 0) - (a.sampledScore ?? 0))[0];
+    if (topRival) {
+      node.createDiv({ cls: 'sub-step-shadowline', text: shadowSentence({ templateId: topRival.templateId ? shortId(topRival.templateId) : undefined, alpha: topRival.alpha, beta: topRival.beta, rejectedBecause: topRival.rejectedBecause }) });
+    }
+
     // Rationale prose.
     if (step.rationale) {
       node.createDiv({ cls: 'sub-step-rationale', text: step.rationale, attr: { title: step.rationale } });
