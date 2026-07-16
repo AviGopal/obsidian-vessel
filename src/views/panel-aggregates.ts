@@ -31,6 +31,8 @@ const NEXT_TEMPLATE_ID = 'composed-cap-substrate-next-selection-aggregator-auth'
 
 let pulseVerdict: AggregateVerdict | null = null;
 let pulseInFlight: Promise<AggregateVerdict | null> | null = null;
+let pulseLastAttempt = 0;
+const FAILURE_BACKOFF_MS = 600_000;
 const nextVerdicts = new Map<string, AggregateVerdict>();
 const nextInFlight = new Map<string, Promise<AggregateVerdict | null>>();
 
@@ -104,6 +106,8 @@ export function cachedPulseVerdict(): AggregateVerdict | null {
 export function refreshPulseVerdict(maxAgeMs = 1_800_000): Promise<AggregateVerdict | null> {
   if (pulseVerdict && Date.now() - pulseVerdict.asOf < maxAgeMs) return Promise.resolve(pulseVerdict);
   if (pulseInFlight) return pulseInFlight;
+  if (Date.now() - pulseLastAttempt < FAILURE_BACKOFF_MS) return Promise.resolve(pulseVerdict);
+  pulseLastAttempt = Date.now();
   pulseInFlight = dispatchAndSettle(PULSE_GOAL, PULSE_TEMPLATE_ID)
     .then((v) => {
       if (v && v.sentence) pulseVerdict = v;
@@ -132,6 +136,7 @@ export function requestNextSelection(executionId: string): Promise<AggregateVerd
   if (hit) return Promise.resolve(hit);
   const inflight = nextInFlight.get(executionId);
   if (inflight) return inflight;
+  if (Date.now() - pulseLastAttempt < FAILURE_BACKOFF_MS && pulseVerdict === null) return Promise.resolve(null);
   const goal =
     `Recommend the top-scoring next activity for execution ${executionId} ` +
     'based on its end shape pool and current template metrics.';
