@@ -312,6 +312,10 @@ export class GoalDispatchView extends ItemView {
   private completedDispatches: Array<Record<string, unknown>> = [];
   private completedExpanded = false;
   private fleetTimer: number | null = null;
+  // All-runner running view: fleet feed members (per-substrate dispatch lists),
+  // refreshed at most every ~25s inside the 7s fleet tick.
+  private fleetMembers: Array<Record<string, unknown>> = [];
+  private fleetMembersAt = 0;
   private substrateSeen = false; // true once ANY resolve has answered — gates the boot-transient fast retry
   // Dispatch rows the user has expanded — persisted across the 7s fleet
   // re-render so a running walk's live "why" trail stays open and refreshes.
@@ -805,6 +809,13 @@ export class GoalDispatchView extends ItemView {
       if (!j) return;
         this.substrateSeen = true;
       const dispatches = ((j.body as Record<string, unknown> | undefined)?.dispatches ?? []) as Array<Record<string, unknown>>;
+      if (Date.now() - this.fleetMembersAt > 25_000) {
+        const feed = await this.fetchFleetActivityFeed();
+        if (feed && Array.isArray(feed.members)) {
+          this.fleetMembers = feed.members as Array<Record<string, unknown>>;
+          this.fleetMembersAt = Date.now();
+        }
+      }
       if (
         this.activeDispatchId &&
         dispatches.some(
@@ -1461,10 +1472,23 @@ export class GoalDispatchView extends ItemView {
   private renderFleet(dispatches: Array<Record<string, unknown>>): void {
     const el = this.fleetEl;
     if (!el) return;
-    const fleetSnap = JSON.stringify(dispatches);
+    const fleetSnap = JSON.stringify({ dispatches, members: this.fleetMembers });
     if (this.lastRenderedSnapshot.get('fleet') === fleetSnap) return;
     this.lastRenderedSnapshot.set('fleet', fleetSnap);
-    const running = dispatches.filter((d) => d.status === 'running');
+    // The running view spans every runner the fleet feed can see, grouped by
+    // home substrate ("currently running, from all runners, grouped by
+    // address"); the overlay-picked owner's own list is the fallback when
+    // the feed has not answered yet.
+    const memberRunning = this.fleetMembers.flatMap((m) => {
+      const home = String(m.substrate ?? '');
+      return ((Array.isArray(m.dispatches) ? m.dispatches : []) as Array<Record<string, unknown>>)
+        .filter((d) => d.status === 'running')
+        .map((d) => ({ ...d, __home: home } as Record<string, unknown>));
+    });
+    const localRunning = dispatches.filter((d) => d.status === 'running');
+    const running = memberRunning.length > 0
+      ? memberRunning.sort((a, b) => String(a.__home ?? '').localeCompare(String(b.__home ?? '')))
+      : localRunning;
     this.completedDispatches = dispatches.filter((d) => d.status !== 'running');
     let header = el.querySelector(':scope > .sub-section-header') as HTMLElement | null;
     if (!header) {
@@ -1478,27 +1502,30 @@ export class GoalDispatchView extends ItemView {
     } else if (running.length > 0 && emptyNote) {
       emptyNote.remove();
     }
-
-    // Runner group head: local in-flight cards all execute on goal-host;
-    // the hue key matches the pulse runner chips.
-    let groupHead = el.querySelector(':scope > .sub-group-head') as HTMLElement | null;
-    if (running.length > 0 && !groupHead) {
-      groupHead = el.createDiv({ cls: 'sub-group-head' });
-      groupHead.createSpan({ cls: 'sub-runner-dot is-goalhost' });
-      groupHead.createSpan({ text: 'goal-host' });
-      groupHead.createSpan({ cls: 'sub-group-n' });
-    } else if (running.length === 0 && groupHead) {
-      groupHead.remove();
-      groupHead = null;
-    }
-    if (groupHead) {
-      const n = groupHead.querySelector('.sub-group-n') as HTMLElement | null;
-      if (n) n.setText(String(running.length));
-    }
     const seen = new Set<string>();
+    const seenHeads = new Set<string>();
+    let lastHome: string | null = null;
     for (const d of running) {
       const key = String(d.dispatchId ?? d.id ?? '');
       seen.add(key);
+      // Runner group head whenever the home substrate changes (rows are
+      // sorted by it); hue key matches the pulse runner chips.
+      const home = String(d.__home ?? '');
+      if (home !== lastHome) {
+        lastHome = home;
+        seenHeads.add(home);
+        let head = el.querySelector(`:scope > [data-runner-head="${CSS.escape(home)}"]`) as HTMLElement | null;
+        if (!head) {
+          head = el.createDiv({ cls: 'sub-group-head' });
+          head.dataset.runnerHead = home;
+          head.createSpan({ cls: 'sub-runner-dot is-goalhost' });
+          head.createSpan({ text: home && home !== 'local' ? `goal-host · ${home}` : 'goal-host' });
+          head.createSpan({ cls: 'sub-group-n' });
+        }
+        const n = head.querySelector('.sub-group-n') as HTMLElement | null;
+        if (n) n.setText(String(running.filter((r) => String(r.__home ?? '') === home).length));
+        el.appendChild(head);
+      }
       const rowSnap = JSON.stringify(d);
       let wrap = el.querySelector(`:scope > [data-dispatch-key="${CSS.escape(key)}"]`) as HTMLElement | null;
       if (wrap && wrap.dataset.rowSnap === rowSnap) {
@@ -1517,6 +1544,10 @@ export class GoalDispatchView extends ItemView {
     for (const stale of Array.from(el.querySelectorAll(':scope > [data-dispatch-key]'))) {
       const k = (stale as HTMLElement).dataset.dispatchKey ?? '';
       if (!seen.has(k)) stale.remove();
+    }
+    for (const staleHead of Array.from(el.querySelectorAll(':scope > [data-runner-head]'))) {
+      const k = (staleHead as HTMLElement).dataset.runnerHead ?? '';
+      if (!seenHeads.has(k)) staleHead.remove();
     }
     this.renderCompleted();
   }
