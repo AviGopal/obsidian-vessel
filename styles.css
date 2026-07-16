@@ -1477,3 +1477,132 @@ body {
 .sub-card--error .sub-section-header {
   color: var(--sub-error, var(--text-error));
 }
+
+/* ============================================
+   Panel redesign — narrative-first surfaces
+   Every fact leads with a human sentence; raw values demote to
+   annotations. Runner identity is four fixed categorical hues
+   (mapped to Obsidian theme colors so vault themes carry through);
+   reach verdicts keep the reserved status colors and always pair
+   color with a word.
+   ============================================ */
+body {
+  --sub-runner-goalhost: var(--color-blue);
+  --sub-runner-lightdispatch: var(--color-green);
+  --sub-runner-boredom: var(--color-orange);
+  --sub-runner-operator: var(--color-purple);
+}
+
+/* Pulse tiles: narrative caption under each value. */
+.sub-stat-cap {
+  font-size: 11px;
+  color: var(--sub-text-muted);
+  margin-top: 3px;
+  line-height: 1.35;
+}
+.sub-stat-tile--wide { grid-column: 1 / -1; }
+.sub-stat-meter {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--sub-bg-alt);
+  margin-top: 6px;
+  overflow: hidden;
+}
+.sub-stat-meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--sub-info);
+}
+
+/* Runner chips: executor identity, same hue keys the fleet cards use. */
+.sub-runner-chips { display: flex; gap: 5px; margin-top: 6px; flex-wrap: wrap; }
+.sub-runner-chip {
+  font-size: 10.5px;
+  font-family: var(--font-monospace);
+  color: var(--sub-text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--sub-bg-alt);
+  border: 1px solid var(--sub-border);
+  padding: 1px 7px 1px 6px;
+  border-radius: 20px;
+}
+.sub-runner-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+.sub-runner-dot.is-goalhost { background: var(--sub-runner-goalhost); }
+.sub-runner-dot.is-lightdispatch { background: var(--sub-runner-lightdispatch); }
+.sub-runner-dot.is-boredom { background: var(--sub-runner-boredom); }
+.sub-runner-dot.is-operator { background: var(--sub-runner-operator); }
+
+/* The substrate's own sentence about its vitals (pulse aggregator verdict). */
+.sub-pulse-narr {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--sub-text);
+  margin-top: 8px;
+}
+.sub-pulse-asof {
+  font-size: 10.5px;
+  color: var(--sub-text-faint);
+  font-family: var(--font-monospace);
+  margin-left: 6px;
+}
+
+/* Walk step narrative: the posterior stated as evidence a person acts on. */
+.sub-step-why {
+  font-size: 11.5px;
+  color: var(--sub-text);
+  line-height: 1.42;
+  margin: 3px 0 2px;
+}
+.sub-step-shadowline {
+  font-size: 10.5px;
+  color: var(--sub-text-faint);
+  line-height: 1.4;
+  margin-top: 2px;
+  padding-left: 12px;
+  position: relative;
+}
+.sub-step-shadowline::before {
+  content: "⇢";
+  position: absolute;
+  left: 0;
+  color: var(--sub-text-faint);
+}
+
+/* Pool contribution stated as a sentence above the chips. */
+.sub-pool-sentence {
+  font-size: 11px;
+  color: var(--sub-text-muted);
+  line-height: 1.42;
+  margin-bottom: 3px;
+}
+
+/* "What it should run next" — the next-selection aggregator's judged answer. */
+.sub-next {
+  margin-top: 8px;
+  background: var(--sub-bg);
+  border: 1px solid var(--sub-border);
+  border-radius: var(--sub-radius-m);
+  padding: 8px 10px;
+}
+.sub-next-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--sub-text-faint);
+  font-weight: 600;
+}
+.sub-next-rec {
+  font-size: 11.5px;
+  margin-top: 4px;
+  line-height: 1.42;
+  color: var(--sub-text);
+}
+.sub-next-pending {
+  font-size: 11px;
+  margin-top: 4px;
+  color: var(--sub-text-faint);
+  font-style: italic;
+}

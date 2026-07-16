@@ -1245,43 +1245,105 @@ export class GoalDispatchView extends ItemView {
   private async renderPulse(): Promise<void> {
     const el = this.pulseEl;
     if (!el) return;
-    const [dj, gj, rhythmRes] = await Promise.all([
+    const [dj, gj, rhythmRes, feed, reg] = await Promise.all([
       this.goalHostResolve({ type: 'activeDispatches' }),
       this.devVesselResolve('substrateGap', { limit: 200 }),
       this.devVesselResolve('poolImpulse', { shape: 'timeShapedRhythm', limit: 12 }),
+      this.fetchFleetActivityFeed(),
+      sidecarResolveBody({ type: 'vesselRegistry' }),
     ]);
     const dispatches = ((dj?.body as Record<string, unknown> | undefined)?.dispatches ?? []) as Array<Record<string, unknown>>;
     const gaps = ((gj?.body as Record<string, unknown> | undefined)?.gaps ?? []) as Array<Record<string, unknown>>;
-    const pulseSnapshot = JSON.stringify({ dispatches, gaps, rhythmRes });
+    const regBody = (reg ?? {}) as Record<string, unknown>;
+    const regContent = ((regBody.content ?? regBody) as Record<string, unknown>);
+    const vessels = (Array.isArray(regContent.vessels) ? regContent.vessels : []) as Array<Record<string, unknown>>;
+    const members = (feed && Array.isArray(feed.members) ? feed.members : []) as Array<Record<string, unknown>>;
+    const verdict = cachedPulseVerdict();
+    const pulseSnapshot = JSON.stringify({ dispatches, gaps, rhythmRes, v: vessels.length, m: members.length, at: verdict?.asOf ?? 0 });
     if (this.lastRenderedSnapshot.get('pulse') === pulseSnapshot) return;
     this.lastRenderedSnapshot.set('pulse', pulseSnapshot);
     el.empty();
     el.createDiv({ cls: 'sub-section-header', text: 'Pulse' });
     const tiles = el.createDiv({ cls: 'sub-pulse-tiles' });
-    const addTile = (label: string, value: string, delta?: string, tooltip?: string): void => {
-      const tile = tiles.createDiv({ cls: 'sub-stat-tile' });
+    const addTile = (label: string, value: string, cap: string, opts?: { wide?: boolean; meterPct?: number; tooltip?: string }): HTMLElement => {
+      const tile = tiles.createDiv({ cls: `sub-stat-tile${opts?.wide ? ' sub-stat-tile--wide' : ''}` });
       tile.createDiv({ cls: 'sub-stat-label', text: label });
       tile.createDiv({ cls: 'sub-stat-value', text: value });
-      if (delta) tile.createDiv({ cls: 'sub-stat-delta', text: delta });
-      if (tooltip) tile.setAttr('title', tooltip);
+      if (typeof opts?.meterPct === 'number') {
+        const meter = tile.createDiv({ cls: 'sub-stat-meter' });
+        const fill = meter.createDiv({ cls: 'sub-stat-meter-fill' });
+        fill.style.width = `${Math.max(0, Math.min(100, Math.round(opts.meterPct)))}%`;
+      }
+      if (cap) tile.createDiv({ cls: 'sub-stat-cap', text: cap });
+      if (opts?.tooltip) tile.setAttr('title', opts.tooltip);
+      return tile;
     };
-    const settled = dispatches.filter((d) => d['status'] === 'completed' || d['status'] === 'failed').slice(-10);
-    if (settled.length) {
-      const reachedCount = settled.filter((d) => d['reached'] === true || d['reached'] === 'yes').length;
-      addTile('reach', `${reachedCount}/${settled.length}`, undefined, 'Goal-reach verdicts on the last settled dispatches - the honest outcome signal, not exit status.');
+    // Reach rate — the one number the execution contract is measured against.
+    const memberDispatches = members.flatMap((m) => (Array.isArray(m.dispatches) ? m.dispatches : []) as Array<Record<string, unknown>>);
+    const settledWindow = (memberDispatches.length ? memberDispatches : dispatches)
+      .filter((d) => d['status'] === 'completed' || d['status'] === 'failed')
+      .sort((a, b) => Number(a['startedAt'] ?? 0) - Number(b['startedAt'] ?? 0))
+      .slice(-20);
+    if (settledWindow.length) {
+      const reachedCount = settledWindow.filter((d) => d['reached'] === true || d['reached'] === 'yes').length;
+      const pct = Math.round((reachedCount / settledWindow.length) * 100);
+      addTile('reach rate', `${pct}%`, reachCaption(reachedCount, settledWindow.length), {
+        wide: true,
+        meterPct: pct,
+        tooltip: 'Goal-reach verdicts on the last settled dispatches - the honest outcome signal, not exit status.',
+      });
+    }
+    if (vessels.length) {
+      addTile('vessels', String(vessels.length), vesselsCaption(vessels.length), {
+        tooltip: vessels.map((v) => String(v['vesselId'] ?? '')).join(', '),
+      });
+    }
+    if (members.length) {
+      const names = members.map((m) => String(m['substrate'] ?? ''));
+      addTile('peers', String(members.length), peersCaption(names), {
+        tooltip: 'Substrates reachable across the federation relay.',
+      });
     }
     if (gaps.length) {
       const open = gaps.filter((g) => g['status'] === 'open');
       const dayAgo = Date.now() - 86_400_000;
       const closed24 = gaps.filter((g) => g['status'] === 'closed' && Date.parse(String(g['updated_at'] ?? '')) > dayAgo).length;
-      addTile('gaps open', String(open.length), `${closed24} closed/24h`, 'Gap flow: how much self-improvement backlog is open and how fast it is draining.');
       const oldest = open.map((g) => Date.parse(String(g['created_at'] ?? g['detected_at'] ?? ''))).filter((t) => Number.isFinite(t)).sort((a, b) => a - b)[0];
-      if (oldest !== undefined) {
-        const hours = Math.round((Date.now() - oldest) / 3_600_000);
-        const age = hours >= 48 ? `${Math.round(hours / 24)}d` : `${hours}h`;
-        addTile('oldest gap', age, undefined, 'Age of the oldest open gap - the durability/latency edge of the close loop.');
+      addTile('known gaps', String(open.length), gapsCaption(closed24, oldest !== undefined ? Date.now() - oldest : null), {
+        tooltip: 'Gap flow: how much self-improvement backlog is open and how fast it is draining.',
+      });
+    }
+    // Runners — who can execute goals simultaneously; hue keys match the fleet cards.
+    const runnerNames: string[] = [];
+    for (const v of vessels) {
+      const shapes = (Array.isArray(v['shapes']) ? v['shapes'] : []).map(String);
+      if (shapes.includes('goal_execution')) runnerNames.push('goal-host');
+      if (shapes.includes('light_dispatch_execution')) runnerNames.push('light-dispatch');
+    }
+    if (feed && feed['boredom']) runnerNames.push('boredom');
+    if (runnerNames.length) {
+      const tile = addTile('runners', String(runnerNames.length), runnersCaption(runnerNames));
+      const chips = tile.createDiv({ cls: 'sub-runner-chips' });
+      for (const name of runnerNames) {
+        const chip = chips.createSpan({ cls: 'sub-runner-chip' });
+        const hue = name === 'goal-host' ? 'is-goalhost' : name === 'light-dispatch' ? 'is-lightdispatch' : 'is-boredom';
+        chip.createSpan({ cls: `sub-runner-dot ${hue}` });
+        chip.createSpan({ text: name });
       }
     }
+    // The substrate's own sentence about its vitals: the pulse aggregator's
+    // reach-judged verdict, refreshed when stale (a dispatched goal, not a poll).
+    if (verdict && verdict.sentence) {
+      const narr = el.createDiv({ cls: 'sub-pulse-narr' });
+      narr.setText(verdict.sentence);
+      narr.createSpan({ cls: 'sub-pulse-asof', text: asOfNote(verdict.asOf) });
+    }
+    void refreshPulseVerdict().then((v) => {
+      if (v && v.asOf !== (verdict?.asOf ?? 0)) {
+        this.lastRenderedSnapshot.delete('pulse');
+        void this.renderPulse();
+      }
+    });
     const rhythms = (((rhythmRes?.body as Record<string, unknown> | undefined)?.['impulses'] ?? []) as Array<unknown>).filter((r): r is { body: Record<string, unknown> & { staleness: number } } => {
       if (!r || typeof r !== 'object') return false;
       const rb = (r as Record<string, unknown>)['body'];
