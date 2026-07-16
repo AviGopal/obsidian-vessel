@@ -13,7 +13,6 @@ export interface ObsidianVesselSettings {
   // ==========================================================================
 
   /** URL of the activity API endpoint */
-  activityApiUrl: string;
 
   /** API key for authentication */
   apiKey: string;
@@ -216,7 +215,6 @@ export function generateVesselId(): string {
  */
 export const DEFAULT_SETTINGS: ObsidianVesselSettings = {
   // Connection
-  activityApiUrl: 'http://localhost:18080',
   apiKey: '',
 
   // Vessel registration
@@ -290,13 +288,6 @@ export const DEFAULT_SETTINGS: ObsidianVesselSettings = {
  */
 export function validateSettings(settings: ObsidianVesselSettings): string[] {
   const errors: string[] = [];
-
-  // Validate URL format
-  try {
-    new URL(settings.activityApiUrl);
-  } catch {
-    errors.push('Activity API URL is not a valid URL');
-  }
 
   // Validate port range
   if (settings.serverPort < 1024 || settings.serverPort > 65535) {
