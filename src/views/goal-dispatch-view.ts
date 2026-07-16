@@ -67,6 +67,8 @@ import { GoalNoteManager } from '../goals/goal-note-manager';
 import type { PendingSolicitation } from '../solicitations/solicitation-manager';
 import type { UiFeedbackKind } from '../feedback/ui-feedback-store';
 import { sidecarResolveBody, sidecarHttpAuto } from '../sidecar-manager';
+import { posteriorSentence, shadowSentence, poolDeltaSentence, reachCaption, vesselsCaption, peersCaption, gapsCaption, runnersCaption, asOfNote } from './panel-narrative';
+import { cachedPulseVerdict, refreshPulseVerdict, cachedNextSelection, requestNextSelection } from './panel-aggregates';
 
 export const VIEW_TYPE_GOAL_DISPATCH = 'obsidian-goal-dispatch';
 
