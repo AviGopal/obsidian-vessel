@@ -1317,8 +1317,10 @@ export class GoalDispatchView extends ItemView {
     const runnerNames: string[] = [];
     for (const v of vessels) {
       const shapes = (Array.isArray(v['shapes']) ? v['shapes'] : []).map(String);
-      if (shapes.includes('goal_execution')) runnerNames.push('goal-host');
-      if (shapes.includes('light_dispatch_execution')) runnerNames.push('light-dispatch');
+      const vid = String(v['vesselId'] ?? '');
+      const home = vid.includes('@') ? vid.slice(vid.indexOf('@') + 1) : '';
+      if (shapes.includes('goal_execution')) runnerNames.push(home ? `goal-host · ${home}` : 'goal-host');
+      if (shapes.includes('light_dispatch_execution')) runnerNames.push(home ? `light-dispatch · ${home}` : 'light-dispatch');
     }
     if (feed && feed['boredom']) runnerNames.push('boredom');
     if (runnerNames.length) {
@@ -1326,7 +1328,7 @@ export class GoalDispatchView extends ItemView {
       const chips = tile.createDiv({ cls: 'sub-runner-chips' });
       for (const name of runnerNames) {
         const chip = chips.createSpan({ cls: 'sub-runner-chip' });
-        const hue = name === 'goal-host' ? 'is-goalhost' : name === 'light-dispatch' ? 'is-lightdispatch' : 'is-boredom';
+        const hue = name.startsWith('goal-host') ? 'is-goalhost' : name.startsWith('light-dispatch') ? 'is-lightdispatch' : 'is-boredom';
         chip.createSpan({ cls: `sub-runner-dot ${hue}` });
         chip.createSpan({ text: name });
       }
