@@ -807,6 +807,35 @@ export default class ObsidianVesselPlugin extends Plugin {
       sendJson(res, report);
     });
 
+    // ── GET /observations/screenshot ── capture this window as PNG ──────
+    // In-app verification surface for substrate-authored UI work: captures
+    // ONLY the Obsidian window via Electron capturePage (never the host
+    // screen) and returns it base64-encoded with its dimensions.
+    server.addRoute('GET', '/observations/screenshot', async (_req, res) => {
+      try {
+        const req0 = (window as unknown as { require?: (m: string) => unknown }).require;
+        const remote = (req0 ? req0('@electron/remote') : null) as {
+          getCurrentWebContents?: () => { capturePage?: () => Promise<{ toPNG: () => Uint8Array; getSize: () => { width: number; height: number } }> };
+        } | null;
+        const wc = remote?.getCurrentWebContents?.();
+        if (!wc || typeof wc.capturePage !== 'function') {
+          sendError(res, 'capturePage unavailable in this Electron sandbox', 501);
+          return;
+        }
+        const image = await wc.capturePage();
+        const size = image.getSize();
+        const png = image.toPNG();
+        let binary = '';
+        const chunk = 0x8000;
+        for (let i = 0; i < png.length; i += chunk) {
+          binary += String.fromCharCode.apply(null, Array.from(png.subarray(i, i + chunk)) as unknown as number[]);
+        }
+        sendJson(res, { success: true, width: size.width, height: size.height, png_base64: btoa(binary) });
+      } catch (err) {
+        sendError(res, err instanceof Error ? err.message : String(err), 500);
+      }
+    });
+
     // ── POST /actions/rebuild ── delegate → obsidian:concept_rebuild ────
     server.addRoute('POST', '/actions/rebuild', async (_req, res) => {
       try {
