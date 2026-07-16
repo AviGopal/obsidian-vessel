@@ -943,6 +943,7 @@ export default class ObsidianVesselPlugin extends Plugin {
    * Register this vessel with the activity-api backend
    */
   private async registerVessel() {
+    if (this.settings.enableFederationSidecar || this.settings.federationRelayMultiaddr) return;
     if (!this.vesselClient) return;
 
     try {
