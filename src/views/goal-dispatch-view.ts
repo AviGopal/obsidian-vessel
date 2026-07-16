@@ -1597,6 +1597,30 @@ export class GoalDispatchView extends ItemView {
   }
 
   /**
+   * Render the next-selection aggregator's verdict — what this execution
+   * should run next — as a sentence. Dispatches the composed aggregator once
+   * per execution (session-cached, single-flight); re-renders when it settles.
+   */
+  private renderNextSelection(parent: HTMLElement, executionId: string): void {
+    const box = parent.createDiv('sub-next');
+    box.createDiv({ cls: 'sub-next-label', text: 'What it should run next' });
+    const hit = cachedNextSelection(executionId);
+    if (hit) {
+      box.createDiv({ cls: 'sub-next-rec', text: hit.sentence });
+      return;
+    }
+    const pending = box.createDiv({ cls: 'sub-next-pending', text: 'asking the substrate…' });
+    void requestNextSelection(executionId).then((v) => {
+      if (!v || !v.sentence) {
+        pending.setText('no recommendation came back — the aggregator dispatch did not settle');
+        return;
+      }
+      pending.remove();
+      box.createDiv({ cls: 'sub-next-rec', text: v.sentence });
+    });
+  }
+
+  /**
    * Reached-led headline: verdict pill + one-line rationale. `status` is shown
    * only as a small secondary chip; when status=failed but reached=true a single
    * explanatory line replaces the misleading "failed" lead.
