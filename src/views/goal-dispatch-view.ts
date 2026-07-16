@@ -1579,6 +1579,11 @@ export class GoalDispatchView extends ItemView {
     // 4. Learning consequence line (terminal only, when present).
     const learning = (body.learning ?? null) as WalkLearning | null;
     if (learning && typeof learning === 'object') this.renderLearningLine(detail, learning);
+    // 4b. "What it should run next" — the next-selection aggregator's judged
+    // sentence for settled executions (dispatched once per execution, cached).
+    const settledStatus = String(body.status ?? d.status ?? '');
+    const execForNext = typeof d.executionId === 'string' && !d.executionId.startsWith('interrupted:') ? d.executionId : (typeof body.executionId === 'string' ? body.executionId : '');
+    if (execForNext && settledStatus !== 'running') this.renderNextSelection(detail, execForNext);
 
     // 5. Attach to live WS feed.
     const execId = typeof d.executionId === 'string' && !d.executionId.startsWith('interrupted:') ? d.executionId : null;
