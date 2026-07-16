@@ -1419,7 +1419,6 @@ export default class ObsidianVesselPlugin extends Plugin {
     fm: Record<string, unknown>,
     verdict: string,
   ): Promise<void> {
-    const activityApiUrl = this.settings.activityApiUrl;
     const executionId = String(fm.executionId);
     const goal = typeof fm.goal === 'string' && fm.goal.trim()
       ? fm.goal
