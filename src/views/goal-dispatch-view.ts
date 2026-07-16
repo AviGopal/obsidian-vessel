@@ -1250,11 +1250,11 @@ export class GoalDispatchView extends ItemView {
       this.devVesselResolve('substrateGap', { limit: 200 }),
       this.devVesselResolve('poolImpulse', { shape: 'timeShapedRhythm', limit: 12 }),
       this.fetchFleetActivityFeed(),
-      sidecarResolveBody({ type: 'vesselRegistry' }),
+      sidecarHttpAuto({ service: 'discovery', method: 'POST', path: '/resolve', body: { pointer: { type: 'vesselRegistry' } } }),
     ]);
     const dispatches = ((dj?.body as Record<string, unknown> | undefined)?.dispatches ?? []) as Array<Record<string, unknown>>;
     const gaps = ((gj?.body as Record<string, unknown> | undefined)?.gaps ?? []) as Array<Record<string, unknown>>;
-    const regBody = (reg ?? {}) as Record<string, unknown>;
+    const regBody = ((reg?.body ?? {}) as Record<string, unknown>);
     const regContent = ((regBody.content ?? regBody) as Record<string, unknown>);
     const vessels = (Array.isArray(regContent.vessels) ? regContent.vessels : []) as Array<Record<string, unknown>>;
     const members = (feed && Array.isArray(feed.members) ? feed.members : []) as Array<Record<string, unknown>>;
