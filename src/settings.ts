@@ -176,8 +176,8 @@ export interface ObsidianVesselSettings {
    * the plugin's local HTTP server reachable from a REMOTE substrate (a hub
    * across the internet, not just the local container) over a Circuit Relay
    * v2 overlay, without bundling libp2p into the plugin's own esbuild bundle.
+   * The sidecar starts whenever a relay multiaddr (or discovery URL) is configured.
    */
-  enableFederationSidecar: boolean;
 
   /** Circuit Relay v2 multiaddr to reserve on, e.g. `/ip4/<host>/tcp/30333/p2p/<relay-peer-id>`. */
   federationRelayMultiaddr: string;
@@ -272,7 +272,6 @@ export const DEFAULT_SETTINGS: ObsidianVesselSettings = {
   discoveryVesselEndpoint: 'http://127.0.0.1:18100',
 
   // Federation Sidecar
-  enableFederationSidecar: false,
   federationRelayMultiaddr: '',
   federationIngressMultiaddr: '',
   federationHealthPort: 8402,
