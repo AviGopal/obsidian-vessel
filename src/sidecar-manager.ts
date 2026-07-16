@@ -71,16 +71,13 @@ export class SidecarManager {
   start(): void {
     // A configured relay multiaddr implies federation: the toggle stays as an
     // explicit opt-in for local-conduit mode, but setting the relay is enough.
-    if (!this.settings.enableFederationSidecar && !this.settings.federationRelayMultiaddr) {
-      this.logger('info', 'enableFederationSidecar is off and no relay multiaddr is set — not starting');
-      return;
-    }
     // A relay is optional: without one the sidecar runs in LOCAL mode as a
     // pure discovery-routed egress conduit. With a relay, the sidecar derives
     // the hub discovery URL from the relay host itself — so a relay multiaddr
     // plus the API key is a complete federation config.
+    // Relay multiaddr presence is the sole switch for starting the sidecar.
     if (!this.discoveryUrl() && !this.settings.federationRelayMultiaddr) {
-      this.logger('warn', 'enableFederationSidecar is on but neither a relay multiaddr nor a discovery URL is set — not starting');
+      this.logger('warn', 'no relay multiaddr or discovery URL configured — sidecar not starting');
       return;
     }
     this.stopped = false;
