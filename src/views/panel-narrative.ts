@@ -123,3 +123,15 @@ export function asOfNote(asOfMs: number): string {
   if (age < 90_000) return 'just now';
   return `${fmtDuration(age)} ago`;
 }
+
+/** One-line narrative for a running fleet card: who asked, and how it is being run. */
+export function runningNarrative(goal: string, d: { operator?: unknown; selectedTemplateId?: unknown }): string {
+  const op = typeof d.operator === 'string' ? d.operator : '';
+  const who = op
+    ? `Dispatched by ${op}`
+    : 'Picked up by the substrate on its own';
+  const tmpl = typeof d.selectedTemplateId === 'string' && d.selectedTemplateId
+    ? ` — running it as ${d.selectedTemplateId}`
+    : ' — still choosing how to run it';
+  return `${who}${tmpl}.`;
+}

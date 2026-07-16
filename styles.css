@@ -1606,3 +1606,123 @@ body {
   color: var(--sub-text-faint);
   font-style: italic;
 }
+
+/* ── Redesign parity round: mockup-faithful geometry ── */
+
+/* Pulse tiles: tight hairline grid (was loose flex cards). */
+.sub-pulse-tiles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: var(--sub-border);
+  border: 1px solid var(--sub-border);
+  border-radius: 8px;
+  overflow: hidden;
+  padding: 0;
+}
+.sub-stat-tile {
+  background: var(--sub-bg);
+  border: none;
+  border-radius: 0;
+  margin: 0;
+  padding: 8px 10px 9px;
+  min-width: 0;
+}
+
+/* Panel identity strip. */
+.sub-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 2px 2px 8px;
+  border-bottom: 1px solid var(--sub-border);
+}
+.sub-panel-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--sub-ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--sub-ok) 16%, transparent);
+  flex: none;
+}
+.sub-panel-title { font-size: 12.5px; font-weight: 650; letter-spacing: 0.02em; }
+.sub-panel-sub {
+  margin-left: auto;
+  font-family: var(--font-monospace);
+  font-size: 10.5px;
+  color: var(--sub-text-faint);
+}
+
+/* Runner group head above fleet cards. */
+.sub-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--sub-text-muted);
+  margin: 8px 0 4px;
+}
+.sub-group-head .sub-runner-dot { border-radius: 2px; width: 7px; height: 7px; }
+.sub-group-n {
+  margin-left: auto;
+  font-family: var(--font-monospace);
+  font-size: 10.5px;
+  color: var(--sub-text-faint);
+}
+
+/* Running card: runner-colored left accent + narrative line. */
+.sub-card--fleet.is-running-card {
+  background: var(--sub-bg-card);
+  border-left: 2px solid var(--sub-runner-goalhost);
+  border-radius: 6px;
+  padding-left: var(--sub-space-2);
+}
+.sub-fleet-narr {
+  flex-basis: 100%;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--sub-text-muted);
+  margin-top: 2px;
+}
+
+/* Settled-row verdict pill: reached-led, reserved colors, word + dot. */
+.sub-verdict {
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  padding: 1px 7px;
+  border-radius: 20px;
+  white-space: nowrap;
+  flex: none;
+}
+.sub-verdict.is-ok {
+  color: var(--sub-ok);
+  background: color-mix(in srgb, var(--sub-ok) 14%, transparent);
+}
+.sub-verdict.is-no {
+  color: var(--sub-fail);
+  background: color-mix(in srgb, var(--sub-fail) 14%, transparent);
+}
+
+/* Pool contribution: diverging bar (grew / carried / consumed). */
+.sub-contrib { margin-top: 8px; }
+.sub-contrib-bar {
+  display: flex;
+  height: 10px;
+  gap: 2px;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.sub-contrib-seg { height: 100%; border-radius: 3px; }
+.sub-contrib-seg.is-grow { background: var(--sub-info); }
+.sub-contrib-seg.is-keep { background: var(--sub-text-faint); opacity: 0.45; }
+.sub-contrib-seg.is-cut { background: var(--sub-fail); opacity: 0.85; }
+.sub-contrib-legend {
+  display: flex;
+  gap: 12px;
+  margin-top: 4px;
+  font-size: 10.5px;
+  font-family: var(--font-monospace);
+  color: var(--sub-text-muted);
+}

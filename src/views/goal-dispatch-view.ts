@@ -67,7 +67,7 @@ import { GoalNoteManager } from '../goals/goal-note-manager';
 import type { PendingSolicitation } from '../solicitations/solicitation-manager';
 import type { UiFeedbackKind } from '../feedback/ui-feedback-store';
 import { sidecarResolveBody, sidecarHttpAuto } from '../sidecar-manager';
-import { posteriorSentence, shadowSentence, poolDeltaSentence, reachCaption, vesselsCaption, peersCaption, gapsCaption, runnersCaption, asOfNote } from './panel-narrative';
+import { posteriorSentence, shadowSentence, poolDeltaSentence, reachCaption, vesselsCaption, peersCaption, gapsCaption, runnersCaption, asOfNote, runningNarrative } from './panel-narrative';
 import { cachedPulseVerdict, refreshPulseVerdict, cachedNextSelection, requestNextSelection } from './panel-aggregates';
 
 export const VIEW_TYPE_GOAL_DISPATCH = 'obsidian-goal-dispatch';
@@ -1424,6 +1424,17 @@ export class GoalDispatchView extends ItemView {
           row.createSpan({ cls: 'sub-chip sub-chip--sel sub-fleet-activity', text: shortId(tid), attr: { title: 'activity: ' + tid } });
         }
     row.createSpan({ cls: 'sub-fleet-elapsed', text: elapsed });
+    // Reached-led verdict pill for settled rows; narrative line + runner
+    // accent for running rows (mockup parity).
+    if (!running) {
+      const verdictCls = d.reached === true ? 'is-ok' : d.reached === false ? 'is-no' : '';
+      const verdictText = d.reached === true ? '● reached' : d.reached === false ? '● not reached' : '○ unknown';
+      row.createSpan({ cls: `sub-verdict ${verdictCls}`, text: verdictText });
+    }
+    if (running) {
+      row.addClass('is-running-card');
+      row.createDiv({ cls: 'sub-fleet-narr', text: runningNarrative(goal, d as { operator?: unknown; selectedTemplateId?: unknown }) });
+    }
     // Reached-led: when steps failed but the goal was still reached, say so
     // inline rather than letting the ✗-adjacent status imply failure.
     if (!running && d.reached === true && d.status === 'failed') {
@@ -1584,6 +1595,7 @@ export class GoalDispatchView extends ItemView {
     // 4b. "What it should run next" — the next-selection aggregator's judged
     // sentence for settled executions (dispatched once per execution, cached).
     const settledStatus = String(body.status ?? d.status ?? '');
+    if (steps.length > 0 && settledStatus !== 'running') this.renderContribBar(detail, steps);
     const execForNext = typeof d.executionId === 'string' && !d.executionId.startsWith('interrupted:') ? d.executionId : (typeof body.executionId === 'string' ? body.executionId : '');
     if (execForNext && settledStatus !== 'running') this.renderNextSelection(detail, execForNext);
 
@@ -1625,6 +1637,42 @@ export class GoalDispatchView extends ItemView {
       pending.remove();
       box.createDiv({ cls: 'sub-next-rec', text: v.sentence });
     });
+  }
+
+  /**
+   * Pool contribution summary for a settled execution: a diverging bar
+   * (grew / carried / consumed) plus the same fact as a sentence, computed
+   * from the first poolBefore to the last poolAfter across the walk steps.
+   */
+  private renderContribBar(parent: HTMLElement, steps: WalkStep[]): void {
+    const first = steps.find((s) => Array.isArray(s.poolBefore));
+    const last = [...steps].reverse().find((s) => Array.isArray(s.poolAfter));
+    const before = (first?.poolBefore ?? []) as string[];
+    const after = (last?.poolAfter ?? []) as string[];
+    if (before.length === 0 && after.length === 0) return;
+    const beforeSet = new Set(before);
+    const afterSet = new Set(after);
+    const grew = after.filter((s) => !beforeSet.has(s)).length;
+    const consumed = before.filter((s) => !afterSet.has(s)).length;
+    const kept = after.length - grew;
+    const total = Math.max(grew + consumed + kept, 1);
+    const wrap = parent.createDiv('sub-contrib');
+    wrap.createDiv({ cls: 'sub-next-label', text: 'What it did to the shape pool' });
+    const bar = wrap.createDiv('sub-contrib-bar');
+    const seg = (cls: string, n: number): void => {
+      if (n <= 0) return;
+      const s = bar.createSpan({ cls: `sub-contrib-seg ${cls}` });
+      s.style.width = `${Math.round((n / total) * 100)}%`;
+    };
+    seg('is-grow', grew);
+    seg('is-keep', kept);
+    seg('is-cut', consumed);
+    const legend = wrap.createDiv('sub-contrib-legend');
+    if (grew > 0) legend.createSpan({ text: `grew +${grew}` });
+    if (kept > 0) legend.createSpan({ text: `carried ${kept}` });
+    if (consumed > 0) legend.createSpan({ text: `consumed ${consumed}` });
+    const sentence = poolDeltaSentence(before, after);
+    if (sentence) wrap.createDiv({ cls: 'sub-pool-sentence', text: sentence });
   }
 
   /**
