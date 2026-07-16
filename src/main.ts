@@ -226,7 +226,7 @@ export default class ObsidianVesselPlugin extends Plugin {
     // Phase 3: Initialize API client
     // API client is needed for vessel registration and sync
     this.apiClient = new ActivityAPIClient(
-      this.settings.activityApiUrl,
+      '',
       this.settings.apiKey
     );
 
@@ -1017,7 +1017,7 @@ export default class ObsidianVesselPlugin extends Plugin {
 
     // Re-initialize API client with new settings
     this.apiClient = new ActivityAPIClient(
-      this.settings.activityApiUrl,
+      '',
       this.settings.apiKey
     );
 
@@ -1420,8 +1420,6 @@ export default class ObsidianVesselPlugin extends Plugin {
     verdict: string,
   ): Promise<void> {
     const activityApiUrl = this.settings.activityApiUrl;
-    if (!activityApiUrl) return;
-
     const executionId = String(fm.executionId);
     const goal = typeof fm.goal === 'string' && fm.goal.trim()
       ? fm.goal
