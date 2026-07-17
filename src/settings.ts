@@ -28,6 +28,15 @@ export interface ObsidianVesselSettings {
   /** Folder for generated canvases */
   canvasFolder: string;
 
+  /** Folder for execution trace notes */
+  traceNoteFolder: string;
+
+  /** Folder for activity template notes */
+  templateNoteFolder: string;
+
+  /** Template content for generated notes */
+  noteTemplate: string;
+
   /** Whether to sync on plugin load */
 
   /** Interval between automatic syncs (in minutes) */
@@ -237,6 +246,9 @@ export const DEFAULT_SETTINGS: ObsidianVesselSettings = {
 
   // Sync preferences
   canvasFolder: 'Obsidian/Canvases',
+  traceNoteFolder: 'Obsidian/Traces',
+  templateNoteFolder: 'Obsidian/Templates',
+  noteTemplate: '',
   syncIntervalMinutes: 5,
   syncBatchSize: 50,
   preserveUserContent: true,
