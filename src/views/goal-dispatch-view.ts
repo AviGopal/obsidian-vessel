@@ -1259,18 +1259,12 @@ export class GoalDispatchView extends ItemView {
    * activity: reach on recent dispatches, gap flow (open / closed last 24h),
    * and the oldest open gap's age. Rendered as sub-chips - no new primitives.
    */
-  private renderPulse(): void {
-    const container = this.containerEl.createDiv({ cls: 'pulse-container' });
-    container.empty();
-    const pulse = (this as unknown as { getLatestPulse?: () => { timestamp: string; label: string } | null }).getLatestPulse?.() ?? null;
-    if (!pulse) {
-      container.createSpan({ text: 'No pulse data', cls: 'sub-feed-line' });
-      return;
-    }
-    const line = container.createDiv({ cls: 'sub-feed-line' });
-    line.createSpan({ text: `pulse @ ${pulse.timestamp}`, cls: 'sub-chip' });
-    line.createSpan({ text: ` ${pulse.label}`, cls: 'sub-card' });
+  private async renderPulse() {
+        if (!this.pulseEl) return;
+        this.pulseEl.empty();
+        await this.renderPulseTiles(this.pulseEl);
   }
+
   private async renderPulseTiles(el: HTMLElement): Promise<void> {
     const [dj, gj, rhythmRes, feed, reg] = await Promise.all([
       this.goalHostResolve({ type: 'activeDispatches' }),
