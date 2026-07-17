@@ -403,9 +403,7 @@ body {
   max-width: 100%;
 }
 
-.sub-section:empty {
-  min-height: 28px;
-}
+.sub-section:empty { display: none !important; margin: 0; padding: 0; }
 
 .sub-section:empty::before {
   content: '';
