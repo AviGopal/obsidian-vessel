@@ -185,7 +185,6 @@ export default class ObsidianVesselPlugin extends Plugin {
     if (!this.settings.enableImprovementSync) return;
     const intervalMs = Math.max(5, this.settings.improvementSyncIntervalMinutes) * 60 * 1000;
     const writeNote = async (path: string, content: string): Promise<void> => {
-      const { TFile } = await import('obsidian');
       const existing = this.app.vault.getAbstractFileByPath(path);
       if (existing instanceof TFile) {
         await this.app.vault.modify(existing, content);

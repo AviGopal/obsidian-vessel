@@ -12,6 +12,7 @@
  * Runs on the same interval cadence as ActivityFamilySyncService.
  */
 
+import { TFile } from 'obsidian';
 import type { App } from 'obsidian';
 import type { ObsidianVesselSettings } from '../settings';
 import { sidecarHttp } from "../sidecar-manager";
@@ -166,7 +167,6 @@ export class VesselSyncService {
     await ensureFolderExists(this.app, folderPath);
     const existing = this.app.vault.getAbstractFileByPath(notePath);
     if (existing) {
-      const { TFile } = await import('obsidian');
       if (existing instanceof TFile) {
         await this.app.vault.modify(existing, content);
       }

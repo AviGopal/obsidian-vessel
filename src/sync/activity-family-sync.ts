@@ -13,6 +13,7 @@
  * filter is advisory (falls through to FTS if not supported).
  */
 
+import { TFile } from 'obsidian';
 import type { App } from 'obsidian';
 import type { ObsidianVesselSettings } from '../settings';
 import type { ActivityAPIClient } from '../api-client';
@@ -198,7 +199,6 @@ export class ActivityFamilySyncService {
     await ensureFolderExists(this.app, folderPath);
     const existing = this.app.vault.getAbstractFileByPath(notePath);
     if (existing) {
-      const { TFile } = await import('obsidian');
       if (existing instanceof TFile) {
         await this.app.vault.modify(existing, content);
       }
