@@ -461,29 +461,45 @@ async function register() {
   const shapes = [...Object.keys(ROUTES), ...resolverShapes];
   const shape_descriptions: Record<string, string> = Object.fromEntries(Object.entries(ROUTES).map(([k, v]) => [k, v.description]));
   for (const s of resolverShapes) shape_descriptions[s] = `operator-host Obsidian resolver shape "${s}" (proxied to the plugin's /resolve on the operator vault)`;
-  try {
-    const r = await fetch(DISCOVERY + '/register', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: 'ApiKey ' + API_KEY },
-      body: JSON.stringify({
-        vesselId: VESSEL_ID,
-        vesselName: VESSEL_ID,
-        version: '0.1.0',
-        endpoint: `http://127.0.0.1:${HEALTH_PORT}`, // NATed loopback — real reachability is the circuit
-        shapes,
-        resolve_endpoint: '/v2/impulses/resolve',
-        resolve_request_format: 'pointer',
-        auth_scheme: 'none',
-        protocol: 'libp2p',
-        libp2p_peer_id: vl.peerId,
-        libp2p_multiaddr: circuit ? [circuit] : [],
-        systemVessel: true,
-        shape_descriptions,
-      }),
-    });
-    console.log(`[federation-sidecar] register -> ${r.status} (${shapes.length} shapes: ${Object.keys(ROUTES).length} named + ${resolverShapes.length} resolver)`);
-  } catch (e) {
-    console.log('[federation-sidecar] register err', String(e));
+  // Register with EVERY discovery in the namespace, not only the hub: a
+  // spoke's goal-target inference and reach gate read their OWN registry's
+  // shape vocabulary, so a vault registered only at the hub is invisible to
+  // spoke walks (inferred_target_shapes:[] on every vault goal) even when the
+  // circuit is dialable. EXTRA_DISCOVERY_URLS is a comma-separated list of
+  // additional discovery endpoints (e.g. the local spoke's :18100).
+  // Default the extra list to the conventional local-spoke discovery: the
+  // operator host often runs its own substrate, and its walks need the vault's
+  // shapes in their OWN vocabulary. Best-effort — a missing local discovery
+  // just logs and moves on. Override/extend via EXTRA_DISCOVERY_URLS; set it
+  // to "none" to disable.
+  const extraRaw = process.env.EXTRA_DISCOVERY_URLS ?? 'http://localhost:18100';
+  const discoveries = [...new Set([DISCOVERY, ...(extraRaw === 'none' ? [] : extraRaw
+    .split(',').map((s) => s.trim().replace(/\/+$/, '')).filter(Boolean))])];
+  for (const d of discoveries) {
+    try {
+      const r = await fetch(d + '/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'ApiKey ' + API_KEY },
+        body: JSON.stringify({
+          vesselId: VESSEL_ID,
+          vesselName: VESSEL_ID,
+          version: '0.1.0',
+          endpoint: `http://127.0.0.1:${HEALTH_PORT}`, // NATed loopback — real reachability is the circuit
+          shapes,
+          resolve_endpoint: '/v2/impulses/resolve',
+          resolve_request_format: 'pointer',
+          auth_scheme: 'none',
+          protocol: 'libp2p',
+          libp2p_peer_id: vl.peerId,
+          libp2p_multiaddr: circuit ? [circuit] : [],
+          systemVessel: true,
+          shape_descriptions,
+        }),
+      });
+      console.log(`[federation-sidecar] register@${d} -> ${r.status} (${shapes.length} shapes: ${Object.keys(ROUTES).length} named + ${resolverShapes.length} resolver)`);
+    } catch (e) {
+      console.log(`[federation-sidecar] register@${d} err`, String(e));
+    }
   }
 }
 if (!LOCAL_MODE) {
