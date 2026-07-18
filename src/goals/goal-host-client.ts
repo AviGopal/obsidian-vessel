@@ -79,7 +79,7 @@ export class GoalHostClient {
     while (Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 800));
       try {
-        const body = await this.http(`/executions/${dispatchId}`);
+        const body = (await sidecarResolveBody({ type: 'goalWalkState', dispatchId })) ?? {};
         if (body.executionId) {
           return {
             executionId: body.executionId as string,
@@ -112,7 +112,7 @@ export class GoalHostClient {
    * and `goalReachReason` — distinct from `status`, which is only exit status.
    */
   async getDispatchRecord(dispatchId: string): Promise<Record<string, unknown>> {
-    return this.http('/executions/' + dispatchId);
+    return (await sidecarResolveBody({ type: 'goalWalkState', dispatchId })) ?? {};
   }
 
   /**
@@ -144,17 +144,12 @@ export class GoalHostClient {
     if (ctx?.open_note_paths?.length) tags.push(`obsidian:open_notes_${ctx.open_note_paths.length}`);
     if (ctx?.available_shapes?.length) tags.push(`obsidian:shapes_${ctx.available_shapes.length}`);
 
-    const raw = await this.http('/run-goal', {
-      goal,
-      variables,
-      tags,
-      ...(expectedOutputShapes ? { expected_output_shapes: expectedOutputShapes } : {}),
-    });
-    return {
-      executionId: (raw.executionId ?? raw.dispatchId ?? '') as string,
-      status: (raw.status ?? 'unknown') as string,
-      selectedTemplateId: raw.selectedTemplateId as string | undefined,
-    };
+    const via = await sidecarHttpAuto({ shape: 'goal_execution', method: 'POST', path: '/v2/impulses/resolve', body: { impulse: { pointer: { type: 'goalDispatchAsync', goal, variables, tags, ...(expectedOutputShapes ? { expected_output_shapes: expectedOutputShapes } : {}) } } } });
+    if (!via) throw 'sidecar conduit unavailable';
+    if (!via.ok) throw new Error(`goal dispatch failed: ${via.status}`);
+    const b = (via.body ?? {}) as Record<string, unknown>;
+    const rec = (b.body && typeof b.body === 'object' ? b.body : b) as Record<string, unknown>;
+    return { executionId: String(rec.dispatchId ?? rec.executionId ?? ''), status: String(rec.status ?? 'unknown'), selectedTemplateId: rec.selectedTemplateId as string | undefined };
   }
 
   /**
