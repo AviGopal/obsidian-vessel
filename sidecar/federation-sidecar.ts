@@ -449,6 +449,14 @@ try {
 // server is reachable from the substrate via the advertised host); registering
 // here too would double-register the same vessel.
 async function register() {
+  // Re-derive the circuit every cycle: the reservation can land AFTER
+  // initLibp2p's bounded wait (relay down at boot) or change when the relay
+  // restarts — a stale/empty value here advertises an undialable row (ma:0)
+  // and severs the inbound direction for the life of the process.
+  if (vl) {
+    const c = vl.advertiseMultiaddrs().find((m: string) => m.includes('p2p-circuit'));
+    if (c) circuit = c;
+  }
   const resolverShapes = await fetchManifestShapes();
   const shapes = [...Object.keys(ROUTES), ...resolverShapes];
   const shape_descriptions: Record<string, string> = Object.fromEntries(Object.entries(ROUTES).map(([k, v]) => [k, v.description]));
