@@ -169,9 +169,11 @@ export interface ObsidianVesselSettings {
   enableGraphBackbone: boolean;
 
   /**
-   * Discovery-vessel HTTP endpoint. Consumed only by the federation sidecar's
-   * local (non-relay) discovery routing (DISCOVERY_URL); blank in relay-based
-   * deployments, where discovery is derived from the relay host.
+   * Substrate discovery endpoint — the single required network setting
+   * (alongside the API key). The federation sidecar fetches
+   * <endpoint>/bootstrap to obtain relay_multiaddrs, identity_endpoint and
+   * prefer_transport. Never derived from the relay; the relay is derived from
+   * this.
    */
   discoveryVesselEndpoint: string;
 

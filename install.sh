@@ -5,92 +5,158 @@
 # server and spawns a libp2p sidecar process, which likely violates marketplace
 # guidelines), so this script IS the distribution path:
 #
-#   ./install.sh                                   # fully interactive
-#   ./install.sh --vault ~/vaults/mine --host syzygy.host --api-key mb-...
-#   ./install.sh --vault ~/vaults/new --local      # local substrate, no prompts for host
+#   ./install.sh                                          # fully interactive
+#   ./install.sh --vault ~/vaults/mine \
+#       --discovery https://<discovery-endpoint> --api-key <api-key>
+#   ./install.sh --vault ~/vaults/new --local            # local substrate (:18100)
+#
+# Point-and-go: the plugin's whole network surface is two values —
+#   { discoveryVesselEndpoint, apiKey }.
+# You point it at a substrate discovery endpoint and hand it an API key; that is
+# all. At start the federation sidecar fetches <discovery>/bootstrap and reads the
+# relay anchor, identity endpoint, and preferred transport from it, reserves a
+# p2p circuit over the overlay, and registers itself — a valid API key is the sole
+# gate. Nothing else is pinned. A hand-set relay multiaddr (--relay) is an OPTIONAL
+# advanced override for the rare case where /bootstrap is unavailable; do not set
+# it routinely — a pinned relay peer-id goes stale on every relay restart, which is
+# exactly the failure /bootstrap exists to prevent.
 #
 # What it does:
 #   1. Selects (or creates) an Obsidian vault directory.
 #   2. Installs the plugin (main.js / manifest.json / styles.css) into
 #      <vault>/.obsidian/plugins/obsidian-vessel/ — from this repo checkout when
 #      run in place, otherwise from the latest GitHub release.
-#   3. Materializes the libp2p federation sidecar (sidecar/*.ts + deps) — the
-#      PREFERRED transport: all substrate networking rides the relay overlay;
-#      the direct HTTP endpoints are written only as same-host fallback.
-#   4. Points the plugin at a discovery host (e.g. syzygy.host) and auto-derives
-#      the relay multiaddr from that discovery (shape: federation_probe).
-#   5. Writes data.json (identity API key + endpoints), enables the plugin.
+#   3. Materializes the libp2p federation sidecar (sidecar/*.ts + deps).
+#   4. Writes data.json with the two point-and-go values (plus vesselId and the
+#      absolute bun path); the relay multiaddr is written only when --relay is given.
+#   5. Enables the plugin in the vault.
 #
-# Host requirements: bash, curl, jq. bun is required for the federation sidecar
-# (installed plugin still works same-host without it, but libp2p is preferred).
+# Host requirements: bash, curl, jq, and bun (https://bun.sh) for the sidecar.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ID="obsidian-vessel"
 RELEASE_REPO="AviGopal/obsidian-vessel"
-RELAY_PORT=30333
+LOCAL_DISCOVERY="http://localhost:18100"
 
-VAULT="" HOST="" API_KEY="" RELAY="" FEDERATION=1
+VAULT="" DISCOVERY_URL="" API_KEY="" RELAY="" FEDERATION=1 ASSUME_YES=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --vault)   VAULT="$2"; shift 2 ;;
-    --host)    HOST="$2"; shift 2 ;;
-    --api-key) API_KEY="$2"; shift 2 ;;
-    --relay)   RELAY="$2"; shift 2 ;;
-    --local)   HOST="localhost"; shift ;;
+    --vault)     VAULT="$2"; shift 2 ;;
+    --discovery) DISCOVERY_URL="$2"; shift 2 ;;
+    --api-key)   API_KEY="$2"; shift 2 ;;
+    --relay)     RELAY="$2"; shift 2 ;;
+    --local)     DISCOVERY_URL="$LOCAL_DISCOVERY"; shift ;;
     --no-federation) FEDERATION=0; shift ;;
-    -h|--help) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *) echo "unknown flag: $1 (see --help)"; exit 1 ;;
+    -y|--yes)    ASSUME_YES=1; shift ;;
+    -h|--help)   grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "ERROR: unknown flag: $1 (see --help)" >&2; exit 1 ;;
   esac
 done
 
+die() { echo "ERROR: $*" >&2; exit 1; }
+confirm() { # confirm "prompt" ; returns 0 on yes
+  [ "$ASSUME_YES" = "1" ] && return 0
+  local reply; read -rp "$1 [y/N]: " reply; [[ "$reply" =~ ^[Yy] ]]
+}
+
+# ── 0. Host dependencies ────────────────────────────────────────────────────
 for dep in curl jq; do
-  command -v "$dep" >/dev/null || { echo "ERROR: $dep is required"; exit 1; }
+  command -v "$dep" >/dev/null || die "$dep is required but not on PATH — install it and re-run."
 done
+# bun is required for the libp2p federation sidecar (the preferred transport).
+BUN_PATH="$(command -v bun || true)"
+if [ "$FEDERATION" = "1" ] && [ -z "$BUN_PATH" ]; then
+  echo "[bun] not found on PATH — the libp2p federation sidecar needs it." >&2
+  echo "      Remedy: install bun (curl -fsSL https://bun.sh/install | bash), then" >&2
+  echo "      re-open your shell and re-run this installer. To install the plugin" >&2
+  echo "      without the sidecar for now, re-run with --no-federation." >&2
+  confirm "Continue without the sidecar (plugin installs, federation disabled until bun is present)?" \
+    || die "Aborted — install bun and re-run."
+  FEDERATION=0
+fi
 
 # ── 1. Vault ────────────────────────────────────────────────────────────────
 if [ -z "$VAULT" ]; then
   read -rp "Vault directory (existing or new): " VAULT
 fi
+[ -n "$VAULT" ] || die "a vault directory is required."
 VAULT="${VAULT/#\~/$HOME}"
+# Reject obviously-wrong paths (a file where a directory should be).
+if [ -e "$VAULT" ] && [ ! -d "$VAULT" ]; then
+  die "$VAULT exists but is not a directory."
+fi
 if [ ! -d "$VAULT/.obsidian" ]; then
   if [ -d "$VAULT" ]; then
     echo "[vault] $VAULT exists but is not yet an Obsidian vault — initializing .obsidian/"
   else
+    confirm "[vault] $VAULT does not exist — create a new vault there?" \
+      || die "Aborted — pass an existing vault with --vault."
     echo "[vault] creating new vault at $VAULT"
   fi
-  mkdir -p "$VAULT/.obsidian"
+  mkdir -p "$VAULT/.obsidian" || die "could not create $VAULT/.obsidian (check permissions)."
 fi
 PLUGIN_DIR="$VAULT/.obsidian/plugins/$PLUGIN_ID"
+
+# Confirm before overwriting an existing install.
+if [ -f "$PLUGIN_DIR/main.js" ] || [ -f "$PLUGIN_DIR/data.json" ]; then
+  echo "[vault] an obsidian-vessel install already exists at $PLUGIN_DIR"
+  confirm "Overwrite it (plugin files replaced; data.json merged, vesselId preserved)?" \
+    || die "Aborted — nothing changed."
+fi
 mkdir -p "$PLUGIN_DIR"
 
-# ── 2. Discovery host + API key ─────────────────────────────────────────────
-if [ -z "$HOST" ]; then
-  read -rp "Substrate discovery host [syzygy.host]: " HOST
-  HOST="${HOST:-syzygy.host}"
+# ── 2. Discovery endpoint (the point-and-go anchor) ─────────────────────────
+if [ -z "$DISCOVERY_URL" ]; then
+  echo "Substrate discovery endpoint — a full URL, scheme://host:port."
+  echo "  local substrate: $LOCAL_DISCOVERY    remote hub: https://<discovery-endpoint>"
+  read -rp "Discovery endpoint: " DISCOVERY_URL
 fi
-DISCOVERY_URL="http://$HOST:18100"
-ACTIVITY_URL="http://$HOST:18080"
+[ -n "$DISCOVERY_URL" ] || die "a discovery endpoint is required (e.g. $LOCAL_DISCOVERY)."
+DISCOVERY_URL="${DISCOVERY_URL%/}"   # strip a trailing slash
+# Validate it is a real endpoint, not a bare hostname (the old :18100-assuming trap).
+if ! [[ "$DISCOVERY_URL" =~ ^https?://[^/[:space:]]+ ]]; then
+  die "'$DISCOVERY_URL' is not a valid endpoint — use a full URL, e.g. $LOCAL_DISCOVERY or https://<discovery-endpoint>"
+fi
 
+# ── 3. API key (the sole gate) ──────────────────────────────────────────────
 if [ -z "$API_KEY" ]; then
-  read -rsp "Identity API key (from the hub: make issue-key NAME=<you>): " API_KEY; echo
+  echo "API key — retrieve the operator key from the substrate host with:"
+  echo "  docker exec substrate-live substrate-key show"
+  read -rsp "API key: " API_KEY; echo
 fi
-[ -n "$API_KEY" ] || { echo "ERROR: an API key is required"; exit 1; }
+[ -n "$API_KEY" ] || die "an API key is required."
 
-echo "[check] probing discovery at $DISCOVERY_URL ..."
-if ! curl -sf --max-time 6 "$DISCOVERY_URL/health" >/dev/null; then
-  echo "[check] WARNING: $DISCOVERY_URL/health unreachable — continuing, but verify the host."
+# ── 4. Verify point-and-go: /bootstrap must be reachable and well-formed ─────
+# This is the single pre-auth read the plugin depends on; if it is wrong here,
+# it will be wrong for the sidecar too — so fail loudly now, not silently later.
+echo "[check] fetching $DISCOVERY_URL/bootstrap ..."
+BOOTSTRAP="$(curl -sf --max-time 8 "$DISCOVERY_URL/bootstrap" 2>/dev/null || true)"
+if [ -z "$BOOTSTRAP" ]; then
+  echo "ERROR: could not reach $DISCOVERY_URL/bootstrap." >&2
+  echo "  - Confirm the discovery endpoint (scheme, host, and PORT) is exactly right." >&2
+  echo "    A non-default PORT_OFFSET substrate does NOT use :18100 — pass its actual port." >&2
+  echo "  - Confirm the substrate is up and reachable from this host (try:" >&2
+  echo "      curl -s $DISCOVERY_URL/health )." >&2
+  die "discovery /bootstrap unreachable."
 fi
+if ! echo "$BOOTSTRAP" | jq -e '.relay_multiaddrs? // .identity_endpoint? // .discovery_endpoint?' >/dev/null 2>&1; then
+  die "$DISCOVERY_URL/bootstrap did not return the expected point-and-go body {relay_multiaddrs, identity_endpoint, discovery_endpoint, prefer_transport}. Is this actually a discovery endpoint?"
+fi
+RELAY_PREVIEW="$(echo "$BOOTSTRAP" | jq -r '.relay_multiaddrs[0] // empty' 2>/dev/null || true)"
+echo "[check] point-and-go OK — the sidecar will fetch relay + identity anchors from /bootstrap at start."
+[ -n "$RELAY_PREVIEW" ] && echo "[check]   relay anchor (preview, resolved live at start): $RELAY_PREVIEW"
 
-# ── 3. Plugin artifacts (local checkout preferred, GitHub release fallback) ──
+# ── 5. Plugin artifacts (local checkout preferred, GitHub release fallback) ──
 if [ -f "$SCRIPT_DIR/main.js" ] && [ -f "$SCRIPT_DIR/manifest.json" ]; then
   echo "[plugin] installing from local checkout ($SCRIPT_DIR)"
-  cp "$SCRIPT_DIR/main.js" "$SCRIPT_DIR/manifest.json" "$SCRIPT_DIR/styles.css" "$PLUGIN_DIR/"
+  cp "$SCRIPT_DIR/main.js" "$SCRIPT_DIR/manifest.json" "$SCRIPT_DIR/styles.css" "$PLUGIN_DIR/" \
+    || die "failed to copy plugin files into $PLUGIN_DIR."
 else
   echo "[plugin] fetching latest release from github.com/$RELEASE_REPO"
   base="https://github.com/$RELEASE_REPO/releases/latest/download"
   for f in main.js manifest.json styles.css; do
-    curl -sfL "$base/$f" -o "$PLUGIN_DIR/$f" || { echo "ERROR: failed to download $f"; exit 1; }
+    curl -sfL "$base/$f" -o "$PLUGIN_DIR/$f" || die "failed to download $f from the latest release."
   done
 fi
 
@@ -103,55 +169,22 @@ if [ "$FEDERATION" = "1" ]; then
     cp "$SCRIPT_DIR/sidecar/federation-sidecar.ts" "$SCRIPT_DIR/sidecar/package.json" "$PLUGIN_DIR/sidecar/"
   else
     raw="https://raw.githubusercontent.com/$RELEASE_REPO/dev/sidecar"
-    curl -sfL "$raw/federation-sidecar.ts" -o "$PLUGIN_DIR/sidecar/federation-sidecar.ts"
-    curl -sfL "$raw/package.json"          -o "$PLUGIN_DIR/sidecar/package.json"
+    curl -sfL "$raw/federation-sidecar.ts" -o "$PLUGIN_DIR/sidecar/federation-sidecar.ts" \
+      || die "failed to download the federation sidecar source."
+    curl -sfL "$raw/package.json"          -o "$PLUGIN_DIR/sidecar/package.json" \
+      || die "failed to download the sidecar package.json."
   fi
-  if command -v bun >/dev/null; then
-    echo "[sidecar] pre-installing libp2p deps (bun install) ..."
-    (cd "$PLUGIN_DIR/sidecar" && bun install --silent) || \
-      echo "[sidecar] WARNING: bun install failed — the plugin will retry on first start"
-  else
-    echo "[sidecar] WARNING: bun not found on PATH — install it (https://bun.sh) to run the"
-    echo "          libp2p sidecar. The plugin falls back to direct HTTP until then."
-  fi
+  echo "[sidecar] pre-installing libp2p deps (bun install) ..."
+  (cd "$PLUGIN_DIR/sidecar" && bun install --silent) \
+    || echo "[sidecar] WARNING: bun install failed — the plugin will retry on first start."
 fi
 
-# ── 4. Relay + ingress multiaddrs (libp2p-first) ────────────────────────────
-# The hub's federation-transport advertises a full circuit multiaddr
-# /ip4/<relay>/tcp/30333/p2p/<relayPeer>/p2p-circuit/p2p/<transportPeer> under
-# shape federation_probe. Two things come from it:
-#   RELAY   = the prefix before /p2p-circuit — where the sidecar reserves.
-#   INGRESS = the FULL multiaddr — the hub ingress the sidecar dials outbound to
-#             (its proxyToLocalOwner resolves any hub-local shape internally, so
-#             the plugin reaches every hub vessel over the overlay, no host:port).
-INGRESS="${INGRESS:-}"
-if [ "$FEDERATION" = "1" ] && { [ -z "$RELAY" ] || [ -z "$INGRESS" ]; }; then
-  echo "[relay] deriving relay + ingress multiaddrs from $DISCOVERY_URL ..."
-  INGRESS=$(curl -sf --max-time 8 -X POST "$DISCOVERY_URL/resolve" \
-      -H "Content-Type: application/json" -H "Authorization: ApiKey $API_KEY" \
-      -d '{"pointer":{"type":"vesselCapability","shape":"federation_probe"}}' \
-    | jq -r '[.content.vessels[]?.libp2p_multiaddr[]? // empty
-              | select(contains("/p2p-circuit"))][0] // empty' 2>/dev/null || true)
-  [ -n "$INGRESS" ] && RELAY="${INGRESS%%/p2p-circuit*}"
-  if [ -n "$RELAY" ]; then
-    echo "[relay]   $RELAY"
-    echo "[ingress] $INGRESS"
-  else
-    echo "[relay] could not derive it automatically (no libp2p vessel registered?)."
-    read -rp "Relay multiaddr (/ip4/<ip>/tcp/$RELAY_PORT/p2p/<peerId>), empty for local mode: " RELAY
-  fi
-fi
-# No relay ≠ no sidecar: without one the sidecar runs in LOCAL mode — a pure
-# discovery-routed egress conduit (CORS-free loopback API, API key attached,
-# endpoints looked up per shape). Only --no-federation disables it entirely.
-if [ "$FEDERATION" = "1" ] && [ -z "$RELAY" ]; then
-  echo "[relay] no relay — sidecar will run in LOCAL mode (discovery-routed egress only)."
-fi
-
-# ── 5. data.json (merge over any existing settings, preserve vesselId) ──────
-HOST_LABEL="$( (hostname -s 2>/dev/null || uname -n) | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-' | sed 's/-*$//')"
-FED_VESSEL_ID="obsidian-${HOST_LABEL:-host}-vessel"
-
+# ── 6. data.json — the two point-and-go values (+ vesselId, bun path) ───────
+# Config surface = { discoveryVesselEndpoint, apiKey }. Identity, activity, relay,
+# and every other endpoint are resolved from <discovery>/bootstrap at start, so
+# they are NOT written here. federationRelayMultiaddr is written only when the
+# operator passed --relay as an explicit override.
+#
 # vesselId must be non-empty at registration time or discovery rejects with
 # "Missing required fields". Reuse an existing one; generate otherwise.
 VESSEL_ID=$(jq -r '.vesselId // empty' "$PLUGIN_DIR/data.json" 2>/dev/null || true)
@@ -159,39 +192,26 @@ VESSEL_ID=$(jq -r '.vesselId // empty' "$PLUGIN_DIR/data.json" 2>/dev/null || tr
 
 # GUI-launched Obsidian does not inherit the shell PATH (spawn('bun') ENOENT on
 # macOS), so persist bun's ABSOLUTE path for the sidecar.
-BUN_PATH="$(command -v bun || true)"
-
 NEW_SETTINGS=$(jq -n \
-  --arg apiKey "$API_KEY" --arg act "$ACTIVITY_URL" --arg disc "$DISCOVERY_URL" \
-  --arg cdb "http://$HOST:18260" --arg gh "http://$HOST:18210" \
-  --arg ws "ws://$HOST:18080/ws" --arg relay "$RELAY" --arg fvid "$FED_VESSEL_ID" \
-  --arg vid "$VESSEL_ID" --arg bun "${BUN_PATH:-bun}" --arg ingress "$INGRESS" \
-  --argjson fed "$([ "$FEDERATION" = "1" ] && echo true || echo false)" '{
+  --arg apiKey "$API_KEY" --arg disc "$DISCOVERY_URL" \
+  --arg vid "$VESSEL_ID" --arg bun "${BUN_PATH:-bun}" --arg relay "$RELAY" '{
     vesselId: $vid,
     apiKey: $apiKey,
-    activityApiUrl: $act,
     discoveryVesselEndpoint: $disc,
-    conceptDbEndpoint: $cdb,
-    goalHostEndpoint: $gh,
-    websocketUrl: $ws,
     serverEnabled: true,
-    enableFederationSidecar: $fed,
-    federationRelayMultiaddr: $relay,
-    federationIngressMultiaddr: $ingress,
-    federationDiscoveryUrl: $disc,
-    federationVesselId: $fvid,
     federationBunPath: $bun
-  }')
+  } + (if $relay == "" then {} else { federationRelayMultiaddr: $relay } end)')
+
 if [ -f "$PLUGIN_DIR/data.json" ]; then
   echo "[settings] merging into existing data.json (vesselId preserved)"
-  jq -s '.[0] * .[1]' "$PLUGIN_DIR/data.json" <(echo "$NEW_SETTINGS") > "$PLUGIN_DIR/data.json.tmp"
-  mv "$PLUGIN_DIR/data.json.tmp" "$PLUGIN_DIR/data.json"
+  jq -s '.[0] * .[1]' "$PLUGIN_DIR/data.json" <(echo "$NEW_SETTINGS") > "$PLUGIN_DIR/data.json.tmp" \
+    && mv "$PLUGIN_DIR/data.json.tmp" "$PLUGIN_DIR/data.json"
 else
   echo "$NEW_SETTINGS" > "$PLUGIN_DIR/data.json"
 fi
 chmod 600 "$PLUGIN_DIR/data.json"   # it holds the API key
 
-# ── 6. Enable the plugin in the vault ───────────────────────────────────────
+# ── 7. Enable the plugin in the vault ───────────────────────────────────────
 CP_JSON="$VAULT/.obsidian/community-plugins.json"
 if [ -f "$CP_JSON" ]; then
   jq --arg id "$PLUGIN_ID" '(. + [$id]) | unique' "$CP_JSON" > "$CP_JSON.tmp" && mv "$CP_JSON.tmp" "$CP_JSON"
@@ -204,16 +224,17 @@ fi
 echo
 echo "── obsidian-vessel installed ──────────────────────────────────────────"
 echo "  vault:      $VAULT"
-echo "  substrate:  $HOST (discovery $DISCOVERY_URL)"
+echo "  discovery:  $DISCOVERY_URL   (relay + identity resolved via /bootstrap)"
 if [ "$FEDERATION" = "1" ] && [ -n "$RELAY" ]; then
-  echo "  transport:  libp2p via relay  $RELAY"
-  echo "              (vessel id: $FED_VESSEL_ID; sidecar health: http://127.0.0.1:8402/health)"
+  echo "  transport:  libp2p — relay OVERRIDE pinned: $RELAY"
+  echo "              (a pinned relay can go stale on relay restart; clear it to return to /bootstrap)"
 elif [ "$FEDERATION" = "1" ]; then
-  echo "  transport:  sidecar in LOCAL mode (discovery-routed egress; health: http://127.0.0.1:8402/health)"
+  echo "  transport:  libp2p federation sidecar (relay anchor fetched from /bootstrap at start)"
+  echo "              (sidecar health: http://127.0.0.1:8402/health)"
 else
-  echo "  transport:  direct HTTP only (sidecar disabled — rerun without --no-federation to enable)"
+  echo "  transport:  direct HTTP only (sidecar disabled — install bun and rerun to enable federation)"
 fi
 echo
 echo "Next: open the vault in Obsidian (community plugins must be allowed once in"
-echo "Settings if this is a brand-new vault). Verify with:"
+echo "Settings if this is a brand-new vault). Verify the local server with:"
 echo "  curl -s http://localhost:27182/health"

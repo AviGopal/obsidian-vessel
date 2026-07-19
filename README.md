@@ -20,21 +20,37 @@ is the trustworthy version signal).
 The plugin is distributed outside the community marketplace (it runs an HTTP server
 and spawns a libp2p sidecar, which the marketplace guidelines likely disallow).
 `install.sh` is the supported path — it selects or creates a vault, installs the
-plugin, materializes the federation sidecar, auto-derives the relay multiaddr from
-your discovery host, and writes `data.json`:
+plugin, materializes the federation sidecar, and writes `data.json` with the two
+point-and-go values below:
 
 ```bash
-./install.sh                                              # interactive
-./install.sh --vault ~/vaults/mine --host syzygy.host --api-key mb-...
-./install.sh --vault ~/vaults/new --local                 # local substrate
+./install.sh                                             # interactive
+./install.sh --vault ~/vaults/mine \
+    --discovery https://<discovery-endpoint> --api-key <api-key>
+./install.sh --vault ~/vaults/new --local               # local substrate (:18100)
 ```
 
-Prompts: vault directory → discovery host (e.g. `syzygy.host`) → identity API key
-(hub-side: `make -C scripts/substrate issue-key NAME=<you>`). libp2p is the preferred
-transport: when a relay is reachable via discovery the sidecar is enabled automatically;
-the direct HTTP endpoints are written only as same-host fallback. Host needs `curl` +
-`jq`; `bun` for the sidecar. Then open the vault in Obsidian and allow community
-plugins once.
+**Point-and-go.** The plugin's entire network surface is two values —
+`{ discoveryVesselEndpoint, apiKey }`. You point it at a substrate **discovery
+endpoint** (a full `scheme://host:port` URL) and hand it an **API key**; that is all.
+At start the federation sidecar fetches `<discovery>/bootstrap` and reads the relay
+anchor, identity endpoint, and preferred transport from it, reserves a p2p circuit
+over the overlay, and registers itself — a valid API key is the sole gate. Nothing
+else is pinned at install time, so nothing goes stale.
+
+Prompts: vault directory → discovery endpoint → API key. The installer verifies the
+discovery endpoint is reachable and that `<discovery>/bootstrap` returns the expected
+body before writing anything, and confirms before overwriting an existing install.
+Retrieve the operator API key from the substrate host with
+`docker exec substrate-live substrate-key show`. Host needs `curl`, `jq`, and `bun`
+(https://bun.sh) for the libp2p sidecar; `--no-federation` installs the plugin
+without it. Then open the vault in Obsidian and allow community plugins once.
+
+> **Advanced — relay override.** Pass `--relay <multiaddr>` only to pin the relay
+> anchor when `/bootstrap` is unavailable. It is not the normal path: a hand-pinned
+> relay peer-id goes stale on every relay restart, which is exactly the failure the
+> `/bootstrap` fetch prevents. Leave it unset and let the sidecar resolve the relay
+> live.
 
 ## Installation (manual fallback)
 
@@ -53,33 +69,35 @@ Build from source with `bun install && bun run build` (produces `main.js`).
 
 ## Configuration
 
-Set these in the plugin's settings tab (persisted to the plugin's `data.json`). For a
-local substrate:
+The config surface is two required settings, set in the plugin's settings tab (or
+written by `install.sh`, persisted to the plugin's `data.json`):
 
-| Setting | Local-substrate value |
+| Required setting | Value |
 |---|---|
-| Activity API URL | `http://localhost:18080` |
-| Discovery endpoint | `http://localhost:18100` |
-| Goal-host endpoint | `http://localhost:18210` |
-| Concept-DB endpoint | `http://localhost:18260` |
-| API key | `make -C scripts/substrate show-key` (operator key) or `issue-key NAME=<you>` |
-| Server port | `27182` (verify: `curl -s http://localhost:27182/health`) |
-| Sidecar health port | `8402` (verify: `curl -s http://127.0.0.1:8402/health`, when the federation sidecar is enabled) |
-| Advertised host | `host.docker.internal` (same machine) — or a routable IP / the libp2p sidecar for remote |
+| Discovery endpoint | The substrate discovery endpoint, a full URL (`http://localhost:18100` for a local substrate, `https://<discovery-endpoint>` for a hub) |
+| API key | The credential the substrate issued you — `docker exec substrate-live substrate-key show` for the operator key |
 
-> **Default ports only.** `install.sh` and the table above hardcode the default
-> fleet ports (`18080`/`18100`/`18210`/`18260`). If the substrate runs on a
-> non-default `PORT_OFFSET` (e.g. a clean-room instance on `38080`/`38100`/…),
-> `install.sh --local` won't reach it — install with `--no-federation` and then
-> set the four endpoints to the offset ports by hand in the plugin's settings tab
-> (or edit `data.json`).
+Everything else — the relay anchor, identity endpoint, activity/concept/goal-host
+endpoints — is resolved from `<discovery>/bootstrap` at start; you do not set it by
+hand. Because the discovery endpoint is a full URL, a substrate on a non-default
+`PORT_OFFSET` just needs its actual port in that one value; there are no other fleet
+ports to keep in sync.
+
+Optional settings:
+
+| Optional setting | Default / note |
+|---|---|
+| Server port | `27182` — the local HTTP server (verify: `curl -s http://localhost:27182/health`) |
+| Sidecar health port | `8402` — the federation sidecar (verify: `curl -s http://127.0.0.1:8402/health`) |
+| Relay override (advanced) | Empty. Pin a relay multiaddr **only** when `/bootstrap` is unavailable; a hand-pinned relay peer-id goes stale on relay restart |
 
 **Remote / behind NAT:** the libp2p **federation sidecar** makes the plugin
-discovery-reachable over the relay while it stays a plain local HTTP server.
-`install.sh` configures this automatically (it derives the relay multiaddr from your
-discovery host and enables the sidecar); after a manual install, set the Federation
-settings (relay multiaddr, discovery URL, enable sidecar) in the plugin settings tab.
-Once enabled, verify the sidecar is up with `curl -s http://127.0.0.1:8402/health`.
+discovery-reachable over the relay while it stays a plain local HTTP server. It starts
+whenever a discovery endpoint is configured: with no relay override it fetches
+`<discovery>/bootstrap`, takes the relay anchor, and reserves a circuit — a valid API
+key is the sole gate. `install.sh` sets this up; after a manual install, just set the
+discovery endpoint and API key in the plugin settings tab. Verify the sidecar with
+`curl -s http://127.0.0.1:8402/health`.
 
 ## Concept-db frontend
 

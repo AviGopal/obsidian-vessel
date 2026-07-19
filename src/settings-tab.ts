@@ -44,23 +44,24 @@ export class ObsidianVesselSettingTab extends PluginSettingTab {
    * container. See src/sidecar-manager.ts.
    */
   private createFederationSidecarSection(containerEl: HTMLElement): void {
-    containerEl.createEl('h2', { text: 'Federation Sidecar (Cross-Host)' });
+    containerEl.createEl('h2', { text: 'Advanced — Relay Override (optional)' });
     containerEl.createEl('p', {
       text:
-        'Makes this plugin discoverable and resolvable from a remote substrate ' +
-        'over a libp2p Circuit Relay v2 overlay. Set the relay multiaddr (the ' +
-        'substrate\'s libp2p peer location) — the discovery URL, hub ingress, ' +
-        'and vessel identity are derived automatically, and the API key comes ' +
-        'from the Connection section. Requires `bun` on PATH. Changes take ' +
-        'effect after "Restart Federation Sidecar" below (or an app reload).',
+        'Leave this empty for normal use. The federation sidecar auto-derives ' +
+        'the relay anchor by fetching <discovery>/bootstrap using the Discovery ' +
+        'Endpoint + API key from the Connection section — that pair is the sole ' +
+        'gate. Set the relay multiaddr ONLY to pin or override the relay anchor ' +
+        '(e.g. when /bootstrap is unavailable); a hand-pinned relay peer-id can ' +
+        'go stale on relay restart. Requires `bun` on PATH. Changes take effect ' +
+        'after "Restart Federation Sidecar" below (or an app reload).',
       cls: 'setting-item-description',
     });
 
     new Setting(containerEl)
-      .setName('Relay Multiaddr')
-      .setDesc('Circuit Relay v2 multiaddr, e.g. /ip4/<hub-ip>/tcp/30333/p2p/<relay-peer-id>')
+      .setName('Relay Multiaddr (optional override)')
+      .setDesc('Optional. Auto-derived from <discovery>/bootstrap; set only to override the relay anchor. Circuit Relay v2 multiaddr, e.g. /ip4/<hub-host>/tcp/<port>/p2p/<relay-peer-id>')
       .addText(text => text
-        .setPlaceholder('/ip4/203.0.113.10/tcp/30333/p2p/12D3Koo...')
+        .setPlaceholder('/ip4/<hub-host>/tcp/30333/p2p/<relay-peer-id>')
         .setValue(this.plugin.settings.federationRelayMultiaddr)
         .onChange(async (value) => {
           this.plugin.settings.federationRelayMultiaddr = value.trim();
@@ -187,9 +188,20 @@ export class ObsidianVesselSettingTab extends PluginSettingTab {
   private createConnectionSection(containerEl: HTMLElement): void {
     containerEl.createEl('h2', { text: 'Connection' });
     containerEl.createEl('p', {
-      text: 'The API key authenticates every substrate call (it also carries your organization). Endpoints are discovered automatically — locally via the substrate defaults, remotely via the federation sidecar.',
+      text: 'Two settings connect the plugin to a substrate: a Discovery Endpoint and an API key. Everything else — relay, identity, vessel endpoints — is derived from the discovery endpoint via /bootstrap.',
       cls: 'setting-item-description',
     });
+
+    new Setting(containerEl)
+      .setName('Discovery Endpoint')
+      .setDesc('Point this at your substrate/hub discovery; everything else — relay, identity, surfaces — is derived from it via /bootstrap. A valid API key is the only other requirement.')
+      .addText(text => text
+        .setPlaceholder('http://localhost:18100')
+        .setValue(this.plugin.settings.discoveryVesselEndpoint)
+        .onChange(async (value) => {
+          this.plugin.settings.discoveryVesselEndpoint = value.trim();
+          await this.plugin.saveSettings();
+        }));
 
     new Setting(containerEl)
       .setName('API Key')
