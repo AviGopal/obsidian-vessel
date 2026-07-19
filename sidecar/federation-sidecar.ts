@@ -48,7 +48,7 @@ import { hostname } from 'node:os';
 // (observed peer-id collision); derive a stable host-unique id instead.
 const VESSEL_ID = process.env.OBSIDIAN_VESSEL_ID
   || `obsidian-${hostname().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')}-vessel`;
-const RELAY = process.env.RELAY_MULTIADDR || '';
+let RELAY = process.env.RELAY_MULTIADDR || '';
 // Derive the hub discovery URL from the relay's host when not given explicitly —
 // the relay and the hub control plane live on the same public host by convention,
 // so RELAY_MULTIADDR + API key is a complete federation config.
@@ -58,6 +58,24 @@ function deriveDiscoveryFromRelay(relay: string): string {
 }
 const DISCOVERY = ((process.env.DISCOVERY_URL || '').replace(/\/+$/, '')) || deriveDiscoveryFromRelay(RELAY);
 const API_KEY = process.env.API_KEY || process.env.METABOB_API_KEY || '';
+// "Just point and go": pointed at a DISCOVERY with no explicit relay, read the
+// relay anchor from its public GET /bootstrap and PREFER the p2p overlay — so the
+// whole config is {discoveryVesselEndpoint, apiKey} and the relay is never a
+// stale hand-copied multiaddr (law 1: read it at use time, not frozen in config).
+if (!RELAY && DISCOVERY) {
+  try {
+    const r = await fetch(`${DISCOVERY}/bootstrap`, { signal: AbortSignal.timeout(5000) });
+    if (r.ok) {
+      const b = await r.json() as { relay_multiaddrs?: string[] };
+      if (b.relay_multiaddrs?.length) {
+        RELAY = b.relay_multiaddrs[0]!;
+        console.log(`[federation-sidecar] relay from ${DISCOVERY}/bootstrap: ${RELAY} (preferring p2p overlay)`);
+      }
+    }
+  } catch (e) {
+    console.warn(`[federation-sidecar] bootstrap fetch failed (${(e as Error).message}); staying in local-conduit mode`);
+  }
+}
 const OBSIDIAN = (process.env.OBSIDIAN_URL || 'http://127.0.0.1:27182').replace(/\/+$/, '');
 const HEALTH_PORT = parseInt(process.env.OBSIDIAN_PASSTHROUGH_HEALTH_PORT || '8402', 10);
 let INGRESS = process.env.FEDERATION_INGRESS_MULTIADDR || '';
