@@ -301,6 +301,17 @@ export const DEFAULT_SETTINGS: ObsidianVesselSettings = {
  */
 export function validateSettings(settings: ObsidianVesselSettings): string[] {
   const errors: string[] = [];
+  try {
+    const parsed = new URL(settings.discoveryVesselEndpoint);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      errors.push('Discovery endpoint must be an absolute http(s) URL');
+    }
+  } catch {
+    errors.push('Discovery endpoint must be an absolute http(s) URL');
+  }
+  if (!settings.apiKey || settings.apiKey.trim().length === 0) {
+    errors.push('API key must not be empty');
+  }
 
   // Validate port range
   if (settings.serverPort < 1024 || settings.serverPort > 65535) {
