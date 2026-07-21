@@ -949,9 +949,22 @@ export class GoalDispatchView extends ItemView {
    * poolImpulses) with an honest note — the panel never renders blank solely
    * because the aggregate producer is absent.
    */
-  private async renderGroupFeed(): Promise<void> {
+  private groupCache: {
+    feedOk: boolean;
+    members: Array<Record<string, unknown>>;
+    gaps: Array<Record<string, unknown>>;
+    boredom: Array<Record<string, unknown>>;
+    rhythms: Array<Record<string, unknown>>;
+    supplemented: string[];
+  } | null = null;
+
+  private async renderGroupFeed(refetch = true): Promise<void> {
     const el = this.groupEl;
     if (!el) return;
+    if (!refetch && this.groupCache) {
+      this.drawGroupFeed(el, this.groupCache);
+      return;
+    }
     const feed = await this.fetchFleetActivityFeed();
 
     const arr = (v: unknown): Array<Record<string, unknown>> =>
@@ -992,6 +1005,17 @@ export class GoalDispatchView extends ItemView {
       }
     }
 
+    this.groupCache = { feedOk: !!feed, members, gaps, boredom, rhythms, supplemented };
+    this.drawGroupFeed(el, this.groupCache);
+  }
+
+  /** Pure draw from composed data — synchronous, so toggles repaint instantly. */
+  private drawGroupFeed(el: HTMLElement, c: NonNullable<GoalDispatchView['groupCache']>): void {
+    const arr = (v: unknown): Array<Record<string, unknown>> =>
+      Array.isArray(v) ? (v as Array<Record<string, unknown>>) : [];
+    const { members, gaps, boredom, rhythms, supplemented } = c;
+    const dispatchCountOf = (ms: Array<Record<string, unknown>>): number =>
+      ms.reduce((n, m) => n + arr(m.dispatches).length, 0);
     const groupSnap = JSON.stringify({ members, gaps, boredom, rhythms, supplemented, expanded: this.groupExpanded });
     if (this.lastRenderedSnapshot.get('group') === groupSnap) return;
     this.lastRenderedSnapshot.set('group', groupSnap);
@@ -1011,13 +1035,13 @@ export class GoalDispatchView extends ItemView {
     });
     header.addEventListener('click', () => {
       this.groupExpanded = !this.groupExpanded;
-      void this.renderGroupFeed();
+      void this.renderGroupFeed(false);
     });
     this.makeToggleAccessible(header, this.groupExpanded, () => {
       this.groupExpanded = !this.groupExpanded;
-      void this.renderGroupFeed();
+      void this.renderGroupFeed(false);
     });
-    if (!feed) {
+    if (!c.feedOk) {
       el.createDiv({ cls: 'sub-fleet-note', text: 'aggregate feed unavailable — showing direct overlay resolves' });
     } else if (supplemented.length > 0) {
       el.createDiv({ cls: 'sub-fleet-note', text: `feed producer incomplete — ${supplemented.join(', ')} from direct resolves` });
@@ -1124,11 +1148,18 @@ export class GoalDispatchView extends ItemView {
    * operator_narration (a human filed it), gap_decompose (split from a bigger
    * gap). Collapsed to an open/closed count; expands to the recent open gaps.
    */
-  private async renderGaps(): Promise<void> {
+  private gapsCache: Array<Record<string, unknown>> | null = null;
+
+  private async renderGaps(refetch = true): Promise<void> {
     const el = this.gapsEl;
     if (!el) return;
-    const j = await this.devVesselResolve('substrateGap', { limit: 200 });
-    const gaps = ((j?.body as Record<string, unknown> | undefined)?.gaps ?? []) as Array<Record<string, unknown>>;
+    // Toggles pass refetch:false and redraw synchronously from the cache —
+    // a click must never wait on an overlay round-trip to show its effect.
+    if (refetch || this.gapsCache === null) {
+      const j = await this.devVesselResolve('substrateGap', { limit: 200 });
+      this.gapsCache = ((j?.body as Record<string, unknown> | undefined)?.gaps ?? []) as Array<Record<string, unknown>>;
+    }
+    const gaps = this.gapsCache;
     const gapsSnap = JSON.stringify({ gaps, expanded: this.gapsExpanded, threads: [...this.gapDetailExpanded] });
     if (this.lastRenderedSnapshot.get('gaps') === gapsSnap) return;
     this.lastRenderedSnapshot.set('gaps', gapsSnap);
@@ -1142,11 +1173,11 @@ export class GoalDispatchView extends ItemView {
     });
     header.addEventListener('click', () => {
       this.gapsExpanded = !this.gapsExpanded;
-      void this.renderGaps();
+      void this.renderGaps(false);
     });
     this.makeToggleAccessible(header, this.gapsExpanded, () => {
       this.gapsExpanded = !this.gapsExpanded;
-      void this.renderGaps();
+      void this.renderGaps(false);
     });
     if (!this.gapsExpanded) return;
     const ts = (g: Record<string, unknown>): number => {
@@ -1261,7 +1292,10 @@ export class GoalDispatchView extends ItemView {
    */
   private async renderPulse() {
         if (!this.pulseEl) return;
-        this.pulseEl.empty();
+        // Do NOT empty here: renderPulseTiles empties atomically only when it
+        // is about to redraw (after its snapshot gate and after the resolves
+        // land). Emptying up front blanked the section for the whole fetch,
+        // and left it blank forever whenever the snapshot was unchanged.
         await this.renderPulseTiles(this.pulseEl);
   }
 
@@ -1387,11 +1421,16 @@ export class GoalDispatchView extends ItemView {
     }
   }
 
-  private async renderProjects(): Promise<void> {
+  private projectsCache: Array<Record<string, unknown>> | null = null;
+
+  private async renderProjects(refetch = true): Promise<void> {
     const el = this.projectsEl;
     if (!el) return;
-    const j = await this.devVesselResolve('memoryNote', { note_type: 'project', limit: 40 });
-    const notes = ((j?.body as Record<string, unknown> | undefined)?.notes ?? []) as Array<Record<string, unknown>>;
+    if (refetch || this.projectsCache === null) {
+      const j = await this.devVesselResolve('memoryNote', { note_type: 'project', limit: 40 });
+      this.projectsCache = ((j?.body as Record<string, unknown> | undefined)?.notes ?? []) as Array<Record<string, unknown>>;
+    }
+    const notes = this.projectsCache;
 		const projectsSnap = JSON.stringify({ notes, expanded: this.projectsExpanded });
 		if (this.lastRenderedSnapshot.get('projects') === projectsSnap) return;
 		this.lastRenderedSnapshot.set('projects', projectsSnap);
@@ -1409,11 +1448,11 @@ export class GoalDispatchView extends ItemView {
     });
     header.addEventListener('click', () => {
       this.projectsExpanded = !this.projectsExpanded;
-      void this.renderProjects();
+      void this.renderProjects(false);
     });
     this.makeToggleAccessible(header, this.projectsExpanded, () => {
       this.projectsExpanded = !this.projectsExpanded;
-      void this.renderProjects();
+      void this.renderProjects(false);
     });
     if (!this.projectsExpanded) return;
     for (const n of recent) {
