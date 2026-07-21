@@ -38,7 +38,9 @@
 //   DISCOVERY_URL                   ← http://<relay host>:18100
 //   OBSIDIAN_VESSEL_ID              ← obsidian-<hostname>-vessel (host-unique; seeds
 //                                     the libp2p identity — a shared default collides)
-//   FEDERATION_INGRESS_MULTIADDR    ← auto-discovered from hub discovery (federation_probe)
+//   FEDERATION_INGRESS_MULTIADDR    ← auto-discovered from hub discovery (federation_probe);
+//                                     discovery supersedes a set value (a pin is only the
+//                                     fallback when discovery has no ingress row)
 //   OBSIDIAN_URL                    ← http://127.0.0.1:27182
 //   OBSIDIAN_PASSTHROUGH_HEALTH_PORT  ← 8402
 
@@ -87,10 +89,13 @@ if (!DISCOVERY) {
 }
 
 // Auto-discover the hub federation-transport ingress: ask discovery who serves
-// federation_probe over libp2p and take its circuit multiaddr. Runs once at
-// startup; an explicit FEDERATION_INGRESS_MULTIADDR still wins.
+// federation_probe over libp2p and take its circuit multiaddr. Discovery is
+// authoritative: a pinned FEDERATION_INGRESS_MULTIADDR fossilizes the peer ids
+// of one hub deployment and silently severs every overlay resolve after a hub
+// redeploy (dials to the dead peer hang), so the pin is only a fallback for
+// when discovery has no answer.
 async function discoverIngress(): Promise<string> {
-  if (INGRESS || !DISCOVERY) return INGRESS;
+  if (!DISCOVERY) return '';
   try {
     const r = await fetch(DISCOVERY + '/resolve', {
       method: 'POST',
@@ -105,9 +110,40 @@ async function discoverIngress(): Promise<string> {
     return row ? String(row.libp2p_multiaddr[0]) : '';
   } catch { return ''; }
 }
-if (!INGRESS && !LOCAL_MODE) {
-  INGRESS = await discoverIngress();
-  if (INGRESS) console.log('[federation-sidecar] auto-discovered hub ingress ...' + INGRESS.slice(-24));
+if (!LOCAL_MODE) {
+  const discovered = await discoverIngress();
+  if (discovered && discovered !== INGRESS) {
+    if (INGRESS) console.log('[federation-sidecar] pinned ingress ...' + INGRESS.slice(-24) + ' superseded by discovered ...' + discovered.slice(-24));
+    else console.log('[federation-sidecar] auto-discovered hub ingress ...' + discovered.slice(-24));
+    INGRESS = discovered;
+  } else if (!discovered && INGRESS) {
+    console.log('[federation-sidecar] discovery had no ingress row — keeping pinned ...' + INGRESS.slice(-24));
+  }
+}
+
+// A dial to a dead peer id (stale ingress after a hub redeploy) hangs libp2p
+// indefinitely — bound every overlay attempt so failure falls through to the
+// next route instead of freezing the caller.
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((res, rej) => {
+    const t = setTimeout(() => rej(new Error(`${label} timed out after ${ms}ms`)), ms);
+    p.then((v) => { clearTimeout(t); res(v); }, (e) => { clearTimeout(t); rej(e); });
+  });
+}
+
+// When the overlay ingress stops answering mid-life (hub redeployed under us),
+// re-ask discovery for the current one. Deduped so a burst of failing resolves
+// triggers at most one refresh at a time.
+let ingressRefreshing = false;
+function refreshIngress(): void {
+  if (ingressRefreshing) return;
+  ingressRefreshing = true;
+  void discoverIngress().then((d) => {
+    if (d && d !== INGRESS) {
+      console.log('[federation-sidecar] ingress refreshed ...' + INGRESS.slice(-24) + ' -> ...' + d.slice(-24));
+      INGRESS = d;
+    }
+  }).finally(() => { ingressRefreshing = false; });
 }
 
 // ── Discovery-routed HTTP egress ─────────────────────────────────────────────
@@ -207,7 +243,7 @@ async function resolveViaDiscoveryHttp(pointer: any): Promise<any> {
     for (const owner of owners) {
       for (const ma of owner.multiaddrs) {
         try {
-          const res = await resolveViaLibp2pFn(vl, ma, pointer);
+          const res = await withTimeout(resolveViaLibp2pFn(vl, ma, pointer), 10_000, 'overlay resolve');
           return { shape, resolved_by: owner.vesselId, ok: true, ...(typeof res === 'object' && res !== null ? res : { body: res }) };
         } catch (e) { errors.push(`overlay ${owner.vesselId}: ${String((e as Error)?.message ?? e)}`); }
       }
@@ -391,10 +427,12 @@ try {
           if (vl && target) {
             // lpStream first (carries multi-KB hub responses reliably after the
             // sendAll fix); legacy HTTP second; discovery-routed HTTP last.
-            try { return corsJson(await resolveViaLibp2pFn(vl, target, pointer)); }
+            // Both attempts are time-bounded: a stale target peer hangs the
+            // dial forever, and an unbounded first leg starves every fallback.
+            try { return corsJson(await withTimeout(resolveViaLibp2pFn(vl, target, pointer), 10_000, 'overlay resolve')); }
             catch {
-              try { return corsJson(await resolveViaHttpFn(vl, target, pointer)); }
-              catch { /* fall through to discovery routing */ }
+              try { return corsJson(await withTimeout(resolveViaHttpFn(vl, target, pointer), 8_000, 'overlay http resolve')); }
+              catch { refreshIngress(); /* fall through to discovery routing */ }
             }
           }
           return corsJson(await resolveViaDiscoveryHttp(pointer));
@@ -427,7 +465,7 @@ try {
             if (vl && resolveViaLibp2pFn && owner.multiaddrs.length > 0 && isResolve) {
               try {
                 const pointer = { type: String(spec.shape), ...(bodyObj.impulse?.pointer ?? bodyObj.impulse ?? bodyObj.pointer) };
-                const res = await resolveViaLibp2pFn(vl, owner.multiaddrs[0], pointer);
+                const res: any = await withTimeout(resolveViaLibp2pFn(vl, owner.multiaddrs[0], pointer), 10_000, 'overlay resolve');
                 return corsJson({ status: 200, ok: true, via: owner.vesselId, body: res?.content ?? res });
               } catch {
                 /* fall through to plain HTTP */
@@ -512,6 +550,10 @@ async function register() {
           libp2p_multiaddr: circuit ? [circuit] : [],
           systemVessel: true,
           shape_descriptions,
+          // Explicit TTL comfortably above the 120s re-register cadence: with
+          // the server default the entry can expire in the gap between cycles,
+          // making the vault flap out of the registry (and out of hub walks).
+          ttl: 300,
         }),
       });
       console.log(`[federation-sidecar] register@${d} -> ${r.status} (${shapes.length} shapes: ${Object.keys(ROUTES).length} named + ${resolverShapes.length} resolver)`);
