@@ -246,9 +246,11 @@ export default class ObsidianVesselPlugin extends Plugin {
     // Phase 6b: Start the federation sidecar (opt-in)
     // Makes this plugin reachable from a REMOTE substrate hub over a libp2p
     // relay circuit, in addition to the local-container registration above.
-    if (this.settings.federationRelayMultiaddr) {
-      this.startFederationSidecar();
-    }
+    // The manager owns the start decision: a discovery endpoint alone is the
+    // complete federation config (point-and-go), a relay multiaddr is only an
+    // override — gating here on the legacy relay field left discovery-only
+    // vaults with no managed sidecar at all (only orphans from hand starts).
+    this.startFederationSidecar();
 
     this.conceptCanvasBuilder = new ConceptCanvasBuilder(this.app, this.settings);
 
@@ -968,12 +970,15 @@ export default class ObsidianVesselPlugin extends Plugin {
         this.settings.serverPort
       );
 
+      // Start the heartbeat regardless of the first attempt's outcome: the
+      // initial registration races the sidecar spawn (Phase 6 runs before
+      // Phase 6b), and the heartbeat loop self-heals an unregistered client
+      // by re-attempting registration on its cadence.
+      this.vesselClient.startHeartbeat();
       if (success) {
-        // Start heartbeat to maintain registration
-        this.vesselClient.startHeartbeat();
         console.log('[Obsidian Vessel] Registered with activity-api');
       } else {
-        console.warn('[Obsidian Vessel] Registration returned false');
+        console.warn('[Obsidian Vessel] Registration returned false — heartbeat loop will keep retrying');
       }
     } catch (error) {
       // Registration failure is not fatal - we work in offline mode

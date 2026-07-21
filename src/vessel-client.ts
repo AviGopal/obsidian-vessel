@@ -368,7 +368,15 @@ export class VesselClient {
    */
   private async sendHeartbeat(): Promise<void> {
     if (!this.registered) {
-      this.logger('debug', 'Not registered, skipping heartbeat');
+      // Self-heal instead of skipping: the initial registration races the
+      // sidecar spawn (register runs before the conduit is up) and a failure
+      // here used to be permanent — no heartbeat refresh, status stuck
+      // "Offline" for the life of the plugin instance. Re-attempt on the
+      // heartbeat cadence; register() is idempotent on the discovery side.
+      if (this.vaultPath) {
+        this.logger('debug', 'Not registered — re-attempting registration');
+        await this.register(this.vaultPath, this.serverPort);
+      }
       return;
     }
 
