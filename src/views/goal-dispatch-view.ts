@@ -873,7 +873,9 @@ export class GoalDispatchView extends ItemView {
         this.setDispatchBtnState(false);
         this.activeDispatchId = null;
       }
-      void this.guardSection(this.fleetEl, 'Fleet', () => this.renderFleet(dispatches));
+      if (this.expandedDispatches.size === 0) {
+        void this.guardSection(this.fleetEl, 'Fleet', () => this.renderFleet(dispatches));
+      }
     };
     void tick();
     this.fleetTimer = window.setInterval(() => void tick(), 7000);
