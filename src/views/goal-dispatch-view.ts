@@ -885,9 +885,15 @@ export class GoalDispatchView extends ItemView {
         this.setDispatchBtnState(false);
         this.activeDispatchId = null;
       }
-      if (this.expandedDispatches.size === 0) {
-        void this.guardSection(this.fleetEl, 'Fleet', () => this.renderFleet(dispatches));
-      }
+      // Repaint every tick — the board must stay live even while a row is
+      // expanded. renderFleet preserves an expanded row's open state (the
+      // data-dispatch-key/rowSnap diff reuses unchanged rows in place and
+      // renderFleetRow re-attaches + re-fetches detail for any row still in
+      // expandedDispatches), and it is the ONLY path that refreshes the
+      // settled/completed list (completedDispatches is set inside it). Gating
+      // it behind an empty-expansion check froze the whole board — and the
+      // completed list with it — the moment the user opened a row to read it.
+      void this.guardSection(this.fleetEl, 'Fleet', () => this.renderFleet(dispatches));
     };
     void tick();
     this.fleetTimer = window.setInterval(() => void tick(), 7000);
@@ -1411,9 +1417,12 @@ export class GoalDispatchView extends ItemView {
       });
     }
     if (members.length) {
-      const names = members.map((m) => String(m['substrate'] ?? ''));
-      addTile('peers', String(members.length), peersCaption(names), {
-        tooltip: 'Substrates reachable across the federation relay.',
+      // Count PEER substrates (exclude this substrate's own 'local' member) so
+      // the tile does not count self as a peer — the caption describes each
+      // peer's role (resolver hub) and vessel count from the fleet feed.
+      const peerCount = members.filter((m) => String(m['substrate'] ?? '') !== 'local').length;
+      addTile('peers', String(peerCount), peersCaption(members as Array<{ substrate?: string; role?: string; vesselCount?: number | null; reachable?: boolean }>), {
+        tooltip: 'Peer substrates reachable across the federation relay (resolver/relay hubs this spoke federates to).',
       });
     }
     if (gaps.length) {

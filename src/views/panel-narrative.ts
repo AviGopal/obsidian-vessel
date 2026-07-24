@@ -87,10 +87,19 @@ export function vesselsCaption(count: number): string {
 }
 
 /** Peers tile caption from federation member names: "this substrate plus syzygy-hub across the relay". */
-export function peersCaption(memberNames: string[]): string {
-  const others = memberNames.filter((n) => n && n !== 'local');
+export function peersCaption(
+  members: Array<{ substrate?: string; role?: string; vesselCount?: number | null; reachable?: boolean }>,
+): string {
+  const others = members.filter((m) => m && m.substrate && m.substrate !== 'local');
   if (others.length === 0) return 'no peer substrates on the relay';
-  return `this substrate plus ${others.join(', ')} across the relay`;
+  const parts = others.map((m) => {
+    const bits: string[] = [String(m.substrate)];
+    if (m.role === 'resolver-hub') bits.push('resolver hub');
+    if (typeof m.vesselCount === 'number') bits.push(`${m.vesselCount} vessels`);
+    if (m.reachable === false) bits.push('unreachable');
+    return bits.join(' · ');
+  });
+  return `this substrate plus ${parts.join('; ')} across the relay`;
 }
 
 /** Gaps tile caption: closes per day and the age of the oldest open gap. */
@@ -136,6 +145,7 @@ function triggerPhrase(trigger: string): string {
     case 'gap-drain': return 'Self-chosen — draining the gap backlog';
     case 'learning-mode': return 'Self-chosen — a learning-mode probe';
     case 'note': return 'From your vault — picked up from a note you wrote';
+    case 'convergent-enabler': return 'Self-chosen — convergent enabler work it runs on a cadence to keep the fleet productive';
     default: return `Self-chosen — ${trigger}`;
   }
 }
