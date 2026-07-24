@@ -332,6 +332,7 @@ export class GoalDispatchView extends ItemView {
   // default; polled on a slow cadence (they change far less than dispatches).
   private gapsEl: HTMLElement | null = null;
   private projectsEl: HTMLElement | null = null;
+  private inspectEl: HTMLElement | null = null;
   // Group activity feed: what the whole peering group is working on
   // (fleetActivityFeed aggregate, with direct-resolve fallback legs).
   private groupEl: HTMLElement | null = null;
@@ -451,6 +452,11 @@ export class GoalDispatchView extends ItemView {
     this.gapsEl = contentEl.createDiv('sub-section sub-gaps');
     // 6. Projects — longer-lived work threads, collapsed to a count.
     this.projectsEl = contentEl.createDiv('sub-section sub-projects');
+    // 7. Inspect — execution trace inspection and registry browsing.
+    this.inspectEl = contentEl.createDiv('sub-section sub-inspect');
+    this.renderInspect(this.inspectEl);
+    this.inspectEl = contentEl.createDiv('sub-section sub-inspect');
+    this.renderInspect(this.inspectEl);
 
     // ── ONE scroll container: event feed + collapsed vault-touch feed ──
     this.scrollEl = contentEl.createDiv('sub-scroll');
@@ -518,6 +524,45 @@ export class GoalDispatchView extends ItemView {
    * The `available_shapes` list is forwarded as `expected_output_shapes`
    * to bias Thompson sampling toward vault-aware activities.
    */
+  private async renderInspect(el: HTMLElement): Promise<void> {
+    await this.renderCollapsible(el, 'Inspect', async (body) => {
+      const input = body.createEl('input', {
+        type: 'text',
+        placeholder: 'execution id',
+        cls: 'inspect-execution-input',
+      });
+
+      const openTraceBtn = body.createEl('button', {
+        text: 'Open trace',
+        cls: 'mod-cta',
+      });
+      openTraceBtn.addEventListener('click', async () => {
+        const id = (input as HTMLInputElement).value.trim();
+        if (!id) return;
+        const bodyEl = document.createElement('pre');
+        bodyEl.className = 'inspect-trace-json';
+        const result = await sidecarResolveBody({ type: 'executionTrace', id }) ?? await sidecarResolveBody({ type: 'execution_trace', id });
+        bodyEl.textContent = JSON.stringify(result, null, 2);
+        body.appendChild(bodyEl);
+      });
+
+      const browseRegistryBtn = body.createEl('button', {
+        text: 'Browse registry',
+        cls: 'mod-cta',
+      });
+      browseRegistryBtn.addEventListener('click', async () => {
+        const reg = await sidecarResolveBody({ type: 'vesselRegistry' }) ?? await sidecarResolveBody({ type: 'vesselCapability' });
+        const list = body.createEl('div', { cls: 'inspect-registry-list' });
+        if (reg && typeof reg === 'object') {
+          for (const [key, value] of Object.entries(reg)) {
+            const line = list.createEl('div', { text: `${String(key)}: ${JSON.stringify(value)}` });
+            line.className = 'inspect-registry-item';
+          }
+        }
+      });
+    });
+  }
+
   private collectVaultContext(): VaultContext {
     const app = this.plugin.app;
     const ctx: VaultContext = {};
