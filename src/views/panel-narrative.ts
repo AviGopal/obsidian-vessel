@@ -229,18 +229,29 @@ export function failureMeaningSentence(
   walkLog: string[],
 ): string {
   if (reached !== false) return '';
-  const hay = (walkLog.join(' \n ') + ' ' + (goalReachReason || '')).toLowerCase();
-  const has = (...xs: string[]): boolean => xs.some((x) => hay.includes(x));
-  if (has('llm fetch 5', ' 502', ' 503', 'timeout', 'econn', 'unreachable — verdict'))
-    return 'What this means: a service it depended on (usually the LLM plane) was briefly unavailable — a transient infrastructure failure, not a logic error. Worth retrying.';
-  if (has('budget', 'cost ceiling', 'budget_exhausted'))
-    return 'What this means: it hit a cost/budget ceiling before it could finish.';
-  if (has('no producer', 'no constructible', 'missing_input', 'resolver_not_registered'))
-    return 'What this means: nothing in the fleet can produce what this needs yet — a missing capability, not a crash. A new resolver or activity has to exist before it can succeed.';
-  if (has('hollow', 'empty', 'content is empty', 'no output', 'no-output'))
-    return 'What this means: it ran, but the result came back empty or incomplete — the reach-gate refused to rubber-stamp a hollow answer. The capability may exist but had no data to fill it.';
-  if (has('does not', 'wrong', 'incorrect', 'placeholder', 'staged-not-landed'))
-    return 'What this means: it produced output, but the reach-gate judged it did not actually answer what was asked.';
+  // Classify primarily off the TERMINAL reason (goalReachReason) — the whole
+  // walkLog contains a "HOLLOW" token on nearly every non-reach, so scanning it
+  // wholesale drowns out the true cause. Fall back to the log only when the
+  // terminal reason is silent.
+  const reason = (goalReachReason || '').toLowerCase();
+  const log = walkLog.join(' \n ').toLowerCase();
+  const inReason = (...xs: string[]): boolean => xs.some((x) => reason.includes(x));
+  const inAny = (...xs: string[]): boolean => xs.some((x) => reason.includes(x) || log.includes(x));
+  const INFRA = 'What this means: a service it depended on (usually the LLM plane) was briefly unavailable — a transient infrastructure failure, not a logic error. Worth retrying.';
+  const BUDGET = 'What this means: it hit a cost/budget ceiling before it could finish.';
+  const NOPROD = 'What this means: nothing in the fleet can produce what this needs yet — a missing capability, not a crash. A new resolver or activity has to exist before it can succeed.';
+  const HOLLOW = 'What this means: it ran, but the result came back empty or incomplete — the reach-gate refused to rubber-stamp a hollow answer. The capability may exist but had no data to fill it.';
+  const WRONG = 'What this means: it produced output, but the reach-gate judged it did not actually answer what was asked.';
+  // infra + budget are unambiguous wherever they appear.
+  if (inAny('llm fetch 5', ' 502', ' 503', 'timeout', 'econn', 'unreachable — verdict')) return INFRA;
+  if (inAny('budget', 'cost ceiling', 'budget_exhausted')) return BUDGET;
+  // the terminal reason decides the rest.
+  if (inReason('no producer', 'no constructible', 'missing_input', 'resolver_not_registered')) return NOPROD;
+  if (inReason('does not', 'did not', 'wrong', 'incorrect', 'placeholder', 'staged-not-landed', 'mismatch')) return WRONG;
+  if (inReason('content is empty', 'empty', 'no output', 'no-output', 'hollow', 'seed-only')) return HOLLOW;
+  // reason was silent — fall back to the walk log.
+  if (inAny('no producer', 'no constructible')) return NOPROD;
+  if (inAny('hollow', 'empty', 'no output')) return HOLLOW;
   return goalReachReason
     ? `What this means: ${goalReachReason}`
     : 'What this means: the goal was not reached; no specific reason was recorded.';

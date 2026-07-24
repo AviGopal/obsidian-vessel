@@ -152,7 +152,7 @@ interface WalkStep {
 }
 
 interface WalkLearning {
-  alphaBetaDelta?: Record<string, unknown> | number | string;
+  alphaBetaDelta?: Record<string, unknown> | Array<Record<string, unknown>> | number | string;
   oracleLabelWritten?: boolean;
   gapsFiled?: string[];
 }
@@ -539,7 +539,7 @@ export class GoalDispatchView extends ItemView {
         if (!id) return;
         const bodyEl = document.createElement('pre');
         bodyEl.className = 'inspect-trace-json';
-        const result = await sidecarResolveBody({ type: 'executionTrace', id }) ?? await sidecarResolveBody({ type: 'execution_trace', id });
+        const result = await sidecarResolveBody({ type: 'activityExecutionTrace', executionId: id }) ?? await sidecarResolveBody({ type: 'executionTrace', id });
         bodyEl.textContent = JSON.stringify(result, null, 2);
         body.appendChild(bodyEl);
       });
@@ -549,13 +549,22 @@ export class GoalDispatchView extends ItemView {
         cls: 'mod-cta',
       });
       browseRegistryBtn.addEventListener('click', async () => {
-        const reg = await sidecarResolveBody({ type: 'vesselRegistry' }) ?? await sidecarResolveBody({ type: 'vesselCapability' });
+        // Registry is served by discovery (authed), NOT over the federation
+        // /outbound/resolve path — reuse the same call renderPulseTiles uses.
+        const reg = await sidecarHttpAuto({ service: 'discovery', method: 'POST', path: '/resolve', body: { pointer: { type: 'vesselRegistry' } } });
+        const regBody = ((reg?.body ?? {}) as Record<string, unknown>);
+        const regContent = ((regBody.content ?? regBody) as Record<string, unknown>);
+        const vessels = (Array.isArray(regContent.vessels) ? regContent.vessels : []) as Array<Record<string, unknown>>;
         const list = body.createEl('div', { cls: 'inspect-registry-list' });
-        if (reg && typeof reg === 'object') {
-          for (const [key, value] of Object.entries(reg)) {
-            const line = list.createEl('div', { text: `${String(key)}: ${JSON.stringify(value)}` });
-            line.className = 'inspect-registry-item';
-          }
+        if (vessels.length === 0) {
+          list.createEl('div', { cls: 'inspect-registry-item', text: 'no vessels advertising into discovery' });
+        }
+        for (const v of vessels) {
+          const vid = String(v['vesselId'] ?? v['id'] ?? '');
+          const shapesRaw = Array.isArray(v['shapes']) ? v['shapes'] : (Array.isArray(v['advertised_shapes']) ? v['advertised_shapes'] : (Array.isArray(v['capabilities']) ? v['capabilities'] : []));
+          const shapes = (shapesRaw as unknown[]).map((x) => typeof x === 'string' ? x : String((x as Record<string, unknown>)?.['shape'] ?? '')).filter(Boolean);
+          const line = list.createEl('div', { cls: 'inspect-registry-item', text: shapes.length ? `${vid} — ${shapes.slice(0, 8).join(', ')}${shapes.length > 8 ? '…' : ''}` : vid });
+          void line;
         }
       });
     });
@@ -564,6 +573,9 @@ export class GoalDispatchView extends ItemView {
   private collectVaultContext(): VaultContext {
     const app = this.plugin.app;
     const ctx: VaultContext = {};
+    // Stamp the human operator (the vault) so a direct omnibox dispatch shows
+    // "Dispatched by <vault>" rather than falling back to a text-inferred trigger.
+    ctx.operator = app.vault.getName();
 
     // Active note
     const activeFile = app.workspace.getActiveFile();
@@ -1822,7 +1834,10 @@ export class GoalDispatchView extends ItemView {
    */
   private async submitVerdict(executionId: string, d: Record<string, unknown>, verdict: 'achieved' | 'not_achieved' | 'partial'): Promise<void> {
     const goal = typeof d.goal === 'string' ? d.goal : `goal for execution ${executionId}`;
-    const activityId = typeof d.selectedTemplateId === 'string' ? String(d.selectedTemplateId) : '';
+    // Fall back to the executionId when no template is bound (failed/satisfier
+    // rows) so the oracle label still records — that is exactly where a
+    // "not reached" verdict is the most valuable ground-truth signal.
+    const activityId = (typeof d.selectedTemplateId === 'string' && d.selectedTemplateId) ? String(d.selectedTemplateId) : executionId;
 
     const pointer = {
       type: 'goal_verification_label_write' as const,
@@ -2116,7 +2131,19 @@ export class GoalDispatchView extends ItemView {
   private renderLearningLine(parent: HTMLElement, learning: WalkLearning): void {
     const parts: string[] = [];
     const delta = learning.alphaBetaDelta;
-    if (delta !== undefined && delta !== null) {
+    if (Array.isArray(delta)) {
+      // goal-host emits an array of {templateId, dAlpha, dBeta} — one per pick it graded.
+      for (const e of delta as Array<Record<string, unknown>>) {
+        const tid = e['templateId'] ?? e['template'];
+        const da = e['dAlpha'] ?? e['alpha'] ?? e['deltaAlpha'];
+        const db = e['dBeta'] ?? e['beta'] ?? e['deltaBeta'];
+        const bits: string[] = [];
+        if (typeof da === 'number' && da !== 0) bits.push(`Δα ${da >= 0 ? '+' : ''}${da}`);
+        if (typeof db === 'number' && db !== 0) bits.push(`Δβ ${db >= 0 ? '+' : ''}${db}`);
+        const on = typeof tid === 'string' ? ` on ${shortId(tid)}` : '';
+        if (bits.length) parts.push(`${bits.join(' ')}${on}`);
+      }
+    } else if (delta !== undefined && delta !== null) {
       if (typeof delta === 'object') {
         const tid = (delta as Record<string, unknown>).templateId ?? (delta as Record<string, unknown>).template;
         const da = (delta as Record<string, unknown>).alpha ?? (delta as Record<string, unknown>).dAlpha ?? (delta as Record<string, unknown>).deltaAlpha;
