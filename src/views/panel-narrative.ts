@@ -124,12 +124,43 @@ export function asOfNote(asOfMs: number): string {
   return `${fmtDuration(age)} ago`;
 }
 
-/** One-line narrative for a running fleet card: who asked, and how it is being run. */
-export function runningNarrative(goal: string, d: { operator?: unknown; selectedTemplateId?: unknown }): string {
+/** Map a machine trigger (stamped by goal-host) to a human why-now phrase. */
+function triggerPhrase(trigger: string): string {
+  switch (trigger) {
+    case 'operator': return 'Dispatched by an operator';
+    case 'boredom': return 'Self-chosen — idle-time work it picked while free';
+    case 'gap-closing': return 'Self-chosen — closing one of its own gaps';
+    case 'gap-decompose': return 'Self-chosen — decomposing a gap it could not close directly';
+    case 'recovery': return 'Recovery — retrying after an interruption or failure';
+    case 'rhythm-due': return 'Self-chosen — a rhythm came due';
+    case 'gap-drain': return 'Self-chosen — draining the gap backlog';
+    case 'learning-mode': return 'Self-chosen — a learning-mode probe';
+    default: return `Self-chosen — ${trigger}`;
+  }
+}
+
+/** Derive why-now from the goal text when goal-host did not stamp a trigger. */
+function inferTrigger(goal: string): string {
+  const g = (goal || '').trim();
+  let m: RegExpMatchArray | null;
+  if ((m = g.match(/^Close substrate gap (\S+)/i))) return `Self-chosen — closing ${m[1]}`;
+  if (/^investigate and decompose goal/i.test(g)) return 'Self-chosen — decomposing a gap it could not close directly';
+  if (/grounding query failed/i.test(g)) return 'Recovery — retrying after a grounding-query miss';
+  if (/^\([a-z_]+\)/i.test(g)) return 'Self-chosen — a self-audit probe';
+  return 'Idle-time work — the substrate chose this while free';
+}
+
+/**
+ * One-line narrative for a running fleet card: WHY-NOW (the trigger), then how it
+ * is being run. Prefers the machine trigger goal-host stamps on the dispatch; falls
+ * back to inferring it from the goal text when the trigger field is absent.
+ */
+export function runningNarrative(goal: string, d: { operator?: unknown; selectedTemplateId?: unknown; trigger?: unknown }): string {
   const op = typeof d.operator === 'string' ? d.operator : '';
+  const trg = typeof d.trigger === 'string' && d.trigger ? d.trigger : '';
   const who = op
     ? `Dispatched by ${op}`
-    : 'Picked up by the substrate on its own';
+    : (trg ? triggerPhrase(trg) : inferTrigger(goal));
   const tmpl = typeof d.selectedTemplateId === 'string' && d.selectedTemplateId
     ? ` — running it as ${d.selectedTemplateId}`
     : ' — still choosing how to run it';
