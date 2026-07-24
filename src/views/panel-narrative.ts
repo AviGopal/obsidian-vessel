@@ -167,3 +167,107 @@ export function runningNarrative(goal: string, d: { operator?: unknown; selected
     : ' — still choosing how to run it';
   return `${who}${tmpl}.`;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Self-explanation — the four human questions for an expanded dispatch:
+// why-chosen · what-happened · what-it-means · what-next. All assembled from
+// fields the goalWalkState body already carries (walkLog, goalReachReason,
+// learning, trigger, requeueOf). The substrate is a mix of mechanisms, but every
+// decision it made is recorded — these read that record back as plain language.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Pull the goal-target inference the walk logged (what it read the goal as needing). */
+export function parseInference(
+  walkLog: string[],
+): { shapes: string[]; confidence?: number; alternatives: string[] } | null {
+  for (const line of walkLog) {
+    const i = line.indexOf('goal-target inference');
+    if (i < 0) continue;
+    const brace = line.indexOf('{', i);
+    if (brace < 0) continue;
+    try {
+      const obj = JSON.parse(line.slice(brace)) as {
+        inferred_target_shapes?: unknown; confidence?: unknown; alternatives?: unknown;
+      };
+      const shapes = Array.isArray(obj.inferred_target_shapes)
+        ? obj.inferred_target_shapes.map(String) : [];
+      const alternatives = Array.isArray(obj.alternatives)
+        ? (obj.alternatives as unknown[]).flat().map(String) : [];
+      return { shapes, confidence: typeof obj.confidence === 'number' ? obj.confidence : undefined, alternatives };
+    } catch { return null; }
+  }
+  return null;
+}
+
+/** WHY-CHOSEN: the origin (operator vs which self-trigger) + what the walk read the goal as needing. */
+export function whyChosenSentence(
+  d: { trigger?: unknown; operator?: unknown },
+  walkLog: string[],
+): string {
+  const op = typeof d.operator === 'string' && d.operator ? d.operator : '';
+  const trg = typeof d.trigger === 'string' && d.trigger ? d.trigger : '';
+  const origin = op
+    ? `You dispatched this (as ${op}).`
+    : trg ? `${triggerPhrase(trg)}.` : 'Picked up by the substrate.';
+  const inf = parseInference(walkLog);
+  if (!inf || inf.shapes.length === 0) return origin;
+  const conf = typeof inf.confidence === 'number'
+    ? (inf.confidence >= 0.95 ? ' (confident)' : inf.confidence >= 0.7 ? ' (fairly sure)' : ' (a low-confidence guess)')
+    : '';
+  let s = `${origin} It read the goal as needing «${inf.shapes[0]}»${conf}.`;
+  const alts = inf.alternatives.filter((a) => !inf.shapes.includes(a)).slice(0, 3);
+  if (alts.length) {
+    s += ` It also weighed ${alts.map((a) => `«${a}»`).join(', ')} and set ${alts.length === 1 ? 'it' : 'them'} aside.`;
+  }
+  return s;
+}
+
+/** WHAT-IT-MEANS: interpret a non-reach into a plain failure meaning. Empty string when reached. */
+export function failureMeaningSentence(
+  reached: boolean | null | undefined,
+  goalReachReason: string,
+  walkLog: string[],
+): string {
+  if (reached !== false) return '';
+  const hay = (walkLog.join(' \n ') + ' ' + (goalReachReason || '')).toLowerCase();
+  const has = (...xs: string[]): boolean => xs.some((x) => hay.includes(x));
+  if (has('llm fetch 5', ' 502', ' 503', 'timeout', 'econn', 'unreachable — verdict'))
+    return 'What this means: a service it depended on (usually the LLM plane) was briefly unavailable — a transient infrastructure failure, not a logic error. Worth retrying.';
+  if (has('budget', 'cost ceiling', 'budget_exhausted'))
+    return 'What this means: it hit a cost/budget ceiling before it could finish.';
+  if (has('no producer', 'no constructible', 'missing_input', 'resolver_not_registered'))
+    return 'What this means: nothing in the fleet can produce what this needs yet — a missing capability, not a crash. A new resolver or activity has to exist before it can succeed.';
+  if (has('hollow', 'empty', 'content is empty', 'no output', 'no-output'))
+    return 'What this means: it ran, but the result came back empty or incomplete — the reach-gate refused to rubber-stamp a hollow answer. The capability may exist but had no data to fill it.';
+  if (has('does not', 'wrong', 'incorrect', 'placeholder', 'staged-not-landed'))
+    return 'What this means: it produced output, but the reach-gate judged it did not actually answer what was asked.';
+  return goalReachReason
+    ? `What this means: ${goalReachReason}`
+    : 'What this means: the goal was not reached; no specific reason was recorded.';
+}
+
+/** WHAT-NEXT: the disposition — what the system did / will do after a non-reach. gaps are ids to link. */
+export function dispositionSentence(
+  reached: boolean | null | undefined,
+  learning: { gapsFiled?: unknown } | null,
+  requeueOf: unknown,
+  walkLog: string[],
+): { text: string; gaps: string[] } {
+  if (reached === true) return { text: '', gaps: [] };
+  const log = walkLog.join(' \n ').toLowerCase();
+  const gaps = Array.isArray(learning?.gapsFiled)
+    ? Array.from(new Set((learning as { gapsFiled?: unknown[] }).gapsFiled!.filter((g): g is string => typeof g === 'string')))
+    : [];
+  if (gaps.length) {
+    return {
+      text: `What happens now: recorded as ${gaps.length === 1 ? 'a capability gap' : 'capability gaps'} — it will be worked from the gap backlog, not silently retried the same way. It also down-weighted the picks that came back empty, so they are less likely to be chosen next time.`,
+      gaps,
+    };
+  }
+  if (typeof requeueOf === 'string' && requeueOf) return { text: 'What happens now: requeued to try again once.', gaps: [] };
+  if (log.includes('requeued')) return { text: 'What happens now: requeued to retry.', gaps: [] };
+  if (log.includes('investigate-and-decompose') || log.includes('escalating to') || log.includes('escalated_from') || log.includes('decompose'))
+    return { text: 'What happens now: escalated to break the goal into smaller pieces it can attempt.', gaps: [] };
+  if (reached === false) return { text: 'What happens now: no automatic follow-up was recorded — this one needs a human or a fresh goal to move it forward.', gaps: [] };
+  return { text: '', gaps: [] };
+}

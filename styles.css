@@ -1287,6 +1287,50 @@ body {
   font-size: var(--sub-font-s);
   flex-shrink: 0;
 }
+/* Self-explanation block — the four human questions, above the decision tree. */
+.sub-explain {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sub-space-1);
+  margin: var(--sub-space-1) 0 var(--sub-space-2) 0;
+  padding: var(--sub-space-2);
+  border-radius: 6px;
+  background: var(--sub-surface, rgba(127, 127, 127, 0.06));
+  border-left: 2px solid var(--sub-border, rgba(127, 127, 127, 0.3));
+}
+.sub-explain-row {
+  display: grid;
+  grid-template-columns: 6.5em 1fr;
+  gap: var(--sub-space-2);
+  align-items: baseline;
+}
+.sub-explain-q {
+  font-size: var(--sub-font-xs, 0.72rem);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--sub-text-faint);
+  font-weight: 600;
+}
+.sub-explain-a {
+  font-size: var(--sub-font-s);
+  line-height: 1.5;
+  color: var(--sub-text);
+}
+.sub-explain-row--warn {
+  border-left: 2px solid var(--color-orange, #e0913a);
+  padding-left: var(--sub-space-2);
+  margin-left: -2px;
+}
+.sub-explain-row--next .sub-explain-a {
+  color: var(--sub-text-muted);
+}
+.sub-gap-link {
+  color: var(--sub-accent, var(--interactive-accent, #7c6cff));
+  cursor: pointer;
+  text-decoration: none;
+  border-bottom: 1px dotted currentColor;
+}
+.sub-gap-link:hover { text-decoration: none; opacity: 0.8; }
 .sub-answer-inline {
   margin: var(--sub-space-1) 0 var(--sub-space-2) 0;
 }

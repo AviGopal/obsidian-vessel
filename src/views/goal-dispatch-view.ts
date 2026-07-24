@@ -67,7 +67,7 @@ import { GoalNoteManager } from '../goals/goal-note-manager';
 import type { PendingSolicitation } from '../solicitations/solicitation-manager';
 import type { UiFeedbackKind } from '../feedback/ui-feedback-store';
 import { sidecarResolveBody, sidecarHttpAuto } from '../sidecar-manager';
-import { posteriorSentence, shadowSentence, poolDeltaSentence, reachCaption, vesselsCaption, peersCaption, gapsCaption, runnersCaption, asOfNote, runningNarrative } from './panel-narrative';
+import { posteriorSentence, shadowSentence, poolDeltaSentence, reachCaption, vesselsCaption, peersCaption, gapsCaption, runnersCaption, asOfNote, runningNarrative, whyChosenSentence, failureMeaningSentence, dispositionSentence } from './panel-narrative';
 import { cachedPulseVerdict, refreshPulseVerdict, cachedNextSelection, requestNextSelection } from './panel-aggregates';
 
 export const VIEW_TYPE_GOAL_DISPATCH = 'obsidian-goal-dispatch';
@@ -1715,6 +1715,12 @@ export class GoalDispatchView extends ItemView {
     // 1. Reached-led headline (status demoted; failed-but-reached explained).
     this.renderReachHeadline(detail, body, d);
 
+    // 1b. Self-explanation — the four human questions in plain language, above
+    // the technical decision tree: why THIS was chosen, what it means if it
+    // failed, and what the substrate will do next. Assembled from the walkLog /
+    // goalReachReason / learning the body already carries.
+    this.renderSelfExplanation(detail, body, d);
+
     // 2. Authored answer (question-goals): show it prominently up top.
     const answerBody = typeof body.answerBody === 'string' ? body.answerBody.trim() : '';
     if (answerBody) this.renderInlineAnswer(detail, answerBody);
@@ -1885,6 +1891,62 @@ export class GoalDispatchView extends ItemView {
    * only as a small secondary chip; when status=failed but reached=true a single
    * explanatory line replaces the misleading "failed" lead.
    */
+  /**
+   * The plain-language self-explanation block for an expanded dispatch. The
+   * substrate is a mix of mechanisms (walk, Thompson selection, reach-gate,
+   * gap-filer) but every decision is recorded — this reads that record back as
+   * the four questions a human actually asks: why this, what it means, what next.
+   * why-chosen shows always (context); meaning + disposition only on a non-reach,
+   * where the obscurity bites. The decision tree below is the "show your work".
+   */
+  private renderSelfExplanation(parent: HTMLElement, body: Record<string, unknown>, d: Record<string, unknown>): void {
+    const walkLog = Array.isArray(body.walkLog) ? (body.walkLog as unknown[]).map(String) : [];
+    const reached = (body.reached ?? d.reached) as boolean | null | undefined;
+    const reason = typeof body.goalReachReason === 'string' ? body.goalReachReason : '';
+    const learning = (body.learning ?? null) as { gapsFiled?: unknown } | null;
+    const requeueOf = (body.requeueOf ?? d.requeueOf);
+    const trg = { trigger: body.trigger ?? d.trigger, operator: body.operator ?? d.operator };
+
+    const box = parent.createDiv('sub-explain');
+
+    // WHY-CHOSEN — always shown; carries the purpose (which trigger / operator).
+    const why = whyChosenSentence(trg, walkLog);
+    if (why) {
+      const row = box.createDiv('sub-explain-row');
+      row.createSpan({ cls: 'sub-explain-q', text: 'Why this' });
+      row.createSpan({ cls: 'sub-explain-a', text: why });
+    }
+
+    // WHAT-IT-MEANS — only on a non-reach.
+    const meaning = failureMeaningSentence(reached, reason, walkLog);
+    if (meaning) {
+      const row = box.createDiv('sub-explain-row sub-explain-row--warn');
+      row.createSpan({ cls: 'sub-explain-q', text: 'What it means' });
+      row.createSpan({ cls: 'sub-explain-a', text: meaning });
+    }
+
+    // WHAT-NEXT — the disposition; gaps rendered as clickable links.
+    const disp = dispositionSentence(reached, learning, requeueOf, walkLog);
+    if (disp.text) {
+      const row = box.createDiv('sub-explain-row sub-explain-row--next');
+      row.createSpan({ cls: 'sub-explain-q', text: 'What happens now' });
+      const a = row.createSpan({ cls: 'sub-explain-a', text: disp.text });
+      if (disp.gaps.length > 0) {
+        a.appendText(' ');
+        disp.gaps.forEach((g, i) => {
+          if (i > 0) a.appendText(', ');
+          const link = a.createEl('a', { cls: 'sub-gap-link', text: g });
+          link.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            this.app.workspace.openLinkText(g, '', false);
+          });
+        });
+      }
+    }
+
+    if (box.childElementCount === 0) box.remove();
+  }
+
   private renderReachHeadline(parent: HTMLElement, body: Record<string, unknown>, d: Record<string, unknown>): void {
     const status = String(body.status ?? d.status ?? '');
     const running = status === 'running';
