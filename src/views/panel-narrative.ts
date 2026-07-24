@@ -135,6 +135,7 @@ function triggerPhrase(trigger: string): string {
     case 'rhythm-due': return 'Self-chosen — a rhythm came due';
     case 'gap-drain': return 'Self-chosen — draining the gap backlog';
     case 'learning-mode': return 'Self-chosen — a learning-mode probe';
+    case 'note': return 'From your vault — picked up from a note you wrote';
     default: return `Self-chosen — ${trigger}`;
   }
 }
