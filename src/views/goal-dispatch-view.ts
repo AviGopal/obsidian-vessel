@@ -2305,6 +2305,11 @@ export class GoalDispatchView extends ItemView {
           text: `${t.mode === 'write' ? '✎' : '◉'} ${t.shape.replace('obsidian:', '')}${paths}`,
           attr: { title: `${t.shape}${paths}` },
         });
+        if (t.dispatch_id || t.execution_id) {
+          const id = t.dispatch_id ?? t.execution_id;
+          const chip = line.createSpan({ cls: 'sub-chip', text: `↳ ${shortId(String(id))}` });
+          chip.setAttribute('title', String(id));
+        }
       }
     };
     render();
