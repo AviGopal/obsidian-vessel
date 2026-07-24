@@ -1694,7 +1694,10 @@ export class GoalDispatchView extends ItemView {
     const settledStatus = String(body.status ?? d.status ?? '');
     if (steps.length > 0 && settledStatus !== 'running') this.renderContribBar(detail, steps);
     const execForNext = typeof d.executionId === 'string' && !d.executionId.startsWith('interrupted:') ? d.executionId : (typeof body.executionId === 'string' ? body.executionId : '');
-    if (execForNext && settledStatus !== 'running') this.renderNextSelection(detail, execForNext);
+    if (execForNext && settledStatus !== 'running') {
+      this.renderNextSelection(detail, execForNext);
+      this.renderVerdictControl(detail, execForNext, d);
+    }
 
     // 5. Attach to live WS feed.
     const execId = typeof d.executionId === 'string' && !d.executionId.startsWith('interrupted:') ? d.executionId : null;
@@ -1734,6 +1737,66 @@ export class GoalDispatchView extends ItemView {
       pending.remove();
       box.createDiv({ cls: 'sub-next-rec', text: v.sentence });
     });
+  }
+
+  /**
+   * Render a one-click operator verdict control for settled executions.
+   * Shows "Was this reached?" label and three verdict buttons.
+   */
+  private renderVerdictControl(parent: HTMLElement, executionId: string, d: Record<string, unknown>): void {
+    const box = parent.createDiv('sub-verdict');
+    box.createDiv({ cls: 'sub-verdict-label', text: 'Was this reached?' });
+
+    const reachedBtn = box.createEl('button', { cls: 'sub-fleet-btn', text: 'reached' });
+    reachedBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      void this.submitVerdict(executionId, d, 'achieved');
+    });
+
+    const notReachedBtn = box.createEl('button', { cls: 'sub-fleet-btn', text: 'not reached' });
+    notReachedBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      void this.submitVerdict(executionId, d, 'not_achieved');
+    });
+
+    const partialBtn = box.createEl('button', { cls: 'sub-fleet-btn', text: 'partial' });
+    partialBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      void this.submitVerdict(executionId, d, 'partial');
+    });
+  }
+
+  /**
+   * Submit an operator verdict for an execution and replace buttons with confirmation.
+   */
+  private async submitVerdict(executionId: string, d: Record<string, unknown>, verdict: 'achieved' | 'not_achieved' | 'partial'): Promise<void> {
+    const goal = typeof d.goal === 'string' ? d.goal : `goal for execution ${executionId}`;
+    const activityId = typeof d.selectedTemplateId === 'string' ? String(d.selectedTemplateId) : '';
+
+    const pointer = {
+      type: 'goal_verification_label_write' as const,
+      goal,
+      execution_id: executionId,
+      activity_id: activityId,
+      verdict,
+      confidence: 0.9,
+      labeler: 'human',
+      notes: 'operator verdict from fleet panel',
+    };
+
+    const body = await sidecarResolveBody(pointer);
+
+    const parent = (document.querySelector('.sub-verdict') ?? document.querySelector('.sub-fleet-detail')) as HTMLElement | null;
+    if (!parent) return;
+
+    const btns = parent.querySelectorAll('.sub-fleet-btn');
+    for (const b of Array.from(btns)) b.remove();
+
+    if (body != null) {
+      parent.createDiv({ cls: 'sub-verdict-confirm', text: 'verdict recorded' });
+    } else {
+      parent.createDiv({ cls: 'sub-verdict-confirm', text: 'verdict not recorded - sidecar unavailable' });
+    }
   }
 
   /**
