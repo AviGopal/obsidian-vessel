@@ -455,8 +455,6 @@ export class GoalDispatchView extends ItemView {
     // 7. Inspect — execution trace inspection and registry browsing.
     this.inspectEl = contentEl.createDiv('sub-section sub-inspect');
     this.renderInspect(this.inspectEl);
-    this.inspectEl = contentEl.createDiv('sub-section sub-inspect');
-    this.renderInspect(this.inspectEl);
 
     // ── ONE scroll container: event feed + collapsed vault-touch feed ──
     this.scrollEl = contentEl.createDiv('sub-scroll');
