@@ -234,6 +234,72 @@ function humanizeWalkLine(line: string): string {
   }
 }
 
+/**
+ * Earned reach rate α/(α+β) plus the observation mass (α+β). The mass is the
+ * honest caveat thickness alone can't show — it separates an earned 0.9 from an
+ * uninformed α=1,β=1 prior of 0.5. Returns null when the posterior is absent.
+ */
+function reachOf(s: { alpha?: number; beta?: number }): { rate: number; mass: number } | null {
+  const a = s.alpha, b = s.beta;
+  if (typeof a !== 'number' || typeof b !== 'number' || a + b <= 0) return null;
+  return { rate: a / (a + b), mass: a + b };
+}
+
+/** Reusability class — HEURISTIC from source + template-id prefix (true walk_tier
+ *  is not emitted per step, so this is honestly a heuristic, never a tier badge). */
+function reuseClass(s: { source?: string; templateId?: string }): string {
+  if (s.source === 'satisfier') return 'tool primitive';
+  const t = (s.templateId ?? '').toLowerCase();
+  if (/learned[-_]?compos|composed|composition/.test(t)) return 'learned pathway';
+  if (/auto-bridge/.test(t)) return 'fresh scaffold';
+  if (s.source === 'thompson') return 'one-off';
+  return s.source ?? 'step';
+}
+
+/** Dispatch-level target-inference confidence, parsed verbatim from walkLog. */
+function walkConfidence(walkLog: string[]): { conf: number; targets: string[]; alts: string[] } | null {
+  for (const l of walkLog) {
+    if (!/goal-target inference/.test(l)) continue;
+    const m = l.match(/(\{.*\})/);
+    if (!m) continue;
+    try {
+      const o = JSON.parse(m[1]) as Record<string, unknown>;
+      if (typeof o.confidence === 'number') {
+        const alts = Array.isArray(o.alternatives)
+          ? (o.alternatives as unknown[]).map((a) => (Array.isArray(a) ? a.join('/') : String(a)))
+          : [];
+        const targets = Array.isArray(o.inferred_target_shapes) ? (o.inferred_target_shapes as string[]) : [];
+        return { conf: o.confidence, targets, alts };
+      }
+    } catch { /* ignore malformed */ }
+  }
+  return null;
+}
+
+/** Shapes a vessel-resolve satisfier produced directly (tool-grounded), from walkLog. */
+function groundedShapeSet(walkLog: string[]): Set<string> {
+  const s = new Set<string>();
+  for (const l of walkLog) {
+    const m = l.match(/VESSEL-RESOLVE SATISFIER produced "([^"]+)" directly/);
+    if (m && m[1]) s.add(m[1]);
+  }
+  return s;
+}
+
+/**
+ * Per-step grounding verdict for the trust read: 'grounded' = produced a shape a
+ * tool/vessel actually resolved; 'hollow' = produced nothing or the step failed;
+ * 'unconfirmed' = produced a shape but we can't prove it came from a tool (may be
+ * LLM — the explicit grounded-vs-interpolated flag is not yet emitted).
+ */
+function stepGrounding(step: WalkStep, grounded: Set<string>): 'grounded' | 'hollow' | 'unconfirmed' {
+  const outs = Array.isArray(step.newShapes) ? step.newShapes : [];
+  const failed = step.status ? !/complete|success|reached|ok/i.test(step.status) : false;
+  if (outs.length === 0 || failed) return 'hollow';
+  if (outs.some((sh) => grounded.has(sh)) || step.selected?.source === 'satisfier') return 'grounded';
+  return 'unconfirmed';
+}
+
 /** Compact α/β or sampled-score annotation for a template chip. */
 function scoreAnnot(s: { alpha?: number; beta?: number; sampledScore?: number }): string {
   if (typeof s.sampledScore === 'number') return `sampled ${s.sampledScore.toFixed(2)}`;
@@ -1782,7 +1848,7 @@ export class GoalDispatchView extends ItemView {
         for (const ev of (Array.isArray(body.poolEvents) ? body.poolEvents : []) as Array<{ shape: string; source: string }>) {
           if (ev && ev.shape && ev.source && !producers.has(ev.shape)) producers.set(ev.shape, ev.source);
         }
-        this.renderDecisionTree(detail, steps, producers, String(d.dispatchId ?? ''));
+        this.renderDecisionTree(detail, steps, producers, String(d.dispatchId ?? ''), (Array.isArray(body.walkLog) ? body.walkLog : []).map(String));
     } else {
       this.renderWalkFallback(detail, body);
     }
@@ -2042,8 +2108,10 @@ export class GoalDispatchView extends ItemView {
    * prefers-reduced-motion, so the feature is fully live after a JS-only
    * plugin reload (Obsidian does not re-read styles.css on reload).
    */
-  private renderShapeFlow(parent: HTMLElement, steps: WalkStep[], dispatchId: string): void {
+  private renderShapeFlow(parent: HTMLElement, steps: WalkStep[], dispatchId: string, walkLog: string[] = []): void {
     if (!steps.length) return;
+    const grounded = groundedShapeSet(walkLog);
+    const confidence = walkConfidence(walkLog);
     const NS = 'http://www.w3.org/2000/svg';
     const COL_W = 112, NODE_W = 96, NODE_H = 20, PILL_H = 15, GAP = 5, TOP = 6, PAD = 8, MAX_COLS = 14, LABEL = 13;
     const shown = steps.slice(0, MAX_COLS);
@@ -2053,7 +2121,14 @@ export class GoalDispatchView extends ItemView {
     const height = TOP + NODE_H + (maxShapes > 0 ? GAP + maxShapes * (PILL_H + GAP) : 0) + PAD;
 
     const wrap = parent.createDiv('sub-flow');
-    wrap.createDiv({ cls: 'sub-section-header', text: 'Shape flow' });
+    const hdr = wrap.createDiv({ cls: 'sub-section-header', text: 'Shape flow' });
+    // Confidence is one dispatch-level scalar — rendered ONCE here, never per node.
+    if (confidence) {
+      const c = hdr.createSpan({ text: ` · goal understood ${(confidence.conf * 100).toFixed(0)}%` });
+      c.style.setProperty('opacity', '0.65');
+      c.style.setProperty('font-weight', 'normal');
+      c.setAttr('title', `how sure the system was it read the whole goal right (${(confidence.conf * 100).toFixed(0)}%) — one value for the whole walk, not per step. It aimed at ${confidence.targets.join(', ') || '(none)'}${confidence.alts.length ? `; runner-up readings: ${confidence.alts.join(', ')}` : ''}`);
+    }
     const scroll = wrap.createDiv();
     scroll.style.overflowX = 'auto';
     scroll.style.paddingBottom = '2px';
@@ -2090,9 +2165,9 @@ export class GoalDispatchView extends ItemView {
         default: return 'var(--sub-text-muted)';
       }
     };
-    const fadeIn = (el: SVGElement, delay: number): void => {
+    const fadeIn = (el: SVGElement, delay: number, endOpacity = 1): void => {
       if (reduce) return;
-      el.animate([{ opacity: 0, transform: 'translateY(4px)' }, { opacity: 1, transform: 'translateY(0)' }],
+      el.animate([{ opacity: 0, transform: 'translateY(4px)' }, { opacity: endOpacity, transform: 'translateY(0)' }],
         { duration: 180, delay, easing: 'ease-out', fill: 'backwards' });
     };
     const drawEdge = (el: SVGElement, len: number, delay: number): void => {
@@ -2120,19 +2195,38 @@ export class GoalDispatchView extends ItemView {
         if (isNew) drawEdge(line, x2 - x1, stagger);
       }
 
-      // Producer node.
+      // Producer node. Two non-colour trust channels ride on marks already drawn:
+      //   usefulness → stroke WIDTH (fat = earned posterior); colour stays source/status.
+      //   grounding  → node OPACITY (dim = hollow/ungrounded, faint dim = unconfirmed).
       const col = document.createElementNS(NS, 'g');
       svg.appendChild(col);
+      const reach = reachOf(sel);
+      const grounding = stepGrounding(step, grounded);
+      const nodeOpacity = grounding === 'hollow' ? 0.5 : grounding === 'unconfirmed' ? 0.8 : 1;
+      col.style.setProperty('opacity', String(nodeOpacity));
       const rect = geom('rect', { x: cx, y: TOP, width: NODE_W, height: NODE_H, rx: 5 });
       paint(rect, { fill: 'var(--sub-bg-card)', stroke: color, 'stroke-width': '1.4' });
       col.appendChild(rect);
       const label = sel.templateId ? shortId(sel.templateId) : sourceLabel(sel.source);
-      const txt = geom('text', { x: cx + NODE_W / 2, y: midY + 3.5, 'text-anchor': 'middle', 'font-size': 10 });
+      const txt = geom('text', { x: cx + NODE_W / 2, y: midY + 2, 'text-anchor': 'middle', 'font-size': 10 });
       paint(txt, { fill: 'var(--sub-text)', 'font-family': 'var(--font-monospace, monospace)' });
-      txt.textContent = clip(label, LABEL);
+      // Keep the distinctive tail (the produced shape) instead of dropping it.
+      txt.textContent = label.length > LABEL ? '…' + label.slice(-(LABEL - 1)) : label;
       col.appendChild(txt);
-      title(rect, (sel.templateId ?? sourceLabel(sel.source)) + (step.status ? ` · ${step.status}` : ''));
-      fadeIn(col, stagger);
+      // Track-record bar (absolute: faint track = 100%, fill = reach rate). Reads
+      // on a single node, unlike a relative stroke-width. Absent = no posterior yet.
+      if (reach) {
+        const barY = TOP + NODE_H - 4, barX = cx + 3, barW = NODE_W - 6;
+        const track = geom('rect', { x: barX, y: barY, width: barW, height: 2, rx: 1 });
+        paint(track, { fill: 'var(--sub-text-muted)', opacity: '0.25' });
+        col.appendChild(track);
+        const fill = geom('rect', { x: barX, y: barY, width: Math.max(1.5, reach.rate * barW), height: 2, rx: 1 });
+        paint(fill, { fill: color, opacity: '0.9' });
+        col.appendChild(fill);
+      }
+      const groundWord = grounding === 'grounded' ? 'tool-grounded' : grounding === 'hollow' ? 'HOLLOW / ungrounded' : 'grounding unconfirmed (may be LLM)';
+      title(rect, `${sel.templateId ?? sourceLabel(sel.source)} · ${reuseClass(sel)}${reach ? ` · reach ${(reach.rate * 100).toFixed(0)}% over ${reach.mass.toFixed(0)} obs` : ''} · ${groundWord}${step.status ? ` · ${step.status}` : ''}`);
+      if (isNew) fadeIn(col, stagger, nodeOpacity);
 
       // Shapes this step added to the pool, branching below the producer.
       perStep[i].forEach((sh, j) => {
@@ -2156,6 +2250,7 @@ export class GoalDispatchView extends ItemView {
       });
     });
 
+    wrap.createDiv({ cls: 'sub-step-shadowline', text: 'bottom bar = track record (fuller = more proven) · faded = no real tool ran, result unverified · hover a node for the numbers' });
     if (steps.length > MAX_COLS) {
       wrap.createDiv({ cls: 'sub-step-shadowline', text: `+${steps.length - MAX_COLS} more step(s) — see the decision tree below` });
     }
@@ -2169,9 +2264,9 @@ export class GoalDispatchView extends ItemView {
    * considered, exclusions with reasons, and step status + rationale prose.
    * Shadow / recovery steps are visually distinct.
    */
-  private renderDecisionTree(parent: HTMLElement, steps: WalkStep[], producers: Map<string, string>, dispatchId = ''): void {
+  private renderDecisionTree(parent: HTMLElement, steps: WalkStep[], producers: Map<string, string>, dispatchId = '', walkLog: string[] = []): void {
     // Tier-2: live shape-flow mini-DAG above the detailed step list.
-    this.renderShapeFlow(parent, steps, dispatchId);
+    this.renderShapeFlow(parent, steps, dispatchId, walkLog);
     const tree = parent.createDiv('sub-tree');
     tree.createDiv({ cls: 'sub-section-header', text: `Decision tree — ${steps.length} step${steps.length === 1 ? '' : 's'}` });
     let prevPool: string[] | null = null;
@@ -2207,6 +2302,9 @@ export class GoalDispatchView extends ItemView {
     header.createSpan({ cls: `sub-badge sub-badge--${(sel.source ?? 'step').replace(/[^a-z]/gi, '')}`, text: src });
     const annot = scoreAnnot(sel);
     if (annot) header.createSpan({ cls: 'sub-step-score', text: annot });
+    const rr = reachOf(sel);
+    if (rr) header.createSpan({ cls: 'sub-step-score', text: `reach ${(rr.rate * 100).toFixed(0)}%`, attr: { title: `earned reach rate α/(α+β) over ${rr.mass.toFixed(0)} observations` } });
+    header.createSpan({ cls: 'sub-step-score', text: `· ${reuseClass(sel)}`, attr: { title: 'reusability (heuristic: source + template-id prefix)' } });
     if (shadow) header.createSpan({ cls: 'sub-badge sub-badge--shadow', text: 'shadow' });
     if (step.status) {
       const ok = /complete|success|reached|ok/i.test(step.status);
