@@ -221,8 +221,30 @@ export class GraphBackboneSyncService {
       const goal = String(d.goal ?? '');
       const reached = ws.reached === true ? 'yes' : ws.reached === false ? 'no' : 'pending';
       const status = String(ws.status ?? d.status ?? 'unknown');
+      // Retention: the boredom / self-exercise loop floods activeDispatches. Only
+      // persist a backbone node for dispatches worth keeping — operator-attributed,
+      // or a reach that taught something (filed a gap / moved a posterior / wrote an
+      // oracle label). Ephemeral self-exercise stays in the live panel and never
+      // bloats the vault or the graph. (Existing nodes are left untouched here — a
+      // one-time cleanup of the pre-gate backlog is a separate, confirmable step.)
+      const trigger = String(d.trigger ?? '');
+      const operatorAttributed = trigger === 'operator' || (typeof d.operator === 'string' && d.operator.length > 0);
+      const learning = (ws.learning ?? {}) as Record<string, unknown>;
+      const taughtSomething = ws.reached === true && (
+        (Array.isArray(learning.gapsFiled) && learning.gapsFiled.length > 0) ||
+        (learning.alphaBetaDelta != null && (!Array.isArray(learning.alphaBetaDelta) || learning.alphaBetaDelta.length > 0)) ||
+        learning.oracleLabelWritten === true
+      );
+      if (!operatorAttributed && !taughtSomething) continue;
+      // Trust tags → graph color-groups: tier = how learned the resolution was,
+      // reached = outcome — the same axes the panel surfaces, expressed here as the
+      // graph view's native channel (colour, which the panel deliberately reserves).
+      const walkTier = typeof ws.walkTier === 'string' ? ws.walkTier : '';
       const body = [
-        '---', 'tags:', '  - sub/dispatch', 'cssclasses:', '  - substrate-authored',
+        '---', 'tags:', '  - sub/dispatch',
+        ...(walkTier ? [`  - tier/${walkTier}`] : []),
+        `  - reached/${reached}`,
+        'cssclasses:', '  - substrate-authored',
         `dispatch: ${did}`, `reached: ${reached}`, `status: ${status}`, '---',
         `# ${did.slice(0, 8)} · ${status}${ws.reached === true ? ' · reached' : ''}`, '',
         goal ? `> ${goal}` : '_(no goal text)_', '',
