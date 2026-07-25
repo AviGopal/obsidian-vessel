@@ -321,6 +321,12 @@ function extractReachRationale(body: Record<string, unknown>): string {
   if (src) {
     const m = src.match(/—\s*(.+?)\.?\s*(?:completion_shapes=|$)/);
     if (m && m[1]) return m[1].trim().replace(/\.\.$/, '.');
+    // A satisfier/tool reach leaves a `REACH-CONTENT <shape> (N chars) = {json}`
+    // line (no em-dash) — telemetry, not prose. Prefer the emitted reach reason
+    // over dumping raw JSON as the rationale.
+    if (/REACH-CONTENT|REACHED via|=\s*[[{]/.test(src) && typeof body.goalReachReason === 'string' && body.goalReachReason) {
+      return body.goalReachReason as string;
+    }
     return src.replace(/^\[goal-host-vessel\]\s*/, '').replace(/^walk\([^)]*\):\s*/, '');
   }
   if (typeof body.goalReachReason === 'string') return body.goalReachReason as string;
@@ -1848,7 +1854,7 @@ export class GoalDispatchView extends ItemView {
         for (const ev of (Array.isArray(body.poolEvents) ? body.poolEvents : []) as Array<{ shape: string; source: string }>) {
           if (ev && ev.shape && ev.source && !producers.has(ev.shape)) producers.set(ev.shape, ev.source);
         }
-        this.renderDecisionTree(detail, steps, producers, String(d.dispatchId ?? ''), (Array.isArray(body.walkLog) ? body.walkLog : []).map(String));
+        this.renderDecisionTree(detail, steps, producers, String(d.dispatchId ?? ''), (Array.isArray(body.walkLog) ? body.walkLog : []).map(String), typeof body.grounded === 'boolean' ? body.grounded : undefined);
     } else {
       this.renderWalkFallback(detail, body);
     }
@@ -2081,7 +2087,7 @@ export class GoalDispatchView extends ItemView {
     // the honest tool-anchored-vs-bare-LLM verdict; walkTier is how the walk
     // resolved (learned reuse vs fresh derivation).
     const grounded = typeof body.grounded === 'boolean' ? (body.grounded as boolean) : undefined;
-    if (!running && grounded !== undefined) {
+    if (!running && grounded !== undefined && (reached === true || grounded === true)) {
       head.createSpan({
         cls: `sub-chip ${grounded ? 'sub-chip--ok' : 'sub-chip--warn'}`,
         text: grounded ? 'tool-grounded' : 'not tool-grounded',
@@ -2091,15 +2097,17 @@ export class GoalDispatchView extends ItemView {
       });
     }
     const walkTier = typeof body.walkTier === 'string' ? (body.walkTier as string) : '';
-    if (walkTier) {
+    if (!running && walkTier) {
       const tierPhrase = ({
         learned_pathway: 'reused learned pathway',
         satisfier: 'direct tool resolve',
         universal_tool_fallback: 'raw tool loop',
         feature_compose: 'code edit',
         fresh_derivation: 'fresh derivation',
-      } as Record<string, string>)[walkTier] ?? walkTier;
-      head.createSpan({ cls: 'sub-chip', text: tierPhrase, attr: { title: `reuse tier: ${walkTier} — how the walk resolved (learned reuse vs fresh derivation)` } });
+      } as Record<string, string>)[walkTier] ?? walkTier.replace(/_/g, ' ');
+      // 'via' marks the resolution MECHANISM — a distinct dimension from the
+      // grounded chip's honest-reach QUALITY verdict, so they don't read as duplicative.
+      head.createSpan({ cls: 'sub-chip', text: `via ${tierPhrase}`, attr: { title: `reuse tier: ${walkTier} — how the walk resolved (learned reuse vs fresh derivation)` } });
     }
     const rationale = extractReachRationale(body);
     if (rationale) {
@@ -2132,7 +2140,7 @@ export class GoalDispatchView extends ItemView {
    * prefers-reduced-motion, so the feature is fully live after a JS-only
    * plugin reload (Obsidian does not re-read styles.css on reload).
    */
-  private renderShapeFlow(parent: HTMLElement, steps: WalkStep[], dispatchId: string, walkLog: string[] = []): void {
+  private renderShapeFlow(parent: HTMLElement, steps: WalkStep[], dispatchId: string, walkLog: string[] = [], walkGrounded?: boolean): void {
     if (!steps.length) return;
     const grounded = groundedShapeSet(walkLog);
     const confidence = walkConfidence(walkLog);
@@ -2225,8 +2233,12 @@ export class GoalDispatchView extends ItemView {
       const col = document.createElementNS(NS, 'g');
       svg.appendChild(col);
       const reach = reachOf(sel);
+      // Per-step MECHANISM (did THIS step run a tool / produce a shape) — a
+      // within-walk detail distinct from the walk-level 'tool-grounded' verdict.
+      // When the whole walk is authoritatively grounded, an 'unconfirmed' step
+      // still fed a grounded reach, so don't dim it as suspicious.
       const grounding = stepGrounding(step, grounded);
-      const nodeOpacity = grounding === 'hollow' ? 0.5 : grounding === 'unconfirmed' ? 0.8 : 1;
+      const nodeOpacity = grounding === 'hollow' ? 0.5 : (grounding === 'unconfirmed' && walkGrounded !== true) ? 0.8 : 1;
       col.style.setProperty('opacity', String(nodeOpacity));
       const rect = geom('rect', { x: cx, y: TOP, width: NODE_W, height: NODE_H, rx: 5 });
       paint(rect, { fill: 'var(--sub-bg-card)', stroke: color, 'stroke-width': '1.4' });
@@ -2248,7 +2260,7 @@ export class GoalDispatchView extends ItemView {
         paint(fill, { fill: color, opacity: '0.9' });
         col.appendChild(fill);
       }
-      const groundWord = grounding === 'grounded' ? 'tool-grounded' : grounding === 'hollow' ? 'HOLLOW / ungrounded' : 'grounding unconfirmed (may be LLM)';
+      const groundWord = grounding === 'grounded' ? 'ran a tool (vessel resolve)' : grounding === 'hollow' ? 'produced nothing' : 'produced a shape (no tool trace)';
       title(rect, `${sel.templateId ?? sourceLabel(sel.source)} · ${reuseClass(sel)}${reach ? ` · reach ${(reach.rate * 100).toFixed(0)}% over ${reach.mass.toFixed(0)} obs` : ''} · ${groundWord}${step.status ? ` · ${step.status}` : ''}`);
       if (isNew) fadeIn(col, stagger, nodeOpacity);
 
@@ -2274,7 +2286,7 @@ export class GoalDispatchView extends ItemView {
       });
     });
 
-    wrap.createDiv({ cls: 'sub-step-shadowline', text: 'bottom bar = track record (fuller = more proven) · faded = no real tool ran, result unverified · hover a node for the numbers' });
+    wrap.createDiv({ cls: 'sub-step-shadowline', text: 'per step: bottom bar = track record (fuller = more proven) · faded = produced nothing · hover for detail. Overall grounding is the headline chip.' });
     if (steps.length > MAX_COLS) {
       wrap.createDiv({ cls: 'sub-step-shadowline', text: `+${steps.length - MAX_COLS} more step(s) — see the decision tree below` });
     }
@@ -2288,9 +2300,9 @@ export class GoalDispatchView extends ItemView {
    * considered, exclusions with reasons, and step status + rationale prose.
    * Shadow / recovery steps are visually distinct.
    */
-  private renderDecisionTree(parent: HTMLElement, steps: WalkStep[], producers: Map<string, string>, dispatchId = '', walkLog: string[] = []): void {
+  private renderDecisionTree(parent: HTMLElement, steps: WalkStep[], producers: Map<string, string>, dispatchId = '', walkLog: string[] = [], walkGrounded?: boolean): void {
     // Tier-2: live shape-flow mini-DAG above the detailed step list.
-    this.renderShapeFlow(parent, steps, dispatchId, walkLog);
+    this.renderShapeFlow(parent, steps, dispatchId, walkLog, walkGrounded);
     const tree = parent.createDiv('sub-tree');
     tree.createDiv({ cls: 'sub-section-header', text: `Decision tree — ${steps.length} step${steps.length === 1 ? '' : 's'}` });
     let prevPool: string[] | null = null;
