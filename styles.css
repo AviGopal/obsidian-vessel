@@ -465,6 +465,10 @@ body {
 .sub-fleet-elapsed {
   color: var(--sub-text-muted);
   flex-shrink: 0;
+  /* Right-align in a fixed slot so durations form a readable column. */
+  min-width: 3.2ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .sub-fleet-btn {
@@ -1541,6 +1545,9 @@ body {
   color: var(--sub-text-muted);
   margin-top: 3px;
   line-height: 1.35;
+  /* Let long unbreakable tokens (an IP:port peer address) break inside the
+     min-width:0 tile instead of forcing a wide line that overflows the grid. */
+  overflow-wrap: anywhere;
 }
 .sub-stat-tile--wide { grid-column: 1 / -1; }
 .sub-stat-meter {
@@ -1554,7 +1561,10 @@ body {
   display: block;
   height: 100%;
   border-radius: 3px;
-  background: var(--sub-info);
+  /* Reach rate is a success metric — colour it the same green as 'reached'
+     verdicts rather than neutral blue, so the headline number reads as the
+     same semantic the rest of the panel uses. */
+  background: var(--sub-ok);
 }
 
 /* Runner chips: executor identity, same hue keys the fleet cards use. */
@@ -1737,6 +1747,10 @@ body {
   border-radius: 20px;
   white-space: nowrap;
   flex: none;
+  /* Fixed footprint so 'reached' and 'not reached' pills share one right-hand
+     column instead of jogging the row rail by their text-width difference. */
+  min-width: 6.5em;
+  text-align: center;
 }
 .sub-verdict.is-ok {
   color: var(--sub-ok);

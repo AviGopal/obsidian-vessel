@@ -79,7 +79,10 @@ export const VIEW_TYPE_GOAL_DISPATCH = 'obsidian-goal-dispatch';
 
 /** Shorten a variant/resolver/vessel id to a readable slug (last 2 segments). */
 function shortId(id: string): string {
-  const parts = id.split(/[-_:]/);
+  // Strip the activity:⟨…⟩ wrapper minted around template ids — the
+  // trailing ⟩ (U+27E9) survives the tail slice and renders like a stray ")".
+  const clean = id.replace(/^activity:/, '').replace(/[⟨⟩<>]/g, '');
+  const parts = clean.split(/[-_:]/);
   return parts.slice(-2).join('-');
 }
 
@@ -233,7 +236,7 @@ function humanizeWalkLine(line: string): string {
 
 /** Compact α/β or sampled-score annotation for a template chip. */
 function scoreAnnot(s: { alpha?: number; beta?: number; sampledScore?: number }): string {
-  if (typeof s.sampledScore === 'number') return `θ${s.sampledScore.toFixed(2)}`;
+  if (typeof s.sampledScore === 'number') return `sampled ${s.sampledScore.toFixed(2)}`;
   if (typeof s.alpha === 'number' || typeof s.beta === 'number') {
     return `α${(s.alpha ?? 0).toFixed(1)}/β${(s.beta ?? 0).toFixed(1)}`;
   }
@@ -434,12 +437,14 @@ export class GoalDispatchView extends ItemView {
       cls: 'mod-cta sub-omnibox-dispatch',
     });
     this.dispatchBtn.addEventListener('click', () => this.dispatchFromUI());
+    // ⌘↵ hints the Dispatch shortcut — keep it beside Dispatch, not after
+    // Clear (where it read as Clear's shortcut).
+    actions.createSpan({ cls: 'sub-omnibox-hint', text: '⌘↵' });
     const clearBtn = actions.createEl('button', {
       text: 'Clear',
       cls: 'sub-omnibox-clear',
     });
     clearBtn.addEventListener('click', () => this.clearOutput());
-    actions.createSpan({ cls: 'sub-omnibox-hint', text: '⌘↵' });
 
     // ── Priority stack (pinned above the scroll container) ──
     // 1. Solicitation cards (WS5) — the substrate asking the human.
