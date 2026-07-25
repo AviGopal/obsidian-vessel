@@ -188,53 +188,75 @@ export class HTTPServer {
       throw new Error('Server is already running');
     }
 
-    return new Promise((resolve, reject) => {
-      this.server = http.createServer((req, res) => {
-        this.handleRequest(req, res).catch((error) => {
-          this.config.logger(`Unhandled request error: ${error}`, 'error');
-          if (!res.headersSent) {
-            sendError(res, 'Internal server error', 500);
+    // A fast disable->enable cycle (the reload-plugin action, ~150ms apart) can
+    // race the old listener's socket release: the rebind then fails with
+    // EADDRINUSE and — without a retry — the observation/action server stays
+    // down until the next full reload, silently losing the local surface even
+    // though the plugin itself loaded fine. Retry the bind a few times with a
+    // short backoff so the port becomes available as the old socket drains.
+    const MAX_BIND_ATTEMPTS = 6;
+    const BIND_RETRY_MS = 250;
+
+    const attempt = (n: number): Promise<void> =>
+      new Promise((resolve, reject) => {
+        const server = http.createServer((req, res) => {
+          this.handleRequest(req, res).catch((error) => {
+            this.config.logger(`Unhandled request error: ${error}`, 'error');
+            if (!res.headersSent) {
+              sendError(res, 'Internal server error', 500);
+            }
+          });
+        });
+
+        const onError = (error: NodeJS.ErrnoException) => {
+          if (error.code === 'EADDRINUSE' && n < MAX_BIND_ATTEMPTS) {
+            this.config.logger(
+              `Port ${this.config.port} in use — rebind attempt ${n}/${MAX_BIND_ATTEMPTS} in ${BIND_RETRY_MS}ms`,
+              'warn',
+            );
+            server.removeListener('error', onError);
+            server.close();
+            setTimeout(() => attempt(n + 1).then(resolve, reject), BIND_RETRY_MS);
+            return;
           }
+          if (error.code === 'EADDRINUSE') {
+            const msg = `Port ${this.config.port} is already in use after ${MAX_BIND_ATTEMPTS} attempts`;
+            this.config.logger(msg, 'error');
+            reject(new Error(msg));
+          } else if (error.code === 'EACCES') {
+            const msg = `Permission denied to bind to port ${this.config.port}`;
+            this.config.logger(msg, 'error');
+            reject(new Error(msg));
+          } else {
+            this.config.logger(`Server error: ${error.message}`, 'error');
+            reject(error);
+          }
+        };
+        server.on('error', onError);
+
+        // Handle client errors (malformed requests)
+        server.on('clientError', (error, socket) => {
+          this.config.logger(`Client error: ${error.message}`, 'warn');
+          if (socket.writable) {
+            socket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
+          }
+        });
+
+        server.listen(this.config.port, this.config.host, () => {
+          this.server = server;
+          this.config.logger(
+            `Server started at http://${this.config.host}:${this.config.port}`,
+            'info',
+          );
+          this.config.logger('Available routes:', 'info');
+          for (const route of this.routes.keys()) {
+            this.config.logger(`  ${route}`, 'info');
+          }
+          resolve();
         });
       });
 
-      // Handle server errors
-      this.server.on('error', (error: NodeJS.ErrnoException) => {
-        if (error.code === 'EADDRINUSE') {
-          const msg = `Port ${this.config.port} is already in use`;
-          this.config.logger(msg, 'error');
-          reject(new Error(msg));
-        } else if (error.code === 'EACCES') {
-          const msg = `Permission denied to bind to port ${this.config.port}`;
-          this.config.logger(msg, 'error');
-          reject(new Error(msg));
-        } else {
-          this.config.logger(`Server error: ${error.message}`, 'error');
-          reject(error);
-        }
-      });
-
-      // Handle client errors (malformed requests)
-      this.server.on('clientError', (error, socket) => {
-        this.config.logger(`Client error: ${error.message}`, 'warn');
-        if (socket.writable) {
-          socket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
-        }
-      });
-
-      // Start listening
-      this.server.listen(this.config.port, this.config.host, () => {
-        this.config.logger(
-          `Server started at http://${this.config.host}:${this.config.port}`,
-          'info'
-        );
-        this.config.logger('Available routes:', 'info');
-        for (const route of this.routes.keys()) {
-          this.config.logger(`  ${route}`, 'info');
-        }
-        resolve();
-      });
-    });
+    return attempt(1);
   }
 
   /**
