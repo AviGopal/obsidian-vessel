@@ -469,6 +469,15 @@ export default class ObsidianVesselPlugin extends Plugin {
   private async configureGraphColors(): Promise<void> {
     const path = '.obsidian/graph.json';
     const groups: Array<{ query: string; color: { a: number; rgb: number } }> = [
+      // Trust axes (panel parity) — listed FIRST so a dispatch node (which also
+      // carries #sub/dispatch) colours by tier/reach, not the generic dispatch hue.
+      // First-match wins in Obsidian graph color-groups.
+      { query: 'tag:#reached/no', color: { a: 1, rgb: 0xcc3b3b } },
+      { query: 'tag:#tier/learned_pathway', color: { a: 1, rgb: 0x3ba155 } },
+      { query: 'tag:#tier/satisfier', color: { a: 1, rgb: 0x4a90e2 } },
+      { query: 'tag:#tier/feature_compose', color: { a: 1, rgb: 0x9c6ade } },
+      { query: 'tag:#tier/universal_tool_fallback', color: { a: 1, rgb: 0xe5a50d } },
+      { query: 'tag:#tier/fresh_derivation', color: { a: 1, rgb: 0x9aa0a6 } },
       { query: 'tag:#sub/vessel', color: { a: 1, rgb: 0x4c78e8 } },
       { query: 'tag:#sub/shape', color: { a: 1, rgb: 0xe8993a } },
       { query: 'tag:#sub/activity', color: { a: 1, rgb: 0x4caf50 } },
