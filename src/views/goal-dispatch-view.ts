@@ -320,6 +320,12 @@ export class GoalDispatchView extends ItemView {
   private fleetMembers: Array<Record<string, unknown>> = [];
   private fleetMembersAt = 0;
   private substrateSeen = false; // true once ANY resolve has answered — gates the boot-transient fast retry
+  // Highest walk-step index whose shape-flow column has already animated in,
+  // per dispatch. The fleet detail fully rebuilds each poll; without this the
+  // entry animation would replay every tick. New steps (index > stored) animate
+  // once; everything already seen renders static. Cheap, GPU-only (WAAPI).
+  private animatedFlowSteps = new Map<string, number>();
+
   // Dispatch rows the user has expanded — persisted across the 7s fleet
   // re-render so a running walk's live "why" trail stays open and refreshes.
   private expandedDispatches = new Set<string>();
@@ -1776,7 +1782,7 @@ export class GoalDispatchView extends ItemView {
         for (const ev of (Array.isArray(body.poolEvents) ? body.poolEvents : []) as Array<{ shape: string; source: string }>) {
           if (ev && ev.shape && ev.source && !producers.has(ev.shape)) producers.set(ev.shape, ev.source);
         }
-        this.renderDecisionTree(detail, steps, producers);
+        this.renderDecisionTree(detail, steps, producers, String(d.dispatchId ?? ''));
     } else {
       this.renderWalkFallback(detail, body);
     }
@@ -2027,13 +2033,145 @@ export class GoalDispatchView extends ItemView {
   }
 
   /**
+   * Tier-2 live shape-flow mini-DAG. A compact left-to-right layered diagram
+   * of the current walk: one producer node per step (coloured by source /
+   * failure), the shapes it added to the pool branching below it, and a spine
+   * edge to the next step. Deterministic layout by step index — NO force
+   * simulation — so it is cheap and never jitters. Paint is inline (existing
+   * CSS vars) and entry animation is the Web Animations API gated on
+   * prefers-reduced-motion, so the feature is fully live after a JS-only
+   * plugin reload (Obsidian does not re-read styles.css on reload).
+   */
+  private renderShapeFlow(parent: HTMLElement, steps: WalkStep[], dispatchId: string): void {
+    if (!steps.length) return;
+    const NS = 'http://www.w3.org/2000/svg';
+    const COL_W = 112, NODE_W = 96, NODE_H = 20, PILL_H = 15, GAP = 5, TOP = 6, PAD = 8, MAX_COLS = 14, LABEL = 13;
+    const shown = steps.slice(0, MAX_COLS);
+    const perStep = shown.map((s) => (Array.isArray(s.newShapes) ? s.newShapes : []).slice(0, 4));
+    const maxShapes = Math.max(0, ...perStep.map((a) => a.length));
+    const width = PAD * 2 + shown.length * COL_W;
+    const height = TOP + NODE_H + (maxShapes > 0 ? GAP + maxShapes * (PILL_H + GAP) : 0) + PAD;
+
+    const wrap = parent.createDiv('sub-flow');
+    wrap.createDiv({ cls: 'sub-section-header', text: 'Shape flow' });
+    const scroll = wrap.createDiv();
+    scroll.style.overflowX = 'auto';
+    scroll.style.paddingBottom = '2px';
+
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('width', String(width));
+    svg.setAttribute('height', String(height));
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    svg.style.display = 'block';
+    scroll.appendChild(svg);
+
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ?? false;
+    const seen = this.animatedFlowSteps.get(dispatchId) ?? -1;
+    let maxIdx = seen;
+
+    const geom = (tag: string, attrs: Record<string, string | number>): SVGElement => {
+      const e = document.createElementNS(NS, tag);
+      for (const k in attrs) e.setAttribute(k, String(attrs[k]));
+      return e;
+    };
+    const paint = (el: SVGElement, styles: Record<string, string>): void => {
+      for (const k in styles) el.style.setProperty(k, styles[k]);
+    };
+    const title = (el: SVGElement, text: string): void => {
+      const t = document.createElementNS(NS, 'title'); t.textContent = text; el.appendChild(t);
+    };
+    const clip = (s: string, n: number): string => (s.length > n ? s.slice(0, n) + '…' : s);
+    const colorFor = (source: string | undefined, status: string | undefined): string => {
+      if (status && !/complete|success|reached|ok/i.test(status)) return 'var(--sub-warn)';
+      switch (source) {
+        case 'satisfier': return 'var(--sub-ok)';
+        case 'thompson': return 'var(--sub-info)';
+        case 'recovery': return 'var(--color-purple, var(--sub-info))';
+        default: return 'var(--sub-text-muted)';
+      }
+    };
+    const fadeIn = (el: SVGElement, delay: number): void => {
+      if (reduce) return;
+      el.animate([{ opacity: 0, transform: 'translateY(4px)' }, { opacity: 1, transform: 'translateY(0)' }],
+        { duration: 180, delay, easing: 'ease-out', fill: 'backwards' });
+    };
+    const drawEdge = (el: SVGElement, len: number, delay: number): void => {
+      if (reduce) return;
+      el.style.strokeDasharray = String(len);
+      el.animate([{ strokeDashoffset: len }, { strokeDashoffset: 0 }],
+        { duration: 200, delay, easing: 'ease-out', fill: 'backwards' });
+    };
+
+    shown.forEach((step, i) => {
+      const sel = step.selected ?? {};
+      const cx = PAD + i * COL_W;
+      const midY = TOP + NODE_H / 2;
+      const isNew = i > seen;
+      if (i > maxIdx) maxIdx = i;
+      const stagger = isNew ? (i - seen) * 55 : 0;
+      const color = colorFor(sel.source, step.status);
+
+      // Spine edge to the next producer.
+      if (i < shown.length - 1) {
+        const x1 = cx + NODE_W, x2 = PAD + (i + 1) * COL_W;
+        const line = geom('line', { x1, y1: midY, x2, y2: midY });
+        paint(line, { stroke: 'var(--sub-border)', 'stroke-width': '1.5' });
+        svg.appendChild(line);
+        if (isNew) drawEdge(line, x2 - x1, stagger);
+      }
+
+      // Producer node.
+      const col = document.createElementNS(NS, 'g');
+      svg.appendChild(col);
+      const rect = geom('rect', { x: cx, y: TOP, width: NODE_W, height: NODE_H, rx: 5 });
+      paint(rect, { fill: 'var(--sub-bg-card)', stroke: color, 'stroke-width': '1.4' });
+      col.appendChild(rect);
+      const label = sel.templateId ? shortId(sel.templateId) : sourceLabel(sel.source);
+      const txt = geom('text', { x: cx + NODE_W / 2, y: midY + 3.5, 'text-anchor': 'middle', 'font-size': 10 });
+      paint(txt, { fill: 'var(--sub-text)', 'font-family': 'var(--font-monospace, monospace)' });
+      txt.textContent = clip(label, LABEL);
+      col.appendChild(txt);
+      title(rect, (sel.templateId ?? sourceLabel(sel.source)) + (step.status ? ` · ${step.status}` : ''));
+      fadeIn(col, stagger);
+
+      // Shapes this step added to the pool, branching below the producer.
+      perStep[i].forEach((sh, j) => {
+        const py = TOP + NODE_H + GAP + j * (PILL_H + GAP);
+        const bx1 = cx + NODE_W / 2, by1 = TOP + NODE_H, bx2 = cx + 9, by2 = py + PILL_H / 2;
+        const my = (by1 + by2) / 2;
+        const edge = geom('path', { d: `M ${bx1} ${by1} C ${bx1} ${my}, ${bx2} ${my}, ${bx2} ${by2}`, fill: 'none' });
+        paint(edge, { stroke: 'var(--sub-ok)', 'stroke-width': '1.2', opacity: '0.5' });
+        svg.appendChild(edge);
+        const g2 = document.createElementNS(NS, 'g');
+        svg.appendChild(g2);
+        const pill = geom('rect', { x: cx, y: py, width: NODE_W, height: PILL_H, rx: 7 });
+        paint(pill, { fill: 'color-mix(in srgb, var(--sub-ok) 12%, transparent)', stroke: 'var(--sub-ok)', 'stroke-width': '1' });
+        g2.appendChild(pill);
+        const ptxt = geom('text', { x: cx + NODE_W / 2, y: py + PILL_H / 2 + 3, 'text-anchor': 'middle', 'font-size': 9 });
+        paint(ptxt, { fill: 'var(--sub-ok)', 'font-family': 'var(--font-monospace, monospace)' });
+        ptxt.textContent = clip(sh, LABEL + 1);
+        g2.appendChild(ptxt);
+        title(pill, sh);
+        if (isNew) { drawEdge(edge, 42, stagger + 40); fadeIn(g2, stagger + 55 + j * 25); }
+      });
+    });
+
+    if (steps.length > MAX_COLS) {
+      wrap.createDiv({ cls: 'sub-step-shadowline', text: `+${steps.length - MAX_COLS} more step(s) — see the decision tree below` });
+    }
+    this.animatedFlowSteps.set(dispatchId, maxIdx);
+  }
+
+  /**
    * Full decision tree: one node per walk step, with the shape-pool delta
    * rendered between consecutive steps. Each node shows the selected template
    * (source badge + α/β or sampled score), a collapsed list of alternatives
    * considered, exclusions with reasons, and step status + rationale prose.
    * Shadow / recovery steps are visually distinct.
    */
-  private renderDecisionTree(parent: HTMLElement, steps: WalkStep[], producers: Map<string, string>): void {
+  private renderDecisionTree(parent: HTMLElement, steps: WalkStep[], producers: Map<string, string>, dispatchId = ''): void {
+    // Tier-2: live shape-flow mini-DAG above the detailed step list.
+    this.renderShapeFlow(parent, steps, dispatchId);
     const tree = parent.createDiv('sub-tree');
     tree.createDiv({ cls: 'sub-section-header', text: `Decision tree — ${steps.length} step${steps.length === 1 ? '' : 's'}` });
     let prevPool: string[] | null = null;
