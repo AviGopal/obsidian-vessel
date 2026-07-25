@@ -56,8 +56,14 @@ export class GraphBackboneSyncService {
   }
 
   async syncAll(): Promise<{ vessels: number; shapes: number; activities: number; dispatches: number }> {
-    const vs = await this.syncVesselShapes();
-    const acts = await this.syncComposition();
+    // Each step is independently guarded: a flaky discovery/sidecar resolve in
+    // one (e.g. syncVesselShapes) must NOT abort the others. Before this, a throw
+    // in syncVesselShapes/syncComposition skipped syncDispatches entirely, so the
+    // dispatch layer silently stopped updating whenever topology resolve flaked.
+    let vs = { vessels: 0, shapes: 0 };
+    try { vs = await this.syncVesselShapes(); } catch { /* non-fatal */ }
+    let acts = 0;
+    try { acts = await this.syncComposition(); } catch { /* non-fatal */ }
     let dispatches = 0;
     try { dispatches = await this.syncDispatches(); } catch { /* non-fatal */ }
     return { ...vs, activities: acts, dispatches };
