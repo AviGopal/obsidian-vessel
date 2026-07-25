@@ -134,9 +134,17 @@ export class GoalHostClient {
 
   async dispatchGoal(goal: string, ctx?: VaultContext): Promise<GoalDispatchResult> {
     const variables: Record<string, unknown> = ctx ? { ...ctx } : {};
-    const expectedOutputShapes = ctx?.available_shapes?.length
-      ? ctx.available_shapes
-      : undefined;
+    // DO NOT forward available_shapes as expected_output_shapes. available_shapes
+    // is what the vault CAN produce (relevance context); expected_output_shapes
+    // is what THIS goal should produce. Conflating them pinned every dispatch's
+    // walk target to the entire obsidian vocabulary, which suppressed goal-target
+    // inference (goal-host: "explicit caller expected_output_shapes always wins;
+    // we only infer when it is empty") — so a goal like "report the reach rate"
+    // churned through daily_note/graph_query/ui-view/concept_writeback/… instead
+    // of its actual target (law 13: the system infers the target from the goal,
+    // it is not handed a catalog). Leave it unset so inference runs; available_shapes
+    // still travels in `variables` as context and feeds impulse-relevance feedback.
+    const expectedOutputShapes: string[] | undefined = undefined;
 
     // Tags persist to the execution trace so the vault context is visible to
     // the learning loop even though variables themselves are ephemeral.
