@@ -2077,6 +2077,30 @@ export class GoalDispatchView extends ItemView {
     if (!running && status && !(reached === true && status !== 'failed')) {
       head.createSpan({ cls: 'sub-chip sub-reach-status', text: status });
     }
+    // Walk-level trust chips (from goalWalkState.grounded / walkTier). grounded is
+    // the honest tool-anchored-vs-bare-LLM verdict; walkTier is how the walk
+    // resolved (learned reuse vs fresh derivation).
+    const grounded = typeof body.grounded === 'boolean' ? (body.grounded as boolean) : undefined;
+    if (!running && grounded !== undefined) {
+      head.createSpan({
+        cls: `sub-chip ${grounded ? 'sub-chip--ok' : 'sub-chip--warn'}`,
+        text: grounded ? 'tool-grounded' : 'not tool-grounded',
+        attr: { title: grounded
+          ? 'the reach was anchored in an executed tool / landed edit / real producer→consumer edge — not a bare LLM answer'
+          : 'no executed-tool anchor — the value may be LLM-interpolated / unverified' },
+      });
+    }
+    const walkTier = typeof body.walkTier === 'string' ? (body.walkTier as string) : '';
+    if (walkTier) {
+      const tierPhrase = ({
+        learned_pathway: 'reused learned pathway',
+        satisfier: 'direct tool resolve',
+        universal_tool_fallback: 'raw tool loop',
+        feature_compose: 'code edit',
+        fresh_derivation: 'fresh derivation',
+      } as Record<string, string>)[walkTier] ?? walkTier;
+      head.createSpan({ cls: 'sub-chip', text: tierPhrase, attr: { title: `reuse tier: ${walkTier} — how the walk resolved (learned reuse vs fresh derivation)` } });
+    }
     const rationale = extractReachRationale(body);
     if (rationale) {
       parent.createDiv({ cls: 'sub-reach-rationale', text: rationale, attr: { title: rationale } });
