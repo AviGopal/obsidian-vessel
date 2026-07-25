@@ -320,6 +320,11 @@ export class GoalDispatchView extends ItemView {
   // Dispatch rows the user has expanded — persisted across the 7s fleet
   // re-render so a running walk's live "why" trail stays open and refreshes.
   private expandedDispatches = new Set<string>();
+  // Running dispatches we've auto-expanded once so their live decision tree
+  // (selection + shape flow) is visible as the walk proceeds without a click.
+  // Membership also records an explicit user-collapse, so we never re-expand
+  // a row the human deliberately closed.
+  private autoExpandedRunning = new Set<string>();
   // Solicitation cards (WS5) + substrate-activity feed (WS3).
   private solicitationsEl: HTMLElement | null = null;
   private unsubscribeSolicitations: (() => void) | null = null;
@@ -1567,6 +1572,15 @@ export class GoalDispatchView extends ItemView {
       row.createSpan({ cls: 'sub-chip sub-chip--ok sub-fleet-note', text: 'goal reached', attr: { title: 'steps exited non-zero but the goal was reached' } });
     }
     row.addEventListener('click', () => void this.expandFleetRow(row, d));
+    // Auto-expand a running dispatch the first time we see it so its live
+    // decision tree (selection + shape flow) renders as the walk proceeds,
+    // matching cockpit parity. autoExpandedRunning also holds explicit
+    // collapses, so we honour a human closing the row.
+    const rowId = String(d.dispatchId ?? '');
+    if (running && rowId && !this.autoExpandedRunning.has(rowId)) {
+      this.autoExpandedRunning.add(rowId);
+      this.expandedDispatches.add(rowId);
+    }
         this.makeToggleAccessible(row, this.expandedDispatches.has(String(d.dispatchId ?? '')), () => void this.expandFleetRow(row, d));
     if (this.expandedDispatches.has(String(d.dispatchId ?? ''))) void this.renderFleetDetail(row, d);
     if (running) {
@@ -1637,7 +1651,10 @@ export class GoalDispatchView extends ItemView {
       }
       const rowSnap = JSON.stringify(d);
       let wrap = el.querySelector(`:scope > [data-dispatch-key="${CSS.escape(key)}"]`) as HTMLElement | null;
-      if (wrap && wrap.dataset.rowSnap === rowSnap) {
+      // Running rows always rebuild so renderFleetDetail re-fetches fresh
+      // goalWalkState and the live step tree advances in place; the summary
+      // `d` can be unchanged while `steps` grow, so a rowSnap match is stale.
+      if (wrap && wrap.dataset.rowSnap === rowSnap && d.status !== 'running') {
         el.appendChild(wrap);
         continue;
       }
@@ -1707,6 +1724,7 @@ export class GoalDispatchView extends ItemView {
     if (existing) {
       existing.remove();
       this.expandedDispatches.delete(id);
+      this.autoExpandedRunning.add(id); // remember an explicit collapse
       return;
     }
     this.expandedDispatches.add(id);
