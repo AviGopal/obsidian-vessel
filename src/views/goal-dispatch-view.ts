@@ -310,26 +310,26 @@ function scoreAnnot(s: { alpha?: number; beta?: number; sampledScore?: number })
 }
 
 /**
- * Extract the one-line reach rationale from a walkState body. Prefers the
- * REACHED prose from currentStep ("… REACHED via N-step chain — <prose>.. "),
- * falling back to the last walkLog line, then goalReachReason.
+ * The one-line reach rationale for the .sub-reach-rationale line. goal-host now
+ * emits goalReachReason as AUTHORITATIVE prose, so prefer it outright — the walk
+ * tail (currentStep / last walkLog line) is frequently a mechanism/telemetry line
+ * (a `BRIDGE materialized … → sinks`, a `REACH-CONTENT <shape> = {json}` dump, or a
+ * bare `step N ran activity:… status=failed` line), none of which is a reason.
+ * Only when goalReachReason is absent (an older goal-host) do we scrape, and even
+ * then we surface ONLY a genuine em-dash rationale clause — never a telemetry line.
  */
 function extractReachRationale(body: Record<string, unknown>): string {
+  const reason = typeof body.goalReachReason === 'string' ? body.goalReachReason.trim() : '';
+  if (reason) return reason;
+  // Fallback path: old goal-host without goalReachReason. Scrape a real reason
+  // clause off the walk tail if one is present; otherwise surface nothing rather
+  // than dumping BRIDGE / REACH-CONTENT / JSON / step-status telemetry.
   const cur = typeof body.currentStep === 'string' ? body.currentStep : '';
   const walk = Array.isArray(body.walkLog) ? (body.walkLog as unknown[]).map(String) : [];
   const src = cur || (walk.length ? walk[walk.length - 1] : '');
-  if (src) {
-    const m = src.match(/—\s*(.+?)\.?\s*(?:completion_shapes=|$)/);
-    if (m && m[1]) return m[1].trim().replace(/\.\.$/, '.');
-    // A satisfier/tool reach leaves a `REACH-CONTENT <shape> (N chars) = {json}`
-    // line (no em-dash) — telemetry, not prose. Prefer the emitted reach reason
-    // over dumping raw JSON as the rationale.
-    if (/REACH-CONTENT|REACHED via|=\s*[[{]/.test(src) && typeof body.goalReachReason === 'string' && body.goalReachReason) {
-      return body.goalReachReason as string;
-    }
-    return src.replace(/^\[goal-host-vessel\]\s*/, '').replace(/^walk\([^)]*\):\s*/, '');
-  }
-  if (typeof body.goalReachReason === 'string') return body.goalReachReason as string;
+  if (!src) return '';
+  const m = src.match(/—\s*(.+?)\.?\s*(?:completion_shapes=|$)/);
+  if (m && m[1]) return m[1].trim().replace(/\.\.$/, '.');
   return '';
 }
 
@@ -2109,9 +2109,14 @@ export class GoalDispatchView extends ItemView {
       // grounded chip's honest-reach QUALITY verdict, so they don't read as duplicative.
       head.createSpan({ cls: 'sub-chip', text: `via ${tierPhrase}`, attr: { title: `reuse tier: ${walkTier} — how the walk resolved (learned reuse vs fresh derivation)` } });
     }
-    const rationale = extractReachRationale(body);
-    if (rationale) {
-      parent.createDiv({ cls: 'sub-reach-rationale', text: rationale, attr: { title: rationale } });
+    // The reach reason belongs on a REACHED walk. On a non-reach the "What it
+    // means" row (renderSelfExplanation) owns the reason; while running there is
+    // no reason yet. Gating here avoids a duplicate row and a premature rationale.
+    if (!running && reached === true) {
+      const rationale = extractReachRationale(body);
+      if (rationale) {
+        parent.createDiv({ cls: 'sub-reach-rationale', text: rationale, attr: { title: rationale } });
+      }
     }
     // Explain the failed-but-reached case in one plain line.
     if (!running && reached === true && status === 'failed') {
@@ -2716,7 +2721,7 @@ export class GoalDispatchView extends ItemView {
       const client = new GoalHostClient();
       const record = await client.getDispatchRecord(dispatchId);
       const reached = record.reached as boolean | null;
-      const reason = record.goalReachReason as string | null;
+      const reason = typeof record.goalReachReason === 'string' ? record.goalReachReason : null;
       // Persist the reach verdict into the per-goal vault note
       if (this.goalFile && (reached !== undefined || reason)) {
         try {
