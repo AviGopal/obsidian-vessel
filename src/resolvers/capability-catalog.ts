@@ -1,4 +1,5 @@
 import type { ImpulsePointer, ResolverResult } from './types';
+import { listResolverTypes } from './index';
 
 interface CapabilityEntry {
   shape: string;
@@ -42,11 +43,11 @@ const CATALOG: CapabilityEntry[] = [
       type: 'object',
       properties: {
         type: { type: 'string', const: 'obsidian:execute_command' },
-        commandId: { type: 'string', description: 'The Obsidian command ID to execute' },
+        command_id: { type: 'string', description: 'The Obsidian command ID to execute' },
       },
-      required: ['type', 'commandId'],
+      required: ['type', 'command_id'],
     },
-    example_body: { commandId: 'editor:toggle-bold' },
+    example_body: { command_id: 'editor:toggle-bold' },
   },
   {
     shape: 'obsidian:list_notes',
@@ -144,7 +145,29 @@ const CATALOG: CapabilityEntry[] = [
 export async function resolveCapabilityCatalog(
   _pointer: ImpulsePointer,
 ): Promise<ResolverResult> {
-  const content = JSON.stringify({ entries: CATALOG });
+  // Derive the advertised surface from the LIVE resolver registry rather than a
+  // static list, so the catalog cannot DRIFT: it never advertises a phantom shape
+  // (a documented entry whose resolver was removed/renamed) and always surfaces
+  // every actually-registered shape (registered-but-undocumented ones get a minimal
+  // stub). Mirrors obsidian:command_catalog, which enumerates the live app.commands
+  // map and therefore never goes stale — the same primitives-over-enumeration fix.
+  const documented = new Map(CATALOG.map((e) => [e.shape, e]));
+  const registered = listResolverTypes();
+  const entries: CapabilityEntry[] = registered.map((shape) => {
+    const doc = documented.get(shape);
+    if (doc) return doc;
+    return {
+      shape,
+      description: 'Registered resolver; schema not yet documented in capability-catalog.',
+      input_pointer_schema: {
+        type: 'object',
+        properties: { type: { type: 'string', const: shape } },
+        required: ['type'],
+      },
+      example_body: {},
+    };
+  });
+  const content = JSON.stringify({ entries });
   return { content };
 }
 
