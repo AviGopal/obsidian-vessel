@@ -367,6 +367,11 @@ export class GoalDispatchView extends ItemView {
   private answerRendered = false;
   private activeExecutionId: string | null = null;
   private activeDispatchId: string | null = null;
+  // True once the active dispatch has been observed in-flight in the
+  // activeDispatches list. Lets the fleet-board settle detector distinguish
+  // "not registered yet" (never seen -> keep waiting) from "settled and pruned"
+  // (seen, now gone -> re-enable the button). Reset at each dispatch start.
+  private activeDispatchSeen = false;
   private goalFile: TFile | null = null;
   private goalNoteManager: GoalNoteManager;
   private dispatching = false;
@@ -787,6 +792,7 @@ export class GoalDispatchView extends ItemView {
       const result = await client.dispatchGoal(goal, ctx);
       const dispatchId = result.executionId; // holds dispatchId from 202 body
       this.activeDispatchId = dispatchId;
+      this.activeDispatchSeen = false;
 
       // Show elapsed time while the auto-draft LLM selects/authors an activity.
       // This can take 30-120s; without feedback the UI looks frozen.
@@ -959,19 +965,31 @@ export class GoalDispatchView extends ItemView {
           this.fleetMembersAt = Date.now();
         }
       }
-      if (
-        this.activeDispatchId &&
-        dispatches.some(
-          (d: Record<string, unknown>) =>
-            d.id === this.activeDispatchId &&
-            (d.status === 'completed' || d.status === 'failed')
-        )
-      ) {
-        if (this.elapsedTimer !== null) { window.clearInterval(this.elapsedTimer); this.elapsedTimer = null; }
-        this.stopWalkPoll();
-        this.dispatching = false;
-        this.setDispatchBtnState(false);
-        this.activeDispatchId = null;
+      // Settle the active dispatch once it is no longer running so the Dispatch
+      // button re-enables. Two terminal shapes to catch: (a) the dispatch is
+      // still listed but with a non-'running' status — match renderFleet's own
+      // done-definition (status !== 'running'), NOT the literal 'completed'/
+      // 'failed' pair, since a settled dispatch may report a reach-verdict or
+      // other terminal status string; (b) the dispatch has dropped out of the
+      // active list entirely (goal-host prunes settled dispatches), which is a
+      // settle only AFTER we saw it in-flight — a not-yet-registered dispatch is
+      // also absent but must keep waiting. Requiring the exact 'completed'/
+      // 'failed' pair left the button stuck on 'Dispatching…' after one goal.
+      if (this.activeDispatchId) {
+        const mine = dispatches.find(
+          (d: Record<string, unknown>) => d.id === this.activeDispatchId,
+        );
+        if (mine) this.activeDispatchSeen = true;
+        const settled = mine ? mine.status !== 'running' : this.activeDispatchSeen;
+        if (settled) {
+          if (this.elapsedTimer !== null) { window.clearInterval(this.elapsedTimer); this.elapsedTimer = null; }
+          this.stopWalkPoll();
+          this.dispatching = false;
+          this.setDispatchBtnState(false);
+          this.activeDispatchId = null;
+          this.activeExecutionId = null;
+          this.activeDispatchSeen = false;
+        }
       }
       // Repaint every tick — the board must stay live even while a row is
       // expanded. renderFleet preserves an expanded row's open state (the
