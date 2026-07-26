@@ -977,7 +977,14 @@ export class GoalDispatchView extends ItemView {
       // 'failed' pair left the button stuck on 'Dispatching…' after one goal.
       if (this.activeDispatchId) {
         const mine = dispatches.find(
-          (d: Record<string, unknown>) => d.id === this.activeDispatchId,
+          // activeDispatches entries key the dispatch id under `dispatchId`
+          // (verified live: every entry has dispatchId set, `id` is always
+          // absent). Matching on `d.id` never hit, so `mine` stayed undefined,
+          // activeDispatchSeen never flipped true, and the settle never fired —
+          // the button stuck after one goal even with the status !== 'running'
+          // fix. Match dispatchId primarily, id as a fallback.
+          (d: Record<string, unknown>) =>
+            (d.dispatchId ?? d.id) === this.activeDispatchId,
         );
         if (mine) this.activeDispatchSeen = true;
         const settled = mine ? mine.status !== 'running' : this.activeDispatchSeen;
