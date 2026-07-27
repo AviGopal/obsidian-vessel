@@ -59,6 +59,7 @@ import './resolvers/workspace-resolvers';
 import './resolvers/concept-sync-resolvers';
 import './resolvers/write-note-resolver';
 import './resolvers/ui-view-resolver';
+import './resolvers/dom-query-resolver';
 import { setPresenceRhythmContext } from './resolvers/presence-rhythm-resolver';
 import { setConceptDbResolverContext } from './resolvers/concept-view-resolver';
 import { setConceptWritebackResolverContext } from './resolvers/concept-writeback-resolver';
