@@ -69,6 +69,9 @@ import type { UiFeedbackKind } from '../feedback/ui-feedback-store';
 import { sidecarResolveBody, sidecarHttpAuto } from '../sidecar-manager';
 import { posteriorSentence, shadowSentence, poolDeltaSentence, reachCaption, vesselsCaption, peersCaption, gapsCaption, runnersCaption, asOfNote, runningNarrative, whyChosenSentence, failureMeaningSentence, dispositionSentence } from './panel-narrative';
 import { cachedPulseVerdict, refreshPulseVerdict, cachedNextSelection, requestNextSelection } from './panel-aggregates';
+import { selectPresentationArm, peekPresentationArm } from '../presentation/presentation-policy';
+import { attentionGrader } from '../presentation/attention-grader';
+import { renderArmBody } from '../presentation/presentation-arms';
 
 export const VIEW_TYPE_GOAL_DISPATCH = 'obsidian-goal-dispatch';
 
@@ -485,6 +488,7 @@ export class GoalDispatchView extends ItemView {
   }
 
   async onClose(): Promise<void> {
+    attentionGrader.flushAll();
     this.stopWalkPoll();
     this.stopFleetBoard();
     this.stopWorkBoard();
@@ -814,6 +818,9 @@ export class GoalDispatchView extends ItemView {
       const dispatchId = result.executionId; // holds dispatchId from 202 body
       this.activeDispatchId = dispatchId;
       this.activeDispatchSeen = false;
+      // Pre-select the presentation arm for this dispatch so the ~2s overlay
+      // posterior read never delays the answer render (attention→reward loop).
+      void selectPresentationArm(dispatchId, this.plugin.settings.vesselId ?? '');
 
       // Show elapsed time while the auto-draft LLM selects/authors an activity.
       // This can take 30-120s; without feedback the UI looks frozen.
@@ -1952,7 +1959,7 @@ export class GoalDispatchView extends ItemView {
 
     // 2. Authored answer (question-goals): show it prominently up top.
     const answerBody = typeof body.answerBody === 'string' ? body.answerBody.trim() : '';
-    if (answerBody) this.renderInlineAnswer(detail, answerBody, answerGrounding(body));
+    if (answerBody) this.renderInlineAnswer(detail, answerBody, answerGrounding(body), String(d.dispatchId ?? ''));
 
     // 3. Decision tree when steps are present; otherwise degrade gracefully.
     const steps = Array.isArray(body.steps) ? (body.steps as WalkStep[]) : [];
@@ -2067,6 +2074,7 @@ export class GoalDispatchView extends ItemView {
       notes: 'operator verdict from fleet panel',
     };
 
+    attentionGrader.verdictSubmitted(String(d.dispatchId ?? ''));
     const body = await sidecarResolveBody(pointer);
 
     const parent = (document.querySelector('.sub-verdict') ?? document.querySelector('.sub-fleet-detail')) as HTMLElement | null;
@@ -2235,7 +2243,7 @@ export class GoalDispatchView extends ItemView {
   }
 
   /** Render the authored answer body as a distinct callout-style block. */
-  private renderInlineAnswer(parent: HTMLElement, answer: string, grounding: 'grounded' | 'unverified' = 'unverified'): void {
+  private renderInlineAnswer(parent: HTMLElement, answer: string, grounding: 'grounded' | 'unverified' = 'unverified', dispatchId = ''): void {
     const card = parent.createDiv('sub-card sub-card--answer sub-answer-inline');
     const inner = card.createDiv('sub-answer-body');
     const header = inner.createDiv({ cls: 'sub-answer-header', text: '◇ Answer' });
@@ -2243,8 +2251,35 @@ export class GoalDispatchView extends ItemView {
       cls: `sub-answer-badge sub-answer-badge--${grounding}`,
       text: grounding === 'grounded' ? '● grounded' : '○ unverified — no tool anchor',
     });
-    const textEl = inner.createDiv({ cls: 'sub-answer-text' });
-    void MarkdownRenderer.render(this.plugin.app, answer, textEl, '/', this);
+    this.renderAnswerViaArm(card, inner, answer, grounding, dispatchId);
+  }
+
+  /**
+   * Shared answer-body render: route through the Thompson-selected
+   * presentation arm and attach the attention grader. One decision and one
+   * episode per dispatch — the feed block and the fleet-row inline card merge
+   * their dwell/affordance signals. A 'fallback' decision (no selection was
+   * made through the policy) still renders arm A but is NEVER graded.
+   */
+  private renderAnswerViaArm(card: HTMLElement, inner: HTMLElement, answer: string, grounding: 'grounded' | 'unverified', dispatchId: string): void {
+    const decision = peekPresentationArm(dispatchId);
+    card.dataset.presentationArm = decision.armKey;
+    card.dataset.selectionSource = decision.source;
+    const header = inner.querySelector(':scope > .sub-answer-header') as HTMLElement | null;
+    if (header && dispatchId) {
+      const dismiss = header.createSpan({ cls: 'sub-answer-dismiss', text: '×', attr: { title: 'dismiss this answer' } });
+      dismiss.addEventListener('click', (ev) => {
+        if (!ev.isTrusted) return;
+        attentionGrader.dismiss(dispatchId);
+        card.addClass('sub-answer--dismissed');
+      });
+    }
+    renderArmBody(this.plugin.app, this, inner, decision.armKey, answer, grounding, {
+      armEvent: (kind) => attentionGrader.armEvent(dispatchId, kind),
+    });
+    if (dispatchId) {
+      attentionGrader.attach(card, dispatchId, decision, grounding, this.plugin.app.vault.getName(), answer);
+    }
   }
 
   /**
@@ -2980,7 +3015,7 @@ export class GoalDispatchView extends ItemView {
     const answerBody = typeof body.answerBody === 'string' ? body.answerBody.trim() : '';
     if (answerBody && !this.answerRendered) {
       this.answerRendered = true;
-      this.appendAnswerBlock(answerBody, undefined, answerGrounding(body));
+      this.appendAnswerBlock(answerBody, undefined, answerGrounding(body), this.activeDispatchId ?? '');
     }
 
     // Settle when the walk reports a terminal status. `status` is the template
@@ -3027,7 +3062,7 @@ export class GoalDispatchView extends ItemView {
    * note or querying concept-db. Called once per dispatch when a goalAnswer
    * concept fires for the root execution.
    */
-  private appendAnswerBlock(answer: string, conceptId: string | undefined, grounding: 'grounded' | 'unverified' = 'unverified'): void {
+  private appendAnswerBlock(answer: string, conceptId: string | undefined, grounding: 'grounded' | 'unverified' = 'unverified', dispatchId = ''): void {
     if (!this.outputEl) return;
     const stick = this.isNearBottom();
     const wrap = this.outputEl.createDiv('sub-feed-line sub-card sub-card--answer');
@@ -3038,8 +3073,7 @@ export class GoalDispatchView extends ItemView {
       cls: `sub-answer-badge sub-answer-badge--${grounding}`,
       text: grounding === 'grounded' ? '● grounded' : '○ unverified — no tool anchor',
     });
-    const textEl = inner.createDiv({ cls: 'sub-answer-text' });
-    void MarkdownRenderer.render(this.plugin.app, answer, textEl, '/', this);
+    this.renderAnswerViaArm(wrap, inner, answer, grounding, dispatchId);
     if (conceptId) {
       inner.createDiv({
         cls: 'sub-answer-attribution',

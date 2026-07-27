@@ -1817,3 +1817,30 @@ body {
 .sub-feed-line.sub-card--answer {
   align-items: flex-start;
 }
+
+/* ── Presentation arms (attention→reward loop) ─────────────────────────── */
+.sub-answer-dismiss {
+  margin-left: auto; cursor: pointer; opacity: 0.45; padding: 0 4px;
+  font-size: 0.95em; line-height: 1;
+}
+.sub-answer-dismiss:hover { opacity: 0.9; }
+.sub-answer--dismissed .sub-answer-text,
+.sub-answer--dismissed .sub-answer-lede,
+.sub-answer--dismissed .sub-arm-c-lede,
+.sub-answer--dismissed .sub-arm-c-digest,
+.sub-answer--dismissed .sub-arm-c-actions,
+.sub-answer--dismissed .sub-arm-btn { display: none; }
+.sub-arm-btn {
+  font-size: var(--font-ui-smaller); padding: 2px 8px; margin-top: 4px;
+  border-radius: 4px; cursor: pointer;
+  background: var(--background-modifier-hover); border: 1px solid var(--background-modifier-border);
+  color: var(--text-muted);
+}
+.sub-arm-btn:hover { color: var(--text-normal); }
+.sub-answer-lede { opacity: 0.95; }
+.sub-answer--arm-c.sub-arm-c--grounded { border-left: 3px solid var(--color-green); }
+.sub-answer--arm-c.sub-arm-c--unverified { border-left: 3px solid var(--color-yellow); }
+.sub-arm-c-lede { font-weight: 600; margin: 2px 0 4px; }
+.sub-arm-c-digest { margin: 0 0 4px 0; padding-left: 18px; }
+.sub-arm-c-digest li { font-size: var(--font-ui-small); margin: 1px 0; color: var(--text-muted); }
+.sub-arm-c-actions { display: flex; gap: 6px; }

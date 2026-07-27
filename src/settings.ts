@@ -240,7 +240,8 @@ export const DEFAULT_SETTINGS: ObsidianVesselSettings = {
     'obsidian:concept_sync',
     'obsidian:concept_rebuild',
     'obsidian:concept_status', 'obsidian:write_note', 'obsidian:ui_view', 'obsidian:presence_rhythm', 'obsidian:vault_touches', 'obsidian:ui_screenshot',
-    'obsidian:ui_layout_metrics', 'obsidian:dom_query'],
+    'obsidian:ui_layout_metrics', 'obsidian:dom_query',
+    'obsidian:presentation_decisions'],
 
   // A normal desktop Obsidian user is a human; the headless in-container
   // instance overrides this to false in its data.json.
