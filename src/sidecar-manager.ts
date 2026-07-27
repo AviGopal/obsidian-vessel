@@ -51,11 +51,21 @@ export class SidecarManager {
   private forceReinstall = false;
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
   private logger: NonNullable<SidecarManagerOptions['logger']>;
+  private activeSidecarPort: number;
 
   constructor(settings: ObsidianVesselSettings, opts: SidecarManagerOptions) {
     this.settings = settings;
     this.opts = opts;
     this.logger = opts.logger || ((level, msg) => console.log(`[FederationSidecar:${level}]`, msg));
+    this.activeSidecarPort = opts.serverPort;
+  }
+
+  getActiveSidecarPort(): number {
+    return this.activeSidecarPort;
+  }
+
+  setActiveSidecarPort(port: number): void {
+    this.activeSidecarPort = port;
   }
 
   /** Update settings in place (e.g. after the settings tab saves changes). */
