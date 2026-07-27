@@ -307,12 +307,17 @@ function stepGrounding(step: WalkStep, grounded: Set<string>): 'grounded' | 'hol
  * completion with no tool-grounded shape, so the answer may be a confabulation.
  */
 function answerGrounding(body: Record<string, unknown>): 'grounded' | 'unverified' {
-  if (body.grounded === true) return 'grounded';
+  // A bare LLM completion is NOT tool-grounded — it is exactly the confabulation the
+  // badge must warn about. Grounding requires a NON-LLM tool/data/compute shape; a
+  // pure llm_completion_dispatch satisfier reach must read 'unverified'. (Empirically
+  // caught: the old any-satisfier check falsely badged bare LLM answers 'grounded'.)
+  const isLLM = (sh: string): boolean => /llm_completion|llm_response|llmtext|llmcompletion/i.test(sh);
   const walkLog = Array.isArray(body.walkLog) ? (body.walkLog as unknown[]).map(String) : [];
   const grounded = groundedShapeSet(walkLog);
-  if (grounded.size > 0) return 'grounded';
+  if (Array.from(grounded).some((sh) => !isLLM(sh))) return 'grounded';
   const steps = Array.isArray(body.steps) ? (body.steps as WalkStep[]) : [];
-  if (steps.some((s) => stepGrounding(s, grounded) === 'grounded')) return 'grounded';
+  if (steps.some((s) => stepGrounding(s, grounded) === 'grounded'
+      && (Array.isArray(s.newShapes) ? s.newShapes.map(String) : []).some((sh) => !isLLM(sh)))) return 'grounded';
   return 'unverified';
 }
 
