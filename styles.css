@@ -1857,3 +1857,14 @@ body {
 .sub-evidence-badge--unverified { color: var(--color-yellow); }
 .sub-evidence-content { max-height: 40vh; overflow: auto; white-space: pre-wrap; word-break: break-word; font-family: var(--font-monospace); font-size: var(--font-ui-smaller); background: var(--background-primary); padding: 6px 8px; border-radius: 4px; margin: 4px 0; }
 .sub-evidence-truncnote { font-size: var(--font-ui-smaller); color: var(--text-faint); font-style: italic; }
+
+/* ── Grade-the-grader panel (reach feedback) ───────────────────────────── */
+.sub-grade { margin: 8px 0; display: flex; flex-direction: column; gap: 8px; }
+.sub-grade-card { border: 1px solid var(--background-modifier-border); border-radius: 6px; padding: 8px 10px; background: var(--background-secondary); }
+.sub-grade-head { font-weight: 600; font-size: var(--font-ui-small); margin-bottom: 2px; }
+.sub-grade-reason { font-size: var(--font-ui-smaller); color: var(--text-muted); margin-bottom: 6px; white-space: pre-wrap; }
+.sub-grade-human { font-size: var(--font-ui-smaller); color: var(--color-green); margin-bottom: 4px; }
+.sub-grade-notes { width: 100%; box-sizing: border-box; font-size: var(--font-ui-smaller); resize: vertical; margin-bottom: 6px; }
+.sub-grade-notes--need { border-color: var(--color-red); }
+.sub-grade-btns { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.sub-verdict-confirm { font-size: var(--font-ui-smaller); color: var(--text-muted); }

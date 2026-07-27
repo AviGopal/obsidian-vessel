@@ -1994,7 +1994,7 @@ export class GoalDispatchView extends ItemView {
     const execForNext = typeof d.executionId === 'string' && !d.executionId.startsWith('interrupted:') ? d.executionId : (typeof body.executionId === 'string' ? body.executionId : '');
     if (execForNext && settledStatus !== 'running') {
       this.renderNextSelection(detail, execForNext);
-      this.renderVerdictControl(detail, execForNext, d);
+      this.renderGradePanel(detail, execForNext, body, d);
     }
 
     // 5. Attach to live WS feed.
@@ -2041,33 +2041,51 @@ export class GoalDispatchView extends ItemView {
    * Render a one-click operator verdict control for settled executions.
    * Shows "Was this reached?" label and three verdict buttons.
    */
-  private renderVerdictControl(parent: HTMLElement, executionId: string, d: Record<string, unknown>): void {
-    const box = parent.createDiv('sub-verdict');
-    box.createDiv({ cls: 'sub-verdict-label', text: 'Was this reached?' });
+  /**
+   * Grade-the-grader panel (REACH dimension). Sits below the evidence ledger so the
+   * human grades the verdict FROM the produced content. Anti-rubber-stamp: it states
+   * the grader's claim + WHY (goalReachReason), pre-selects NOTHING, and requires
+   * directed notes to override — a human override actually corrects record.reached
+   * server-side (goal-host consumes verdict+notes), it is not a dead label.
+   */
+  private renderGradePanel(parent: HTMLElement, executionId: string, body: Record<string, unknown>, d: Record<string, unknown>): void {
+    const prov = Array.isArray(body.poolProvenance) ? body.poolProvenance : [];
+    const answerBody = typeof body.answerBody === 'string' ? body.answerBody.trim() : '';
+    // Nothing produced to grade from → no grade surface (avoids grading a thin row).
+    if (prov.length === 0 && !answerBody) return;
+    const graderReached = (d.reached ?? body.reached ?? null) as boolean | null;
+    const humanGraded = body.humanGraded === true;
+    const reason = typeof body.goalReachReason === 'string' ? body.goalReachReason : '';
+    const wrap = parent.createDiv('sub-grade');
 
-    const reachedBtn = box.createEl('button', { cls: 'sub-fleet-btn', text: 'reached' });
-    reachedBtn.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-      void this.submitVerdict(executionId, d, 'achieved');
-    });
-
-    const notReachedBtn = box.createEl('button', { cls: 'sub-fleet-btn', text: 'not reached' });
-    notReachedBtn.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-      void this.submitVerdict(executionId, d, 'not_achieved');
-    });
-
-    const partialBtn = box.createEl('button', { cls: 'sub-fleet-btn', text: 'partial' });
-    partialBtn.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-      void this.submitVerdict(executionId, d, 'partial');
-    });
+    const reachCard = wrap.createDiv('sub-grade-card sub-grade-reach');
+    const rTxt = graderReached === true ? 'yes' : graderReached === false ? 'no' : 'unknown';
+    reachCard.createDiv({ cls: 'sub-grade-head', text: `Reach — the grader said reached = ${rTxt}` });
+    if (reason) reachCard.createDiv({ cls: 'sub-grade-reason', text: `because: ${reason}` });
+    if (humanGraded) {
+      const hn = typeof body.humanReachNotes === 'string' && body.humanReachNotes ? `: “${body.humanReachNotes}”` : '';
+      reachCard.createDiv({ cls: 'sub-grade-human', text: `✓ you graded this${hn}` });
+    }
+    const notesEl = reachCard.createEl('textarea', { cls: 'sub-grade-notes', attr: { placeholder: 'directed feedback (required to override / partial)…', rows: '2' } });
+    const btnRow = reachCard.createDiv('sub-grade-btns');
+    const mk = (label: string, verdict: 'achieved' | 'not_achieved' | 'partial', requireNotes: boolean) => {
+      const b = btnRow.createEl('button', { cls: 'sub-fleet-btn', text: label });
+      b.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const notes = notesEl.value.trim();
+        if (requireNotes && !notes) { notesEl.addClass('sub-grade-notes--need'); notesEl.focus(); return; }
+        void this.submitVerdict(executionId, d, verdict, notes, btnRow);
+      });
+    };
+    mk('confirm reached', 'achieved', false);
+    mk('override → not reached', 'not_achieved', true);
+    mk('partial', 'partial', true);
   }
 
   /**
    * Submit an operator verdict for an execution and replace buttons with confirmation.
    */
-  private async submitVerdict(executionId: string, d: Record<string, unknown>, verdict: 'achieved' | 'not_achieved' | 'partial'): Promise<void> {
+  private async submitVerdict(executionId: string, d: Record<string, unknown>, verdict: 'achieved' | 'not_achieved' | 'partial', notes?: string, btnRow?: HTMLElement): Promise<void> {
     const goal = typeof d.goal === 'string' ? d.goal : `goal for execution ${executionId}`;
     // Fall back to the executionId when no template is bound (failed/satisfier
     // rows) so the oracle label still records — that is exactly where a
@@ -2082,22 +2100,28 @@ export class GoalDispatchView extends ItemView {
       verdict,
       confidence: 0.9,
       labeler: 'human',
-      notes: 'operator verdict from fleet panel',
+      notes: (typeof notes === 'string' && notes) ? notes : `human verdict: ${verdict}`,
     };
 
     attentionGrader.verdictSubmitted(String(d.dispatchId ?? ''));
     const body = await sidecarResolveBody(pointer);
 
-    const parent = (document.querySelector('.sub-verdict') ?? document.querySelector('.sub-fleet-detail')) as HTMLElement | null;
-    if (!parent) return;
-
-    const btns = parent.querySelectorAll('.sub-fleet-btn');
-    for (const b of Array.from(btns)) b.remove();
-
+    // Local restamp so the collapsed row verdict + the value-keyed detailKey reflect
+    // the human verdict immediately (goal-host also corrects record.reached on the
+    // next poll — this just avoids a visible lag). A 'partial' clears to unknown.
     if (body != null) {
-      parent.createDiv({ cls: 'sub-verdict-confirm', text: 'verdict recorded' });
-    } else {
-      parent.createDiv({ cls: 'sub-verdict-confirm', text: 'verdict not recorded - sidecar unavailable' });
+      d.reached = verdict === 'achieved' ? true : verdict === 'not_achieved' ? false : null;
+      (d as Record<string, unknown>).humanGraded = true;
+    }
+
+    const host = btnRow ?? (document.querySelector('.sub-grade-btns') as HTMLElement | null);
+    if (host) {
+      const btns = host.querySelectorAll('.sub-fleet-btn');
+      for (const b of Array.from(btns)) b.remove();
+      host.createDiv({
+        cls: 'sub-verdict-confirm',
+        text: body != null ? `recorded — reach set to ${verdict} (human)` : 'not recorded — sidecar unavailable',
+      });
     }
   }
 
