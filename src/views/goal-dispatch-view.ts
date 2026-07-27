@@ -1942,6 +1942,11 @@ export class GoalDispatchView extends ItemView {
       lastStep: lastStep ? { i: lastStep.index, s: lastStep.status, t: lastStep.selected?.templateId } : null,
       answerLen: typeof body.answerBody === 'string' ? body.answerBody.trim().length : 0,
       logN: Array.isArray(body.walkLog) ? body.walkLog.length : 0,
+      // Re-render when produced-content evidence arrives/changes (rides the poll)
+      // without churning an unchanged settled row.
+      evidenceLen: Array.isArray(body.poolProvenance)
+        ? (body.poolProvenance as Array<Record<string, unknown>>).reduce((n, e) => n + (typeof e?.chars === 'number' ? e.chars : 0), 0)
+        : 0,
     });
     const existing = row.querySelector('.sub-fleet-detail');
     if (existing && status !== 'running' && this.sectionUnchanged(`fleetDetail:${dispatchId}`, detailKey)) return;
@@ -1960,6 +1965,12 @@ export class GoalDispatchView extends ItemView {
     // 2. Authored answer (question-goals): show it prominently up top.
     const answerBody = typeof body.answerBody === 'string' ? body.answerBody.trim() : '';
     if (answerBody) this.renderInlineAnswer(detail, answerBody, answerGrounding(body), String(d.dispatchId ?? ''));
+
+    // 2b. Evidence ledger — the actual CONTENT each shape produced, so a human can
+    // judge whether the goal reached against real evidence (works for FAILED walks
+    // too, where no answerBody exists). Verdict-NEUTRAL: seeing content must not imply
+    // reach; the human grades the grader FROM this.
+    this.renderEvidenceLedger(detail, body, d);
 
     // 3. Decision tree when steps are present; otherwise degrade gracefully.
     const steps = Array.isArray(body.steps) ? (body.steps as WalkStep[]) : [];
@@ -2662,6 +2673,56 @@ export class GoalDispatchView extends ItemView {
   }
 
   /** A collapsed-by-default toggle whose body is built lazily on first open. */
+  /**
+   * Evidence ledger: one collapsible row per produced pool impulse, expanding to the
+   * actual CONTENT the walk produced (capped preview from goalWalkState.poolProvenance,
+   * which recomputes for BOTH reached and failed walks). Verdict-NEUTRAL by design — no
+   * reach coloring here — because seeing content beside a green pill invites reflexive
+   * agreement; the human judges the grader's verdict FROM this evidence. Each row is
+   * badged tool-produced (grounded) vs llm-produced (may confabulate), and truncation is
+   * labeled honestly so a preview is never mistaken for totality.
+   */
+  private renderEvidenceLedger(parent: HTMLElement, body: Record<string, unknown>, d: Record<string, unknown>): void {
+    const prov = Array.isArray(body.poolProvenance)
+      ? (body.poolProvenance as Array<Record<string, unknown>>)
+      : [];
+    if (prov.length === 0) return;
+    const wrap = parent.createDiv('sub-evidence-ledger');
+    wrap.createDiv({ cls: 'sub-evidence-header', text: '◈ Evidence — what the walk produced (judge the verdict against this)' });
+    const isLLMProduced = (shape: string, producedBy: string): boolean =>
+      /llm|completion|llmtext/i.test(shape) || /llm|completion/i.test(producedBy);
+    for (const e of prov) {
+      const shape = String(e.shape ?? 'shape');
+      const producedBy = e.producedBy != null ? String(e.producedBy) : '';
+      const chars = typeof e.chars === 'number' ? e.chars : 0;
+      const preview = typeof e.contentPreview === 'string' ? e.contentPreview : '';
+      const truncated = e.truncated === true;
+      const grounded = !isLLMProduced(shape, producedBy);
+      const badgeCls = grounded ? 'grounded' : 'unverified';
+      // Honest distinction: a shape present in the pool with NO retained content is not
+      // the same as "no shape produced". Say which.
+      if (chars === 0 || !preview) {
+        const rowEmpty = wrap.createDiv('sub-evidence-row sub-evidence-empty');
+        rowEmpty.createSpan({ cls: `sub-evidence-badge sub-evidence-badge--${badgeCls}`, text: grounded ? '●' : '○' });
+        rowEmpty.createSpan({ cls: 'sub-evidence-shape', text: shape });
+        rowEmpty.createSpan({ cls: 'sub-evidence-meta', text: 'no content retained' });
+        continue;
+      }
+      const meta = `${chars} chars${truncated ? ' · preview' : ''}${producedBy ? '  ·  ' + shortId(producedBy) : ''}`;
+      this.renderCollapsible(wrap, `${shape}  ·  ${meta}`, (host) => {
+        host.createDiv({
+          cls: `sub-evidence-badge sub-evidence-badge--${badgeCls}`,
+          text: grounded ? '● tool-produced (grounded)' : '○ llm-produced — may confabulate',
+        });
+        const pre = host.createEl('pre', { cls: 'sub-evidence-content' });
+        pre.setText(preview);
+        if (truncated) {
+          host.createDiv({ cls: 'sub-evidence-truncnote', text: `showing first ${preview.length} of ${chars} characters` });
+        }
+      });
+    }
+  }
+
   private renderCollapsible(parent: HTMLElement, label: string, build: (host: HTMLElement) => void): void {
     const wrap = parent.createDiv('sub-collapsible');
     const header = wrap.createDiv({ cls: 'sub-section-header is-toggle', text: `▸ ${label}` });

@@ -1844,3 +1844,16 @@ body {
 .sub-arm-c-digest { margin: 0 0 4px 0; padding-left: 18px; }
 .sub-arm-c-digest li { font-size: var(--font-ui-small); margin: 1px 0; color: var(--text-muted); }
 .sub-arm-c-actions { display: flex; gap: 6px; }
+
+/* ── Evidence ledger (shape-content inspection, grade-the-grader) ───────── */
+.sub-evidence-ledger { margin: 8px 0; padding: 6px 8px; border: 1px solid var(--background-modifier-border); border-radius: 6px; background: var(--background-secondary); }
+.sub-evidence-header { font-size: var(--font-ui-smaller); text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); margin-bottom: 4px; }
+.sub-evidence-row { display: flex; align-items: center; gap: 8px; padding: 2px 0; font-size: var(--font-ui-small); }
+.sub-evidence-empty { opacity: 0.6; }
+.sub-evidence-shape { font-family: var(--font-monospace); }
+.sub-evidence-meta { color: var(--text-faint); font-size: var(--font-ui-smaller); }
+.sub-evidence-badge { font-size: var(--font-ui-smaller); padding: 0 4px; }
+.sub-evidence-badge--grounded { color: var(--color-green); }
+.sub-evidence-badge--unverified { color: var(--color-yellow); }
+.sub-evidence-content { max-height: 40vh; overflow: auto; white-space: pre-wrap; word-break: break-word; font-family: var(--font-monospace); font-size: var(--font-ui-smaller); background: var(--background-primary); padding: 6px 8px; border-radius: 4px; margin: 4px 0; }
+.sub-evidence-truncnote { font-size: var(--font-ui-smaller); color: var(--text-faint); font-style: italic; }
