@@ -27,12 +27,17 @@ function ledeOf(answer: string): string {
 
 /** Non-empty lines/paragraph leads after the lede, markdown headers flattened. */
 function digestLines(answer: string): string[] {
+  const lede = ledeOf(answer);
   return answer
     .split('\n')
     .map((l) => l.trim())
     .filter((l) => l.length > 0)
     .map((l) => l.replace(/^#+\s+/, '').replace(/^[-*]\s+/, ''))
-    .slice(1);
+    .slice(1)
+    // goal-host's answerBody assembly repeats the verdict sentence under
+    // '## Basis' — the pinned lede already shows it, and a heading left with
+    // no words after flattening is chrome, not content.
+    .filter((l) => l !== lede && !lede.startsWith(l) && l.split(/\s+/).length > 1);
 }
 
 export function renderArmBody(
