@@ -1796,3 +1796,24 @@ body {
 }
 .sub-answer-badge--grounded { color: var(--color-green, #46c98b); background: rgba(70, 201, 139, 0.12); }
 .sub-answer-badge--unverified { color: var(--color-orange, #e2a63f); background: rgba(226, 166, 63, 0.12); }
+
+/* ── Long-walk cascade fix ──────────────────────────────────────────────────
+   The panel is a fixed-height flex column with flex-shrink:0 sections and ONE
+   scroll region (.sub-scroll). On a long walk the expanded decision tree
+   (.sub-fleet-detail, flex-basis:100%, previously unbounded) grows tall, the
+   flex algorithm collapses .sub-scroll toward min-height:0, and the shrink-0
+   sections overflow the non-scrolling root — reading as feed lines "cascading"
+   on top of each other. Bound the tree so it scrolls within its own box and the
+   feed keeps its space. */
+.sub-fleet-detail {
+  max-height: 42vh;
+  overflow-y: auto;
+}
+/* Block-markdown answers must TOP-align, not baseline: a multi-block markdown
+   answer in a baseline-aligned flex row under-computes its cross-size and
+   overlaps the following line (regression from rendering answers as markdown).
+   Covers both the inline and feed answer cards. */
+.sub-card--answer,
+.sub-feed-line.sub-card--answer {
+  align-items: flex-start;
+}
