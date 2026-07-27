@@ -1884,6 +1884,20 @@ export class GoalDispatchView extends ItemView {
   }
 
   /**
+   * Section render guard (generalizes the pulse value-keyed fix): a section stops
+   * el.empty()+recreating when its underlying VALUES are unchanged. Caller builds a
+   * VALUE-KEYED snapshot (ids/counts/statuses — NEVER raw timestamped objects) and
+   * calls this before teardown: returns true when unchanged (caller returns early,
+   * live DOM — scroll, expansion — preserved), else records the snapshot and returns
+   * false (caller rebuilds). Backed by the existing lastRenderedSnapshot store.
+   */
+  private sectionUnchanged(key: string, valueKey: string): boolean {
+    if (this.lastRenderedSnapshot.get(key) === valueKey) return true;
+    this.lastRenderedSnapshot.set(key, valueKey);
+    return false;
+  }
+
+  /**
    * Build (or rebuild) the expanded detail for a fleet row.
    *
    * Leads with the reached verdict + rationale (status demoted to secondary).
@@ -1898,10 +1912,29 @@ export class GoalDispatchView extends ItemView {
    * re-fetches fresh walkState and a running walk's tree updates in place.
    */
   private async renderFleetDetail(row: HTMLElement, d: Record<string, unknown>): Promise<void> {
-    row.querySelector('.sub-fleet-detail')?.remove();
-    const detail = row.createDiv('sub-fleet-detail');
-    const j = await this.goalHostResolve({ type: 'goalWalkState', dispatchId: String(d.dispatchId ?? '') });
+    const dispatchId = String(d.dispatchId ?? '');
+    const j = await this.goalHostResolve({ type: 'goalWalkState', dispatchId });
     const body = ((j?.body ?? {}) as Record<string, unknown>);
+    // Stop the decision tree rebuilding every 7s on an UNCHANGED SETTLED walk (the
+    // flicker/reset that loses scroll + expansion when reading a completed row).
+    // Value-key the rendered-relevant walk values (never the raw timestamped body);
+    // if a settled detail already exists and its key is unchanged, preserve it in
+    // place. A RUNNING walk always rebuilds — its step tree is still growing.
+    const status = String(body.status ?? d.status ?? '');
+    const stepsArr = Array.isArray(body.steps) ? (body.steps as WalkStep[]) : [];
+    const lastStep = stepsArr.length > 0 ? stepsArr[stepsArr.length - 1] : undefined;
+    const detailKey = JSON.stringify({
+      dispatchId, status,
+      reached: d.reached ?? body.reached ?? null,
+      stepN: stepsArr.length,
+      lastStep: lastStep ? { i: lastStep.index, s: lastStep.status, t: lastStep.selected?.templateId } : null,
+      answerLen: typeof body.answerBody === 'string' ? body.answerBody.trim().length : 0,
+      logN: Array.isArray(body.walkLog) ? body.walkLog.length : 0,
+    });
+    const existing = row.querySelector('.sub-fleet-detail');
+    if (existing && status !== 'running' && this.sectionUnchanged(`fleetDetail:${dispatchId}`, detailKey)) return;
+    existing?.remove();
+    const detail = row.createDiv('sub-fleet-detail');
 
     // 1. Reached-led headline (status demoted; failed-but-reached explained).
     this.renderReachHeadline(detail, body, d);
