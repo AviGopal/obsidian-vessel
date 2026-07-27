@@ -1782,3 +1782,17 @@ body {
   font-family: var(--font-monospace);
   color: var(--sub-text-muted);
 }
+
+
+/* Answer trust badge (QW2) — grounded vs unverified LLM answer. */
+.sub-answer-badge {
+  margin-left: 8px;
+  font-size: 11px;
+  font-family: var(--font-monospace, ui-monospace, monospace);
+  padding: 1px 6px;
+  border-radius: 4px;
+  vertical-align: middle;
+  letter-spacing: 0.02em;
+}
+.sub-answer-badge--grounded { color: var(--color-green, #46c98b); background: rgba(70, 201, 139, 0.12); }
+.sub-answer-badge--unverified { color: var(--color-orange, #e2a63f); background: rgba(226, 166, 63, 0.12); }

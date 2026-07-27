@@ -300,6 +300,22 @@ function stepGrounding(step: WalkStep, grounded: Set<string>): 'grounded' | 'hol
   return 'unconfirmed';
 }
 
+/**
+ * Whole-walk grounding verdict for the authored answer's trust badge.
+ * 'grounded' = the reach produced a tool/vessel-resolved (satisfier) shape, so the
+ * answer has a tool anchor; 'unverified' = every producing step was a pure LLM
+ * completion with no tool-grounded shape, so the answer may be a confabulation.
+ */
+function answerGrounding(body: Record<string, unknown>): 'grounded' | 'unverified' {
+  if (body.grounded === true) return 'grounded';
+  const walkLog = Array.isArray(body.walkLog) ? (body.walkLog as unknown[]).map(String) : [];
+  const grounded = groundedShapeSet(walkLog);
+  if (grounded.size > 0) return 'grounded';
+  const steps = Array.isArray(body.steps) ? (body.steps as WalkStep[]) : [];
+  if (steps.some((s) => stepGrounding(s, grounded) === 'grounded')) return 'grounded';
+  return 'unverified';
+}
+
 /** Compact α/β or sampled-score annotation for a template chip. */
 function scoreAnnot(s: { alpha?: number; beta?: number; sampledScore?: number }): string {
   if (typeof s.sampledScore === 'number') return `sampled ${s.sampledScore.toFixed(2)}`;
@@ -1884,7 +1900,7 @@ export class GoalDispatchView extends ItemView {
 
     // 2. Authored answer (question-goals): show it prominently up top.
     const answerBody = typeof body.answerBody === 'string' ? body.answerBody.trim() : '';
-    if (answerBody) this.renderInlineAnswer(detail, answerBody);
+    if (answerBody) this.renderInlineAnswer(detail, answerBody, answerGrounding(body));
 
     // 3. Decision tree when steps are present; otherwise degrade gracefully.
     const steps = Array.isArray(body.steps) ? (body.steps as WalkStep[]) : [];
@@ -2167,11 +2183,16 @@ export class GoalDispatchView extends ItemView {
   }
 
   /** Render the authored answer body as a distinct callout-style block. */
-  private renderInlineAnswer(parent: HTMLElement, answer: string): void {
+  private renderInlineAnswer(parent: HTMLElement, answer: string, grounding: 'grounded' | 'unverified' = 'unverified'): void {
     const card = parent.createDiv('sub-card sub-card--answer sub-answer-inline');
     const inner = card.createDiv('sub-answer-body');
-    inner.createDiv({ cls: 'sub-answer-header', text: '◇ Answer' });
-    inner.createDiv({ cls: 'sub-answer-text', text: answer });
+    const header = inner.createDiv({ cls: 'sub-answer-header', text: '◇ Answer' });
+    header.createSpan({
+      cls: `sub-answer-badge sub-answer-badge--${grounding}`,
+      text: grounding === 'grounded' ? '● grounded' : '○ unverified — no tool anchor',
+    });
+    const textEl = inner.createDiv({ cls: 'sub-answer-text' });
+    void MarkdownRenderer.render(this.plugin.app, answer, textEl, '/', this);
   }
 
   /**
@@ -2651,6 +2672,20 @@ export class GoalDispatchView extends ItemView {
     const solSnap = JSON.stringify(list);
     if (this.lastRenderedSnapshot.get('solicitations') === solSnap) return;
     this.lastRenderedSnapshot.set('solicitations', solSnap);
+    // QW4: preserve half-typed answers across the snapshot rebuild — el.empty()
+    // below would destroy an in-progress textarea, and the cooperative human is
+    // mislabeled unresponsive when the solicitation times out.
+    const preservedAnswers = new Map<string, { value: string; selStart: number; selEnd: number; focused: boolean }>();
+    for (const ta of Array.from(el.querySelectorAll('textarea.sub-solicitation-answer')) as HTMLTextAreaElement[]) {
+      const sid = ta.dataset.solicitationId;
+      if (!sid) continue;
+      preservedAnswers.set(sid, {
+        value: ta.value,
+        selStart: ta.selectionStart ?? ta.value.length,
+        selEnd: ta.selectionEnd ?? ta.value.length,
+        focused: document.activeElement === ta,
+      });
+    }
     el.empty();
     if (list.length === 0) return;
     for (const sol of list) {
@@ -2668,6 +2703,19 @@ export class GoalDispatchView extends ItemView {
         cls: 'sub-solicitation-answer',
         attr: { placeholder: 'Type your answer — typing keeps the door open…', rows: '4' },
       });
+      answerEl.dataset.solicitationId = sol.solicitationId;
+      const prevAnswer = preservedAnswers.get(sol.solicitationId);
+      if (prevAnswer) {
+        answerEl.value = prevAnswer.value;
+        if (prevAnswer.focused) {
+          answerEl.focus();
+          try {
+            answerEl.setSelectionRange(prevAnswer.selStart, prevAnswer.selEnd);
+          } catch {
+            /* setSelectionRange can throw on detached nodes; value is already restored */
+          }
+        }
+      }
       answerEl.addEventListener('input', () => this.plugin.solicitationManager?.heartbeat(sol.solicitationId));
       const btnRow = card.createDiv('sub-solicitation-btns');
       // Deliver an outcome with honest feedback: disable the row while the
@@ -2870,7 +2918,7 @@ export class GoalDispatchView extends ItemView {
     const answerBody = typeof body.answerBody === 'string' ? body.answerBody.trim() : '';
     if (answerBody && !this.answerRendered) {
       this.answerRendered = true;
-      this.appendAnswerBlock(answerBody, undefined);
+      this.appendAnswerBlock(answerBody, undefined, answerGrounding(body));
     }
 
     // Settle when the walk reports a terminal status. `status` is the template
@@ -2884,7 +2932,17 @@ export class GoalDispatchView extends ItemView {
       (status !== 'running' && (reached === true || reached === false));
     if (terminal && this.dispatching) {
       const ok = status !== 'failed' && reached !== false;
-      this.appendMessage(`${ok ? '✓' : '✗'} Execution ${ok ? 'complete' : 'failed'}`, ok ? 'success' : 'failure');
+      // Never show green before the honest reach verdict: ✓ is gated on
+      // reached===true; a non-reach (or failed exit) is red; an unknown/pending
+      // reach reads NEUTRAL — a settled dispatch is not a success until the
+      // goal-reach verdict confirms it.
+      if (reached === true) {
+        this.appendMessage('✓ Execution complete', 'success');
+      } else if (reached === false || status === 'failed') {
+        this.appendMessage('✗ Execution failed', 'failure');
+      } else {
+        this.appendMessage('○ Execution settled — reach verdict pending', undefined);
+      }
       if (this.goalFile) {
         this.goalNoteManager.markComplete(this.goalFile, ok ? 'completed' : 'failed', this.mintedConcepts);
       }
@@ -2907,14 +2965,19 @@ export class GoalDispatchView extends ItemView {
    * note or querying concept-db. Called once per dispatch when a goalAnswer
    * concept fires for the root execution.
    */
-  private appendAnswerBlock(answer: string, conceptId: string | undefined): void {
+  private appendAnswerBlock(answer: string, conceptId: string | undefined, grounding: 'grounded' | 'unverified' = 'unverified'): void {
     if (!this.outputEl) return;
     const stick = this.isNearBottom();
     const wrap = this.outputEl.createDiv('sub-feed-line sub-card sub-card--answer');
     wrap.createSpan({ cls: 'sub-feed-ts', text: this.feedTs() });
     const inner = wrap.createDiv({ cls: 'sub-feed-msg sub-answer-body' });
-    inner.createDiv({ cls: 'sub-answer-header', text: '◇ Answer' });
-    inner.createDiv({ cls: 'sub-answer-text', text: answer });
+    const header = inner.createDiv({ cls: 'sub-answer-header', text: '◇ Answer' });
+    header.createSpan({
+      cls: `sub-answer-badge sub-answer-badge--${grounding}`,
+      text: grounding === 'grounded' ? '● grounded' : '○ unverified — no tool anchor',
+    });
+    const textEl = inner.createDiv({ cls: 'sub-answer-text' });
+    void MarkdownRenderer.render(this.plugin.app, answer, textEl, '/', this);
     if (conceptId) {
       inner.createDiv({
         cls: 'sub-answer-attribution',
