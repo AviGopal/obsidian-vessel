@@ -2262,6 +2262,19 @@ export class GoalDispatchView extends ItemView {
    * made through the policy) still renders arm A but is NEVER graded.
    */
   private renderAnswerViaArm(card: HTMLElement, inner: HTMLElement, answer: string, grounding: 'grounded' | 'unverified', dispatchId: string): void {
+    try {
+      this.renderAnswerViaArmInner(card, inner, answer, grounding, dispatchId);
+    } catch (err) {
+      // The answer must NEVER be lost to a presentation-loop bug: fall back to
+      // the plain markdown render and surface the error in the feed.
+      const msg = err instanceof Error ? (err.stack ?? err.message) : String(err);
+      this.appendMessage(`presentation-arm render failed — fell back to plain: ${msg.slice(0, 300)}`, 'failure');
+      const textEl = inner.createDiv({ cls: 'sub-answer-text' });
+      void MarkdownRenderer.render(this.plugin.app, answer, textEl, '/', this);
+    }
+  }
+
+  private renderAnswerViaArmInner(card: HTMLElement, inner: HTMLElement, answer: string, grounding: 'grounded' | 'unverified', dispatchId: string): void {
     const decision = peekPresentationArm(dispatchId);
     card.dataset.presentationArm = decision.armKey;
     card.dataset.selectionSource = decision.source;
