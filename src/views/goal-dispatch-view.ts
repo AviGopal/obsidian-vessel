@@ -2895,6 +2895,16 @@ export class GoalDispatchView extends ItemView {
    */
   private renderWalkProgress(body: Record<string, unknown>): void {
     const steps = Array.isArray(body.steps) ? (body.steps as WalkStep[]) : [];
+    // Resets-on-failed-attempts fix: a hollow-fail REFRAME rebuilds/re-indexes the
+    // steps array shorter or from 0. The monotonic high-water below would then never
+    // render the new attempt (its steps sit at indices below renderedStepCount) — the
+    // feed silently freezes and a failed attempt looks like a broken walk. Detect the
+    // shrink, mark an explicit attempt boundary, and reset the high-water so the new
+    // attempt renders as a labeled continuation rather than a dead feed.
+    if (steps.length < this.renderedStepCount) {
+      this.appendMessage('↺ reframed — reach fell short; walking a new attempt', 'divider');
+      this.renderedStepCount = 0;
+    }
     for (let i = this.renderedStepCount; i < steps.length; i++) {
       const step = steps[i];
       const sel = step.selected ?? {};
