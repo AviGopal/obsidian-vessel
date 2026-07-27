@@ -1520,7 +1520,21 @@ export class GoalDispatchView extends ItemView {
     const vessels = (Array.isArray(regContent.vessels) ? regContent.vessels : []) as Array<Record<string, unknown>>;
     const members = (feed && Array.isArray(feed.members) ? feed.members : []) as Array<Record<string, unknown>>;
     const verdict = cachedPulseVerdict();
-    const pulseSnapshot = JSON.stringify({ dispatches, gaps, rhythmRes, v: vessels.length, m: members.length, at: verdict?.asOf ?? 0 });
+    // Never blank an existing good render on a TRANSIENT all-empty fetch (the common
+    // case on a degraded/offline plane — all five fan-out resolves default to [] on
+    // timeout). Honor the "panel never renders blank" intent: preserve the last good
+    // tiles instead of emptying to a bare header.
+    const allEmpty = dispatches.length === 0 && gaps.length === 0 && vessels.length === 0
+      && members.length === 0 && !verdict?.sentence;
+    if (allEmpty && el.querySelector('.sub-pulse-tiles')) return;
+    // Snapshot on the RENDERED values (counts + running + verdict), NOT the raw objects
+    // whose timestamps churn every tick and forced a needless empty()+rebuild (flicker).
+    const pulseSnapshot = JSON.stringify({
+      d: dispatches.length,
+      run: dispatches.filter((x) => (x as { status?: string }).status === 'running').length,
+      g: gaps.length, v: vessels.length, m: members.length,
+      verdict: verdict?.sentence ?? '', at: verdict?.asOf ?? 0,
+    });
     if (this.lastRenderedSnapshot.get('pulse') === pulseSnapshot) return;
     this.lastRenderedSnapshot.set('pulse', pulseSnapshot);
     el.empty();
