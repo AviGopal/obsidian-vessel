@@ -868,6 +868,18 @@ export class GoalDispatchView extends ItemView {
   }
 
   /**
+   * True when the user is following the feed at the bottom (within ~a few lines).
+   * When false, they have scrolled up to read — auto-scroll MUST NOT yank their
+   * viewport. Capture this BEFORE a DOM mutation and re-stick only if it was true,
+   * so live-streaming step lines never rip the reader back to the bottom.
+   */
+  private isNearBottom(): boolean {
+    const el = this.scrollEl;
+    if (!el) return true;
+    return el.scrollHeight - el.scrollTop - el.clientHeight <= 48;
+  }
+
+  /**
    * Append a timestamped message line to the event feed.
    * Also callable from external code (e.g. after WS reconnect).
    *
@@ -876,11 +888,12 @@ export class GoalDispatchView extends ItemView {
    */
   appendMessage(text: string, type?: string): void {
     if (!this.outputEl) return;
+    const stick = this.isNearBottom();
     const cls = ['sub-feed-line', type ? `sub-t-${type}` : ''].filter(Boolean).join(' ');
     const line = this.outputEl.createDiv(cls);
     line.createSpan({ cls: 'sub-feed-ts', text: this.feedTs() });
     line.createSpan({ cls: 'sub-feed-msg', text });
-    this.scrollToBottom();
+    if (stick) this.scrollToBottom();
   }
 
   /**
@@ -920,6 +933,7 @@ export class GoalDispatchView extends ItemView {
   /** Update (or create) the 'selecting' status line in place rather than appending. */
   private updateSelectingMessage(elapsedSecs: number): void {
     if (!this.outputEl) return;
+    const stick = this.isNearBottom();
     const existing = this.outputEl.querySelector('.sub-t-selecting');
     const text = elapsedSecs === 0
       ? 'Activity selecting…'
@@ -931,7 +945,7 @@ export class GoalDispatchView extends ItemView {
       line.createSpan({ cls: 'sub-feed-ts', text: this.feedTs() });
       line.createSpan({ cls: 'sub-feed-msg', text });
     }
-    this.scrollToBottom();
+    if (stick) this.scrollToBottom();
   }
 
 
@@ -2895,6 +2909,7 @@ export class GoalDispatchView extends ItemView {
    */
   private appendAnswerBlock(answer: string, conceptId: string | undefined): void {
     if (!this.outputEl) return;
+    const stick = this.isNearBottom();
     const wrap = this.outputEl.createDiv('sub-feed-line sub-card sub-card--answer');
     wrap.createSpan({ cls: 'sub-feed-ts', text: this.feedTs() });
     const inner = wrap.createDiv({ cls: 'sub-feed-msg sub-answer-body' });
@@ -2907,6 +2922,6 @@ export class GoalDispatchView extends ItemView {
         attr: { title: conceptId },
       });
     }
-    this.scrollToBottom();
+    if (stick) this.scrollToBottom();
   }
 }
