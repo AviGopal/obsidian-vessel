@@ -1048,7 +1048,20 @@ export class GoalDispatchView extends ItemView {
       // settled/completed list (completedDispatches is set inside it). Gating
       // it behind an empty-expansion check froze the whole board — and the
       // completed list with it — the moment the user opened a row to read it.
-      void this.guardSection(this.fleetEl, 'Fleet', () => this.renderFleet(dispatches));
+      // SMOOTHNESS FOR HUMAN RESOLVERS: never reflow the board out from under a
+      // human who is mid-interaction. If a feedback control inside the panel is
+      // focused (grading a dispatch — typing directed feedback), DEFER this ambient
+      // repaint to the next tick so their scroll position and typing are never
+      // yanked. Otherwise preserve the scroll position across the repaint so an
+      // incoming completion never jumps their place. (The interacting human is
+      // exactly the reliability we optimize for — a moving UI makes them misclick.)
+      const _activeEl = this.scrollEl?.ownerDocument?.activeElement as HTMLElement | null;
+      const _humanEditing = !!(_activeEl && this.scrollEl?.contains(_activeEl)
+        && (_activeEl.tagName === 'TEXTAREA' || _activeEl.tagName === 'INPUT' || _activeEl.isContentEditable));
+      if (_humanEditing) return;
+      const _savedTop = this.scrollEl ? this.scrollEl.scrollTop : 0;
+      await this.guardSection(this.fleetEl, 'Fleet', () => this.renderFleet(dispatches));
+      if (this.scrollEl && Math.abs(this.scrollEl.scrollTop - _savedTop) > 1) this.scrollEl.scrollTop = _savedTop;
     };
     void tick();
     this.fleetTimer = window.setInterval(() => void tick(), 7000);
