@@ -336,16 +336,22 @@ export class SidecarManager {
     // vault, unrelated listener) must never block this plugin's own sidecar.
     const desiredPort = this.settings.federationHealthPort || 8402;
     const pidPath = path.join(sidecarDir, 'sidecar.pid');
-    if (!(await portIsFree(desiredPort))) {
-      try {
-        const stalePid = parseInt(fs.readFileSync(pidPath, 'utf8'), 10);
-        if (stalePid > 1) {
+    // ALWAYS reap our own previous sidecar (by recorded pid) BEFORE spawning. A
+    // plugin reload re-runs onload but the prior child handle is gone, so without
+    // an UNCONDITIONAL reap the old sidecar orphans, keeps the health port, and the
+    // new sidecar FATALs on bind — the conduit dies on reload and the panel goes
+    // blank ("no activity data reachable"). portIsFree can race (report the port
+    // free while an orphan or its TIME_WAIT lingers), so do NOT gate the reap on it.
+    try {
+      const stalePid = parseInt(fs.readFileSync(pidPath, 'utf8'), 10);
+      if (stalePid > 1 && stalePid !== process.pid) {
+        try {
           process.kill(stalePid, 'SIGKILL');
-          this.logger('info', `killed stale sidecar (pid ${stalePid}) holding port ${desiredPort}`);
+          this.logger('info', `reaped prior sidecar (pid ${stalePid}) before respawn`);
           await new Promise(r => setTimeout(r, 300));
-        }
-      } catch { /* no pid file, or the process is not ours to kill */ }
-    }
+        } catch { /* already gone, or not ours to kill */ }
+      }
+    } catch { /* no pid file yet */ }
     try { fs.unlinkSync(pidPath); } catch { /* absent */ }
     let healthPort = desiredPort;
     if (!(await portIsFree(desiredPort))) {
