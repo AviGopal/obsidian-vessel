@@ -1735,7 +1735,7 @@ export class GoalDispatchView extends ItemView {
     if (!running && d.reached === true && d.status === 'failed') {
       row.createSpan({ cls: 'sub-chip sub-chip--ok sub-fleet-note', text: 'goal reached', attr: { title: 'steps exited non-zero but the goal was reached' } });
     }
-    row.addEventListener('click', () => void this.expandFleetRow(row, d));
+    row.addEventListener('click', (ev) => { const t = ev.target as HTMLElement | null; if (t && t.closest('.sub-fleet-detail')) return; void this.expandFleetRow(row, d); });
     // Auto-expand a running dispatch the first time we see it so its live
     // decision tree (selection + shape flow) renders as the walk proceeds,
     // matching cockpit parity. autoExpandedRunning also holds explicit
@@ -1847,6 +1847,7 @@ export class GoalDispatchView extends ItemView {
     el.setAttribute('tabindex', '0');
     el.setAttribute('aria-expanded', String(expanded));
     el.addEventListener('keydown', (ev: KeyboardEvent) => {
+      if (ev.target !== el) return;
       if (ev.key === 'Enter' || ev.key === ' ') {
         ev.preventDefault();
         onActivate();
