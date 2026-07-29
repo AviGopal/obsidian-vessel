@@ -21,6 +21,7 @@
  * contains and flags low counts instead of presenting starved data as calm.
  */
 
+import { requestUrl } from 'obsidian';
 import type { ObsidianVesselSettings } from '../settings';
 import { formatSuccessRate } from '../formatters/metrics-formatter';
 
@@ -69,13 +70,52 @@ function authHeaders(settings: ObsidianVesselSettings): Record<string, string> {
   return headers;
 }
 
+/**
+ * Direct-HTTP fallback for the activity-api (trace store) fetches when the
+ * sidecar conduit cannot route them. This happens when discovery returns the
+ * hub's own activity-api as a LOOPBACK http owner (127.0.0.1, protocol=http, no
+ * libp2p circuit) that shadows the circuit-reachable federated variants — the
+ * sidecar picks the loopback owner and cannot reach it, so shapes like
+ * activityExecutionTrace come back null while circuit-only shapes (substrateGap)
+ * work. The plugin host CAN reach the configured activityApiUrl directly, so we
+ * fall back to it. Returns null (-> "unavailable") when activityApiUrl is unset
+ * or the direct call fails, preserving the existing fail-soft behaviour.
+ */
+async function directFetch(
+  settings: ObsidianVesselSettings,
+  path: string,
+  init?: { method?: string; body?: unknown },
+): Promise<any | null> {
+  const base = (settings.activityApiUrl || '').replace(/\/+$/, '');
+  if (!base) return null;
+  // Obsidian's requestUrl runs in the main process and bypasses the renderer
+  // CORS restriction that blocks a cross-origin fetch to the activity-api host.
+  try {
+    const res = await requestUrl({
+      url: `${base}${path}`,
+      method: init?.method ?? 'GET',
+      headers: authHeaders(settings),
+      body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
+      throw: false,
+    });
+    if (res.status < 200 || res.status >= 300) return null;
+    return res.json;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchTraces(settings: ObsidianVesselSettings): Promise<TraceRow[] | null> {
   const since = new Date(Date.now() - WINDOW_HOURS * 3_600_000).toISOString();
   const path = `/v2/activities/execution-traces?limit=${TRACE_FETCH_LIMIT}&start_date=${encodeURIComponent(since)}`;
   // Sidecar-first: routed to the vessel owning the trace store via discovery.
-  const viaSidecar = await sidecarHttp(settings, { shape: 'activityExecutionTrace', path });
+  const viaSidecar = await sidecarHttp(settings, { shape: 'activityExecutionTrace', path }, 6000);
   if (viaSidecar && viaSidecar.ok && Array.isArray(viaSidecar.body?.executions)) {
     return viaSidecar.body.executions as TraceRow[];
+  }
+  const direct = await directFetch(settings, path);
+  if (direct && Array.isArray(direct.executions)) {
+    return direct.executions as TraceRow[];
   }
   log('trace fetch unavailable (sidecar conduit unreachable)');
   return null;
@@ -107,6 +147,11 @@ async function fetchLabels(settings: ObsidianVesselSettings): Promise<LabelRow[]
     const rows = parse(viaSidecar.body);
     if (rows) return rows;
   }
+  const direct = await directFetch(settings, '/v2/impulses/resolve', { method: 'POST', body: payload });
+  if (direct) {
+    const rows = parse(direct);
+    if (rows) return rows;
+  }
   log('label fetch unavailable (sidecar conduit unreachable or unauthorized)');
   return null;
 }
@@ -130,8 +175,10 @@ async function fetchGaps(settings: ObsidianVesselSettings): Promise<GapRow[] | n
 }
 
 async function fetchGoalPathStats(settings: ObsidianVesselSettings): Promise<GoalPathStats | null> {
-  const viaSidecar = await sidecarHttp(settings, { shape: 'activityExecutionTrace', path: '/v2/goal-paths/stats' });
+  const viaSidecar = await sidecarHttp(settings, { shape: 'activityExecutionTrace', path: '/v2/goal-paths/stats' }, 6000);
   if (viaSidecar && viaSidecar.ok && viaSidecar.body) return viaSidecar.body as GoalPathStats;
+  const direct = await directFetch(settings, '/v2/goal-paths/stats');
+  if (direct) return direct as GoalPathStats;
   log('goal-path stats unavailable (sidecar conduit unreachable)');
   return null;
 }

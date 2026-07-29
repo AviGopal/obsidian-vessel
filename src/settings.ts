@@ -177,6 +177,15 @@ export interface ObsidianVesselSettings {
    */
   discoveryVesselEndpoint: string;
 
+  /**
+   * Optional direct activity-api (trace store) base URL, e.g.
+   * http://syzygy.host:18080. Used as a fail-soft fallback by the
+   * improvement/graph sync when the federation sidecar cannot route the trace
+   * shapes (discovery returns the hub's loopback activity-api owner, no
+   * circuit). Empty = sidecar-only.
+   */
+  activityApiUrl: string;
+
   // ==========================================================================
   // Federation Sidecar Settings
   // ==========================================================================
@@ -285,6 +294,7 @@ export const DEFAULT_SETTINGS: ObsidianVesselSettings = {
   enableGraphBackbone: true,
   // Host-mapped discovery port (in-container :8100 is published on host :18100).
   discoveryVesselEndpoint: 'http://127.0.0.1:18100',
+  activityApiUrl: '',
 
   // Federation Sidecar
   federationRelayMultiaddr: '',
