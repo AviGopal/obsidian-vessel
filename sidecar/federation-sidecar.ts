@@ -46,6 +46,14 @@
 
 import { hostname } from 'node:os';
 
+// RESILIENCE: libp2p internals emit 'error' events on streams/sockets with no
+// listener (relay dial timeouts etc.) — without these guards that becomes
+// ERR_UNHANDLED_ERROR and the whole sidecar exits, taking the vault's goal
+// tracking dark until respawn. Log and continue; never exit from a peer fault.
+process.on('uncaughtException', (err) => { console.error('[federation-sidecar] uncaughtException (continuing):', (err as Error)?.message ?? String(err)); });
+process.on('unhandledRejection', (reason) => { console.error('[federation-sidecar] unhandledRejection (continuing):', (reason as Error)?.message ?? String(reason)); });
+
+
 // A shared default vessel id would seed IDENTICAL libp2p keys on every host
 // (observed peer-id collision); derive a stable host-unique id instead.
 const VESSEL_ID = process.env.OBSIDIAN_VESSEL_ID
@@ -232,10 +240,95 @@ async function lookupShapeOwner(shape: string): Promise<ShapeOwner | null> {
   return (await lookupShapeOwners(shape))[0] ?? null;
 }
 
+// Dispatch-scoped state (activeDispatches, goalWalkState, goal_execution) is
+// PER-goal-host in-memory data: "first dialable owner" answers from whichever
+// substrate wins the dial race, so a degraded local circuit silently swaps the
+// panel onto a foreign goal-host whose store holds none of this vault's
+// dispatches (observed: hub list 6h stale rendered as the whole fleet board).
+// Two remedies: aggregate polls MERGE all owners' lists (dedup by dispatchId,
+// each row tagged resolved_by; any successful subset beats an empty answer),
+// and per-dispatch polls PIN to the owner that answered for that dispatch id
+// before (learned from prior responses), falling back to the normal failover
+// order when the pinned owner stops answering.
+const AGGREGATE_MERGE_SHAPES = new Set(['activeDispatches']);
+const dispatchOwnerCache = new Map<string, string>(); // dispatchId -> vesselId
+const rememberDispatchOwner = (id: unknown, vesselId: string) => {
+  if (typeof id !== 'string' || !id || !vesselId) return;
+  if (dispatchOwnerCache.size > 500) { const k = dispatchOwnerCache.keys().next().value; if (k) dispatchOwnerCache.delete(k); }
+  dispatchOwnerCache.set(id, vesselId);
+};
+const dispatchIdOf = (pointer: any): string =>
+  String(pointer?.dispatchId ?? pointer?.dispatch_id ?? pointer?.executionId ?? pointer?.execution_id ?? '');
+const dispatchesOf = (r: any): any[] | null => {
+  for (const b of [r?.content?.body, r?.body, r?.content, r]) {
+    if (b && typeof b === 'object' && Array.isArray((b as any).dispatches)) return (b as any).dispatches;
+  }
+  return null;
+};
+
+// One owner, full route (overlay circuits first, HTTP fallback) — the same
+// order resolveViaDiscoveryHttp uses across owners, scoped to a single owner.
+async function resolveViaOwner(owner: ShapeOwner, pointer: any, shape: string): Promise<any> {
+  const errors: string[] = [];
+  if (vl && resolveViaLibp2pFn) {
+    for (const ma of owner.multiaddrs) {
+      try {
+        const res = await withTimeout(resolveViaLibp2pFn(vl, ma, pointer), 10_000, 'overlay resolve');
+        return { shape, resolved_by: owner.vesselId, ok: true, ...(typeof res === 'object' && res !== null ? res : { body: res }) };
+      } catch (e) { errors.push(`overlay: ${String((e as Error)?.message ?? e)}`); }
+    }
+  }
+  if (!(isLoopback(owner.base) && owner.multiaddrs.length > 0)) {
+    try {
+      const res = await fetch(owner.base + owner.resolvePath, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(API_KEY ? { Authorization: 'ApiKey ' + API_KEY } : {}) },
+        body: JSON.stringify({ impulse: { pointer } }),
+        signal: AbortSignal.timeout(12_000),
+      });
+      const body = await res.json().catch(() => ({}));
+      return { shape, resolved_by: owner.vesselId, status: res.status, ok: res.ok, ...(typeof body === 'object' && body !== null ? body : { body }) };
+    } catch (e) { errors.push(`http: ${String((e as Error)?.message ?? e)}`); }
+  }
+  throw new Error(errors.join('; ') || 'no route for owner ' + owner.vesselId);
+}
+
+async function resolveMergedAcrossOwners(owners: ShapeOwner[], pointer: any, shape: string): Promise<any> {
+  const settled = await Promise.allSettled(owners.map((o) => resolveViaOwner(o, pointer, shape)));
+  const merged = new Map<string, any>();
+  let answered = 0;
+  settled.forEach((s, i) => {
+    if (s.status !== 'fulfilled') return;
+    const rows = dispatchesOf(s.value);
+    if (!rows) return;
+    answered++;
+    for (const row of rows) {
+      const id = String(row?.dispatchId ?? '');
+      const tagged = { ...row, resolved_by: owners[i]!.vesselId };
+      rememberDispatchOwner(id, owners[i]!.vesselId);
+      // Newer startedAt wins on id collision (same dispatch mirrored on two hosts).
+      const prev = id ? merged.get(id) : undefined;
+      if (!prev || Number(row?.startedAt ?? 0) >= Number(prev?.startedAt ?? 0)) merged.set(id || `anon-${i}-${merged.size}`, tagged);
+    }
+  });
+  if (answered === 0) return null; // caller falls through to the single-owner path (its errors are more informative)
+  const dispatches = [...merged.values()].sort((a, b) => Number(b?.startedAt ?? 0) - Number(a?.startedAt ?? 0));
+  const body = { dispatches, merged_from: answered, owners: owners.length };
+  return { shape, resolved_by: `merged(${answered}/${owners.length})`, ok: true, content: { shape, produced_by: 'federation-sidecar merge', body }, body };
+}
+
 async function resolveViaDiscoveryHttp(pointer: any): Promise<any> {
   const shape = String(pointer?.type ?? '');
-  const owners = await lookupShapeOwners(shape);
+  let owners = await lookupShapeOwners(shape);
   if (owners.length === 0) return { error: `no vessel advertises shape "${shape}" in discovery (${DISCOVERY})` };
+  // Aggregate views: merge every owner's answer instead of racing to the first.
+  if (AGGREGATE_MERGE_SHAPES.has(shape) && owners.length > 1) {
+    const merged = await resolveMergedAcrossOwners(owners, pointer, shape);
+    if (merged) return merged;
+  }
+  // Per-dispatch pinning: route to the owner that served this dispatch before.
+  const pinned = dispatchOwnerCache.get(dispatchIdOf(pointer));
+  if (pinned) owners = [...owners.filter((o) => o.vesselId === pinned), ...owners.filter((o) => o.vesselId !== pinned)];
   const errors: string[] = [];
   // (1) Overlay failover: try each federated instance's circuit(s) until one
   // answers. Several instances serve the same shape and some are offline.
@@ -244,6 +337,7 @@ async function resolveViaDiscoveryHttp(pointer: any): Promise<any> {
       for (const ma of owner.multiaddrs) {
         try {
           const res = await withTimeout(resolveViaLibp2pFn(vl, ma, pointer), 10_000, 'overlay resolve');
+          rememberDispatchOwner((res as any)?.content?.body?.dispatchId ?? (res as any)?.body?.dispatchId ?? dispatchIdOf(pointer), owner.vesselId);
           return { shape, resolved_by: owner.vesselId, ok: true, ...(typeof res === 'object' && res !== null ? res : { body: res }) };
         } catch (e) { errors.push(`overlay ${owner.vesselId}: ${String((e as Error)?.message ?? e)}`); }
       }
@@ -267,6 +361,7 @@ async function resolveViaDiscoveryHttp(pointer: any): Promise<any> {
         signal: AbortSignal.timeout(30_000),
       });
       const body = await res.json().catch(() => ({}));
+      rememberDispatchOwner((body as any)?.body?.dispatchId ?? (body as any)?.dispatchId ?? dispatchIdOf(pointer), owner.vesselId);
       return { shape, resolved_by: owner.vesselId, status: res.status, ok: res.ok, ...(typeof body === 'object' && body !== null ? body : { body }) };
     } catch (e) { errors.push(`http ${owner.vesselId} (${owner.base}): ${String((e as Error)?.message ?? e)}`); }
   }
