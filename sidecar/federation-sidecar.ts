@@ -519,6 +519,16 @@ try {
           const pointer = body?.pointer ?? body;
           if (!pointer || !pointer.type) return corsJson({ error: 'missing pointer.type' }, 400);
           const target = String(body?.target || INGRESS || '');
+          // Dispatch-scoped state must NOT take the ingress shortcut: the hub
+          // ingress proxies to ITS OWN goal-host, silently substituting a foreign
+          // (often stale) executionStore for this vault's view — the "board shows
+          // only old data / no details for other hosts" defect. Route these
+          // through the discovery path, which merges all owners (activeDispatches)
+          // or pins to the dispatch-owning substrate (goalWalkState et al).
+          const DISPATCH_SCOPED = AGGREGATE_MERGE_SHAPES.has(String(pointer.type))
+            || ['goalWalkState', 'goal_execution', 'fleetActivityFeed'].includes(String(pointer.type))
+            || !!dispatchOwnerCache.get(dispatchIdOf(pointer));
+          if (DISPATCH_SCOPED && !body?.target) return corsJson(await resolveViaDiscoveryHttp(pointer));
           if (vl && target) {
             // lpStream first (carries multi-KB hub responses reliably after the
             // sendAll fix); legacy HTTP second; discovery-routed HTTP last.
