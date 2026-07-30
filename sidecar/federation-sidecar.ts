@@ -293,8 +293,16 @@ async function resolveViaOwner(owner: ShapeOwner, pointer: any, shape: string): 
   throw new Error(errors.join('; ') || 'no route for owner ' + owner.vesselId);
 }
 
+// The board polls every ~7s; an unbounded merge (each owner chain can burn
+// overlay 10s + http 12s) stacks overlapping polls and starves the conduit —
+// observed as ERR_CONNECTION_RESET/502 in the renderer. Bound each owner chain
+// hard and memoise the merged result briefly so overlapping polls coalesce.
+const MERGE_OWNER_TIMEOUT_MS = 6_000;
+const mergeMemo = new Map<string, { at: number; result: any }>();
 async function resolveMergedAcrossOwners(owners: ShapeOwner[], pointer: any, shape: string): Promise<any> {
-  const settled = await Promise.allSettled(owners.map((o) => resolveViaOwner(o, pointer, shape)));
+  const memo = mergeMemo.get(shape);
+  if (memo && Date.now() - memo.at < 3_000) return memo.result;
+  const settled = await Promise.allSettled(owners.map((o) => withTimeout(resolveViaOwner(o, pointer, shape), MERGE_OWNER_TIMEOUT_MS, 'merge owner ' + o.vesselId)));
   const merged = new Map<string, any>();
   let answered = 0;
   settled.forEach((s, i) => {
@@ -314,7 +322,9 @@ async function resolveMergedAcrossOwners(owners: ShapeOwner[], pointer: any, sha
   if (answered === 0) return null; // caller falls through to the single-owner path (its errors are more informative)
   const dispatches = [...merged.values()].sort((a, b) => Number(b?.startedAt ?? 0) - Number(a?.startedAt ?? 0));
   const body = { dispatches, merged_from: answered, owners: owners.length };
-  return { shape, resolved_by: `merged(${answered}/${owners.length})`, ok: true, content: { shape, produced_by: 'federation-sidecar merge', body }, body };
+  const result = { shape, resolved_by: `merged(${answered}/${owners.length})`, ok: true, content: { shape, produced_by: 'federation-sidecar merge', body }, body };
+  mergeMemo.set(shape, { at: Date.now(), result });
+  return result;
 }
 
 async function resolveViaDiscoveryHttp(pointer: any): Promise<any> {
