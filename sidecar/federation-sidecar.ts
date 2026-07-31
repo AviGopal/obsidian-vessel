@@ -627,6 +627,13 @@ async function register() {
   if (vl) {
     const c = vl.advertiseMultiaddrs().find((m: string) => m.includes('p2p-circuit'));
     if (c) circuit = c;
+    // Fallback: a live reservation whose circuit addr hasn't surfaced through
+    // advertiseMultiaddrs() (observed: hub row registered with ma:[] while the
+    // reservation was demonstrably active) still has a well-known dialable form —
+    // the relay anchor + /p2p-circuit/p2p/<own peer>. An empty multiaddr severs
+    // the inbound direction for every consumer of this row; the constructed form
+    // is exactly what the relay serves for any reserved peer.
+    if (!circuit && RELAY) circuit = `${RELAY}/p2p-circuit/p2p/${vl.peerId}`;
   }
   const resolverShapes = await fetchManifestShapes();
   const shapes = [...Object.keys(ROUTES), ...resolverShapes];
@@ -646,16 +653,26 @@ async function register() {
   const extraRaw = process.env.EXTRA_DISCOVERY_URLS ?? 'http://localhost:18100';
   const discoveries = [...new Set([DISCOVERY, ...(extraRaw === 'none' ? [] : extraRaw
     .split(',').map((s) => s.trim().replace(/\/+$/, '')).filter(Boolean))])];
+  // Non-primary discoveries live in a DIFFERENT identity domain (a spoke rejects
+  // the hub-issued key with 401, silently blanking the vault from spoke walks).
+  // EXTRA_DISCOVERY_API_KEY, when set, authenticates the extra registrations.
+  const extraKey = process.env.EXTRA_DISCOVERY_API_KEY || API_KEY;
   for (const d of discoveries) {
     try {
       const r = await fetch(d + '/register', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: 'ApiKey ' + API_KEY },
+        headers: { 'Content-Type': 'application/json', Authorization: 'ApiKey ' + (d === DISCOVERY ? API_KEY : extraKey) },
         body: JSON.stringify({
           vesselId: VESSEL_ID,
           vesselName: VESSEL_ID,
           version: '0.1.0',
-          endpoint: `http://127.0.0.1:${HEALTH_PORT}`, // NATed loopback — real reachability is the circuit
+          // Facade convention (same as the transport's per-vessel hub mirror):
+          // 127.0.0.1:8401 names the REGISTRY-LOCAL federation-transport facade,
+          // which ingress-resolves by dialing this row's circuit multiaddr. A
+          // discovery that raw-HTTP-forwards to endpoint therefore reaches us on
+          // any substrate; the sidecar's own :8402 loopback is dead everywhere
+          // but this host and made every hub-side pick of this row fail.
+          endpoint: 'http://127.0.0.1:8401',
           shapes,
           resolve_endpoint: '/v2/impulses/resolve',
           resolve_request_format: 'pointer',
@@ -663,6 +680,10 @@ async function register() {
           protocol: 'libp2p',
           libp2p_peer_id: vl.peerId,
           libp2p_multiaddr: circuit ? [circuit] : [],
+          // The vault's state has exactly one owner (this sidecar); replicas and
+          // stale plugin rows must never shadow it. Discovery's policy-aware pick
+          // routes to the single authoritative row when this is present.
+          metadata: { duplicate_policy: 'stateful_data_owner_pin', authoritative: true },
           systemVessel: true,
           shape_descriptions,
           // Explicit TTL comfortably above the 120s re-register cadence: with
