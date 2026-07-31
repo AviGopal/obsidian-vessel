@@ -1940,7 +1940,16 @@ export class GoalDispatchView extends ItemView {
   private async renderFleetDetail(row: HTMLElement, d: Record<string, unknown>): Promise<void> {
     const dispatchId = String(d.dispatchId ?? '');
     const j = await this.goalHostResolve({ type: 'goalWalkState', dispatchId });
-    const body = ((j?.body ?? {}) as Record<string, unknown>);
+    let body = ((j?.body ?? {}) as Record<string, unknown>);
+    // Fallback to replicated trace store for settled rows when walkState resolve fails
+    if (j === null && String(d.status) !== 'running') {
+      const t1 = await this.goalHostResolve({ type: 'activityExecutionTrace', executionId: dispatchId });
+      const t2 = await this.goalHostResolve({ type: 'executionTrace', id: dispatchId });
+      const traceFromArchive = t1?.body ?? t2?.body;
+      if (traceFromArchive && typeof traceFromArchive === 'object') {
+        body = traceFromArchive as Record<string, unknown>;
+      }
+    }
     // Stop the decision tree rebuilding every 7s on an UNCHANGED SETTLED walk (the
     // flicker/reset that loses scroll + expansion when reading a completed row).
     // Value-key the rendered-relevant walk values (never the raw timestamped body);
@@ -1966,6 +1975,12 @@ export class GoalDispatchView extends ItemView {
     if (existing && status !== 'running' && this.sectionUnchanged(`fleetDetail:${dispatchId}`, detailKey)) return;
     existing?.remove();
     const detail = row.createDiv('sub-fleet-detail');
+    
+    // Mark detail as sourced from trace archive when fallback was used
+    const isFromArchive = j === null && String(d.status) !== 'running';
+    if (isFromArchive) {
+      detail.createDiv('trace-archive-marker').setText('(from trace archive)');
+    }
 
     // 1. Reached-led headline (status demoted; failed-but-reached explained).
     this.renderReachHeadline(detail, body, d);
