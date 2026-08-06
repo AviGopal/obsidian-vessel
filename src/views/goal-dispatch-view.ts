@@ -517,6 +517,7 @@ export class GoalDispatchView extends ItemView {
     contentEl.empty();
     contentEl.addClass('obsidian-goal-dispatch-view');
 
+
     // Identity strip: which surface this panel is, at a glance.
     const panelHead = contentEl.createDiv('sub-panel-head');
     panelHead.createSpan({ cls: 'sub-panel-dot' });

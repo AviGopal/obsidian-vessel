@@ -60,10 +60,28 @@ body {
    → one scroll container (event feed + collapsed touch feed)
    ============================================ */
 
+/* ONE scroll region, and it is this element.
+   The panel used to be a fixed-height flex column with no overflow of its own,
+   so every section that could grow had to be given its own scrollbox to stay
+   reachable — fleet, completed, the feed, the why-trail, the evidence body.
+   The result was five independent scroll regions stacked in a parent that could
+   not scroll: the wheel went to whichever box happened to sit under the pointer,
+   and no single gesture moved you through the panel. Scrolling the ROOT removes
+   the need for any of them. */
 .obsidian-goal-dispatch-view {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  /* This element IS Obsidian's .view-content, so the leaf already gives it a
+     height — `height: 100%` fought that (100% of the leaf INCLUDING its header)
+     and left nothing to scroll. Take the height from the flex parent and add
+     `min-height: 0` so the box may actually be smaller than its content, which
+     is the precondition for overflow to scroll at all. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   padding: var(--sub-space-3);
   box-sizing: border-box;
   gap: var(--sub-space-2);
@@ -77,6 +95,13 @@ body {
   display: flex;
   flex-direction: column;
   gap: var(--sub-space-1);
+  /* Sticky rather than a pinned flex row: you can always dispatch without the
+     omnibox needing its own non-scrolling region above a scrolling one. */
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--sub-bg);
+  padding-block: var(--sub-space-2);
 }
 
 .sub-omnibox-input {
@@ -204,8 +229,6 @@ body {
    or push the answer area off-screen. */
 .sub-solicitation-body {
   font-size: var(--sub-font-s);
-  max-height: 18em;
-  overflow-y: auto;
   overflow-x: auto;
 }
 
@@ -504,9 +527,8 @@ body {
 
 /* ── One scroll container: event feed + touch feed ── */
 .sub-scroll {
-  flex: 1;
+  flex: 0 0 auto;
   min-height: 0;
-  overflow-y: auto;
   padding: var(--sub-space-2);
   background: var(--sub-bg-alt);
   border-radius: var(--sub-radius-m);
@@ -1233,8 +1255,6 @@ body {
   display: flex;
   flex-direction: column;
   gap: var(--sub-space-1);
-  max-height: 220px;
-  overflow-y: auto;
   padding: var(--sub-space-1) var(--sub-space-2);
   border-left: 2px solid var(--sub-border);
 }
@@ -1861,7 +1881,7 @@ body {
 .sub-evidence-badge { font-size: var(--font-ui-smaller); padding: 0 4px; }
 .sub-evidence-badge--grounded { color: var(--color-green); }
 .sub-evidence-badge--unverified { color: var(--color-yellow); }
-.sub-evidence-content { max-height: 40vh; overflow: auto; white-space: pre-wrap; word-break: break-word; font-family: var(--font-monospace); font-size: var(--font-ui-smaller); background: var(--background-primary); padding: 6px 8px; border-radius: 4px; margin: 4px 0; }
+.sub-evidence-content { white-space: pre-wrap; word-break: break-word; font-family: var(--font-monospace); font-size: var(--font-ui-smaller); background: var(--background-primary); padding: 6px 8px; border-radius: 4px; margin: 4px 0; }
 .sub-evidence-truncnote { font-size: var(--font-ui-smaller); color: var(--text-faint); font-style: italic; }
 
 /* ── Grade-the-grader panel (reach feedback) ───────────────────────────── */
@@ -1961,8 +1981,8 @@ body {
    way to scroll to them. .sub-fleet-detail was bounded for this reason; the
    fleet and completed lists that CONTAIN it were not, so a few in-flight
    dispatches still buried half the panel. Bound them the same way. */
-.sub-fleet     { max-height: 56vh; overflow-y: auto; overscroll-behavior: contain; }
-.sub-completed { max-height: 26vh; overflow-y: auto; overscroll-behavior: contain; }
+/* No bounds here any more: these were only ever needed because the root could
+   not scroll. Bounding them is what created the nested-scroll confusion. */
 
 /* ── Held-open + frozen rows ────────────────────────────────────────────────
    Two states that exist so the board stops moving under the reader:
