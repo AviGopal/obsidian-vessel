@@ -2010,3 +2010,78 @@ body {
   color: var(--sub-text);
 }
 .sub-completed-filter:focus { outline: none; border-color: var(--sub-accent); }
+
+/* ── Resolved by + path-specific bodies ─────────────────────────────────────
+   The resolution path is the organising fact of a run view: it decides which
+   evidence exists. It sits directly under the verdict, and each path gets its
+   own accent so the kind of run is recognisable before any text is read. */
+.sub-resolvedby {
+  margin: var(--sub-space-2) 0;
+  padding: var(--sub-space-2) var(--sub-space-3);
+  border-left: 3px solid var(--sub-border);
+  border-radius: var(--sub-radius-s);
+  background: var(--sub-bg-alt);
+}
+.sub-resolvedby.is-feature-compose        { border-left-color: var(--sub-info); }
+.sub-resolvedby.is-satisfier              { border-left-color: var(--sub-ok); }
+.sub-resolvedby.is-fresh-derivation       { border-left-color: var(--sub-accent); }
+.sub-resolvedby.is-universal-tool-fallback{ border-left-color: var(--sub-warn); }
+.sub-resolvedby.is-command-reuse          { border-left-color: var(--sub-concept); }
+.sub-resolvedby.is-unknown                { border-left-color: var(--sub-fail); }
+
+.sub-resolvedby-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sub-space-2);
+  flex-wrap: wrap;
+  margin-bottom: 2px;
+}
+.sub-resolvedby-label {
+  font-size: var(--sub-font-s);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--sub-text-muted);
+}
+.sub-resolvedby-name {
+  font-size: var(--sub-font-m);
+  font-weight: 600;
+  color: var(--sub-text);
+}
+.sub-resolvedby-text {
+  font-size: var(--sub-font-m);
+  line-height: 1.55;
+  color: var(--sub-text);
+  max-width: 78ch;
+}
+
+.sub-pathbody {
+  margin: var(--sub-space-2) 0;
+  padding: var(--sub-space-2) var(--sub-space-3);
+  border: 1px solid var(--sub-border);
+  border-radius: var(--sub-radius-m);
+}
+.sub-pathbody-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sub-space-2);
+  margin: var(--sub-space-1) 0;
+  flex-wrap: wrap;
+}
+.sub-pathbody-text {
+  font-size: var(--sub-font-m);
+  line-height: 1.55;
+  max-width: 78ch;
+  margin-top: var(--sub-space-1);
+}
+/* Honest-absence notes: what this path CANNOT show, so a partial view is never
+   mistaken for the whole story. */
+.sub-pathbody-note {
+  font-size: var(--sub-font-s);
+  line-height: 1.5;
+  color: var(--sub-text-faint);
+  font-style: italic;
+  max-width: 78ch;
+  margin-top: var(--sub-space-2);
+}
+.sub-mono { font-family: var(--font-monospace); font-size: var(--sub-font-s); }

@@ -433,6 +433,133 @@ export function failureMeaningSentence(
     : 'What this means: the goal was not reached; no specific reason was recorded.';
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Resolution path — WHICH mechanism resolved this goal.
+//
+// The substrate resolves a goal in five substantively different ways, and they
+// leave different evidence behind. Rendering all five as if they were a
+// shape-graph walk is why a satisfier resolve showed a "decision tree" for
+// something that never executed, and why a landed code edit showed shape-flow
+// chips instead of its commit. The path is therefore the FIRST thing the reader
+// is told, and it decides what the rest of the view shows.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ResolutionPath =
+  | 'feature_compose'
+  | 'command_reuse'
+  | 'satisfier'
+  | 'fresh_derivation'
+  | 'universal_tool_fallback'
+  | 'unknown';
+
+export interface ResolutionVerdict {
+  path: ResolutionPath;
+  /** 'stated' = goal-host classified it; 'inferred' = we worked it out here. */
+  basis: 'stated' | 'inferred';
+  /** What we keyed off, so a wrong label is debuggable rather than mysterious. */
+  evidence: string;
+}
+
+/**
+ * Decide which of the five mechanisms resolved a goal.
+ *
+ * Prefers goal-host's own `executionPath`. Falls back to inference for records
+ * written before that field existed — and the fallback is honest about being a
+ * fallback, because a confidently-wrong label is worse than an admitted guess.
+ */
+export function resolutionPath(
+  body: Record<string, unknown>,
+  d: Record<string, unknown> = {},
+): ResolutionVerdict {
+  const stated = typeof body.executionPath === 'string' ? body.executionPath : '';
+  const VALID: ResolutionPath[] = [
+    'feature_compose', 'command_reuse', 'satisfier', 'fresh_derivation', 'universal_tool_fallback',
+  ];
+  if (VALID.includes(stated as ResolutionPath)) {
+    return { path: stated as ResolutionPath, basis: 'stated', evidence: 'classified by goal-host' };
+  }
+
+  const exec = String(body.executionId ?? d.executionId ?? '');
+  const tid = String(body.selectedTemplateId ?? d.selectedTemplateId ?? '');
+  const steps = Array.isArray(body.steps) ? (body.steps as Array<Record<string, unknown>>) : [];
+  const sourcesOf = (s: Record<string, unknown>): string =>
+    String((s.selected as Record<string, unknown> | undefined)?.source ?? '');
+
+  if (tid === 'feature_compose' || exec.startsWith('feature_compose:')) {
+    return { path: 'feature_compose', basis: 'inferred', evidence: 'the execution id names a feature_compose edit' };
+  }
+  if (exec.startsWith('universal-tool-fallback:') || tid === 'universal-tool-fallback') {
+    return { path: 'universal_tool_fallback', basis: 'inferred', evidence: 'the execution id names the tool-loop floor' };
+  }
+  if (tid.startsWith('satisfier:')) {
+    return { path: 'satisfier', basis: 'inferred', evidence: 'the selected template is a satisfier resolve' };
+  }
+  if (steps.length > 0 && steps.every((s) => sourcesOf(s) === 'satisfier')) {
+    return { path: 'satisfier', basis: 'inferred', evidence: 'every step was a direct vessel resolve' };
+  }
+  if (steps.length > 0) {
+    return { path: 'fresh_derivation', basis: 'inferred', evidence: `${steps.length} walk step${steps.length === 1 ? '' : 's'} were selected` };
+  }
+  const tier = String(body.walkTier ?? '');
+  if (VALID.includes(tier as ResolutionPath)) {
+    return { path: tier as ResolutionPath, basis: 'inferred', evidence: 'from the walk tier' };
+  }
+  return { path: 'unknown', basis: 'inferred', evidence: 'nothing on the record identifies how this ran' };
+}
+
+/**
+ * The outcome of a direct edit, read out of the execution id. goal-host encodes
+ * it there and nowhere structured: `feature_compose:<sha>` when the edit landed,
+ * `feature_compose:rejected:<hash>:<n>` when it was refused.
+ */
+export function featureComposeOutcome(
+  executionId: string,
+): { landed: boolean; sha?: string; rejectedTag?: string } | null {
+  const id = String(executionId || '');
+  if (!id.startsWith('feature_compose:')) return null;
+  const rest = id.slice('feature_compose:'.length);
+  if (rest.startsWith('rejected:')) return { landed: false, rejectedTag: rest.slice('rejected:'.length) };
+  return /^[0-9a-f]{7,40}$/i.test(rest) ? { landed: true, sha: rest } : { landed: false };
+}
+
+/** What this mechanism IS, and what it means that this goal took it. */
+export function resolvedBySentence(v: ResolutionVerdict, body: Record<string, unknown> = {}): string {
+  const steps = Array.isArray(body.steps) ? (body.steps as unknown[]).length : 0;
+  switch (v.path) {
+    case 'feature_compose': {
+      const outcome = featureComposeOutcome(String(body.executionId ?? ''));
+      const tail = outcome?.landed
+        ? ` The edit landed as commit ${outcome.sha!.slice(0, 10)}.`
+        : outcome
+          ? ' The edit was drafted but refused before landing.'
+          : '';
+      return `A direct code edit. The goal named a source file, so it was routed straight to the drafter — it never entered the shape-graph walk, which is why there are no walk steps to show.${tail}`;
+    }
+    case 'command_reuse':
+      return 'Reuse of a command this substrate had already run successfully for a goal like this one, re-aligned to the current inputs rather than re-derived.';
+    case 'satisfier':
+      return 'Answered directly. A connected vessel already produces the shape this goal needed, so it was resolved in place — nothing was selected and nothing executed. There is no decision to inspect because no decision was needed.';
+    case 'fresh_derivation':
+      return `Derived from scratch. No learned pathway covered this goal, so the walk chained backwards over the shape graph, choosing each step by its learned odds${steps ? ` — ${steps} step${steps === 1 ? '' : 's'}, all shown below with the rivals each one beat` : ''}.`;
+    case 'universal_tool_fallback':
+      return 'The tool loop — the execution floor. Nothing in the fleet covered this goal, so it fell back to reason/act/observe over raw tools. This is the guaranteed-parity path, not a learned one: reaching here means the substrate had nothing better.';
+    default:
+      return 'How this goal was resolved was never recorded. That absence is itself worth reporting — it means the run cannot be attributed to any mechanism.';
+  }
+}
+
+/** Short label for the path chip. */
+export function resolvedByLabel(path: ResolutionPath): string {
+  return ({
+    feature_compose: 'direct code edit',
+    command_reuse: 'reused a known command',
+    satisfier: 'answered directly',
+    fresh_derivation: 'derived from scratch',
+    universal_tool_fallback: 'tool loop (floor)',
+    unknown: 'unrecorded',
+  } as Record<ResolutionPath, string>)[path];
+}
+
 /**
  * A human-distinguishable label for a dispatch row.
  *

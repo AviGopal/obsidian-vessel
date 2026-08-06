@@ -67,7 +67,7 @@ import { GoalNoteManager } from '../goals/goal-note-manager';
 import type { PendingSolicitation } from '../solicitations/solicitation-manager';
 import type { UiFeedbackKind } from '../feedback/ui-feedback-store';
 import { sidecarResolveBody, sidecarHttpAuto } from '../sidecar-manager';
-import { posteriorSentence, shadowSentence, poolDeltaSentence, reachCaption, vesselsCaption, peersCaption, gapsCaption, runnersCaption, asOfNote, runningNarrative, whyChosenSentence, failureMeaningSentence, dispositionSentence, verdictDerivation, learningOutcomeSentence, dispatchLabel, dedupeMembers, distinctVessels } from './panel-narrative';
+import { posteriorSentence, shadowSentence, poolDeltaSentence, reachCaption, vesselsCaption, peersCaption, gapsCaption, runnersCaption, asOfNote, runningNarrative, whyChosenSentence, failureMeaningSentence, dispositionSentence, verdictDerivation, learningOutcomeSentence, dispatchLabel, dedupeMembers, distinctVessels, resolutionPath, resolvedBySentence, resolvedByLabel, featureComposeOutcome, type ResolutionPath } from './panel-narrative';
 import { cachedPulseVerdict, refreshPulseVerdict, cachedNextSelection, requestNextSelection } from './panel-aggregates';
 import { selectPresentationArm, peekPresentationArm } from '../presentation/presentation-policy';
 import { attentionGrader } from '../presentation/attention-grader';
@@ -2119,6 +2119,14 @@ export class GoalDispatchView extends ItemView {
     // 1. Reached-led headline (status demoted; failed-but-reached explained).
     this.renderReachHeadline(detail, body, d);
 
+    // 1a. RESOLVED BY — which of the five mechanisms ran. This is the organising
+    // fact of the whole view: it decides which evidence exists at all, so the
+    // reader is told it before being shown anything. Everything below is gated
+    // on it rather than rendered uniformly, which is what used to put a
+    // "decision tree" under a resolve that never executed a step.
+    const resolution = resolutionPath(body, d);
+    this.renderResolvedBy(detail, resolution, body);
+
     // 1b. Self-explanation — the four human questions in plain language, above
     // the technical decision tree: why THIS was chosen, what it means if it
     // failed, and what the substrate will do next. Assembled from the walkLog /
@@ -2135,9 +2143,16 @@ export class GoalDispatchView extends ItemView {
     // reach; the human grades the grader FROM this.
     this.renderEvidenceLedger(detail, body, d);
 
-    // 3. Decision tree when steps are present; otherwise degrade gracefully.
+    // 3. The path-specific body — exactly ONE of these, chosen by how the goal
+    // was actually resolved. A decision tree only describes a shape-graph walk;
+    // showing it for a direct edit or a satisfier resolve invents deliberation
+    // that never happened.
     const steps = Array.isArray(body.steps) ? (body.steps as WalkStep[]) : [];
-    if (steps.length > 0) {
+    if (resolution.path === 'feature_compose') {
+      this.renderEditBody(detail, body, d);
+    } else if (resolution.path === 'satisfier') {
+      this.renderSatisfierBody(detail, body, steps);
+    } else if (steps.length > 0) {
       const producers = new Map<string, string>();
         for (const ev of (Array.isArray(body.poolEvents) ? body.poolEvents : []) as Array<{ shape: string; source: string }>) {
           if (ev && ev.shape && ev.source && !producers.has(ev.shape)) producers.set(ev.shape, ev.source);
@@ -2815,6 +2830,93 @@ export class GoalDispatchView extends ItemView {
    * written, gap filed: <id>". Gap ids wikilink only when a note exists
    * (materialize-or-omit — never a dead link).
    */
+  /**
+   * "Resolved by" — names which of the five mechanisms ran, in prose, and says
+   * what taking that path means. Rendered directly under the verdict because it
+   * tells the reader which evidence to expect below (and which not to look for).
+   */
+  private renderResolvedBy(
+    parent: HTMLElement,
+    resolution: { path: ResolutionPath; basis: 'stated' | 'inferred'; evidence: string },
+    body: Record<string, unknown>,
+  ): void {
+    const wrap = parent.createDiv(`sub-resolvedby is-${resolution.path.replace(/_/g, '-')}`);
+    const head = wrap.createDiv('sub-resolvedby-head');
+    head.createSpan({ cls: 'sub-resolvedby-label', text: 'Resolved by' });
+    head.createSpan({ cls: 'sub-resolvedby-name', text: resolvedByLabel(resolution.path) });
+    if (resolution.basis === 'inferred') {
+      // Never present a guess as a fact: an unattributed run is a finding.
+      head.createSpan({
+        cls: 'sub-chip sub-chip--warn',
+        text: 'inferred',
+        attr: { title: `goal-host did not record how this ran. Worked out here from: ${resolution.evidence}.` },
+      });
+    }
+    wrap.createDiv({ cls: 'sub-resolvedby-text', text: resolvedBySentence(resolution, body) });
+  }
+
+  /**
+   * Direct-edit body: what the drafter actually did to the tree. The diff is not
+   * on the record, so we show what IS there — the commit, whether it landed, and
+   * the verifier's own words — and say plainly that the diff is not available
+   * rather than implying this is the whole story.
+   */
+  private renderEditBody(parent: HTMLElement, body: Record<string, unknown>, d: Record<string, unknown>): void {
+    const wrap = parent.createDiv('sub-pathbody sub-pathbody--edit');
+    wrap.createDiv({ cls: 'sub-section-header', text: 'The edit' });
+    const outcome = featureComposeOutcome(String(body.executionId ?? d.executionId ?? ''));
+    const row = wrap.createDiv('sub-pathbody-row');
+    if (outcome?.landed && outcome.sha) {
+      row.createSpan({ cls: 'sub-chip sub-chip--ok', text: 'landed' });
+      row.createSpan({ cls: 'sub-mono', text: outcome.sha.slice(0, 12), attr: { title: `commit ${outcome.sha}` } });
+    } else if (outcome) {
+      row.createSpan({ cls: 'sub-chip sub-chip--warn', text: 'not landed' });
+      if (outcome.rejectedTag) {
+        row.createSpan({ cls: 'sub-mono', text: outcome.rejectedTag, attr: { title: 'the drafter refused or the verify gate rejected this edit' } });
+      }
+    } else {
+      row.createSpan({ cls: 'sub-chip sub-chip--warn', text: 'outcome not recorded' });
+    }
+    const reason = typeof body.goalReachReason === 'string' ? body.goalReachReason : '';
+    if (reason) wrap.createDiv({ cls: 'sub-pathbody-text', text: reason });
+    wrap.createDiv({
+      cls: 'sub-pathbody-note',
+      text: 'The diff itself is not carried on the dispatch record, so it cannot be shown here — read the commit to see what changed.',
+    });
+  }
+
+  /**
+   * Satisfier body: there is no deliberation to show. Say which shape a
+   * connected vessel answered with, and say explicitly that nothing ran, rather
+   * than rendering an empty tree that implies a choice was made.
+   */
+  private renderSatisfierBody(parent: HTMLElement, body: Record<string, unknown>, steps: WalkStep[]): void {
+    const wrap = parent.createDiv('sub-pathbody sub-pathbody--satisfier');
+    wrap.createDiv({ cls: 'sub-section-header', text: 'What answered it' });
+    const pool = (Array.isArray(body.poolShapes) ? body.poolShapes : []) as string[];
+    const shapes = steps
+      .map((s) => String((s.selected as { templateId?: string } | undefined)?.templateId ?? ''))
+      .filter((t) => t.startsWith('satisfier:'))
+      .map((t) => t.slice('satisfier:'.length));
+    const named = shapes.length ? shapes : pool;
+    if (named.length) {
+      const chips = wrap.createDiv('sub-fleet-chips');
+      for (const sh of named) chips.createSpan({ cls: 'sub-chip sub-chip--ok', text: sh, attr: { title: sh } });
+    }
+    const rationale = steps
+      .map((s) => String((s as { rationale?: unknown }).rationale ?? ''))
+      .find((r) => r.length > 0);
+    wrap.createDiv({
+      cls: 'sub-pathbody-text',
+      text: rationale
+        || 'A connected vessel already produces this shape, so it was resolved in place. No activity was selected and no step executed.',
+    });
+    wrap.createDiv({
+      cls: 'sub-pathbody-note',
+      text: 'Which vessel served the resolve is not recorded, so on a federated fleet you cannot tell a local answer from a peer’s from here.',
+    });
+  }
+
   /**
    * "How this verdict was reached" — the ordered audit chain (asked for → ran →
    * produced → judged by → therefore). Rendered for every settled walk so that a
