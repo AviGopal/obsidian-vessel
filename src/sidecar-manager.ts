@@ -52,6 +52,13 @@ export class SidecarManager {
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
   private logger: NonNullable<SidecarManagerOptions['logger']>;
   private activeSidecarPort: number;
+  /**
+   * PID of the DAEMONISED sidecar (POSIX). It is not our child — see
+   * spawnChild — so it has no ChildProcess handle and is supervised by
+   * liveness polling instead of an 'exit' event.
+   */
+  private daemonPid: number | null = null;
+  private livenessTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(settings: ObsidianVesselSettings, opts: SidecarManagerOptions) {
     this.settings = settings;
@@ -101,6 +108,17 @@ export class SidecarManager {
       clearTimeout(this.restartTimer);
       this.restartTimer = null;
     }
+    this.stopLivenessPoll();
+    // The daemonised sidecar is init's child, not ours, so stop it by pid.
+    // Nothing can zombie here: init reaps it.
+    const pid = this.daemonPid;
+    this.daemonPid = null;
+    if (pid !== null) {
+      try { process.kill(pid, 'SIGTERM'); } catch { /* already gone */ }
+      setTimeout(() => {
+        try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
+      }, 5000);
+    }
     const child = this.child;
     this.child = null;
     if (child) {
@@ -120,6 +138,9 @@ export class SidecarManager {
   }
 
   isRunning(): boolean {
+    if (this.daemonPid !== null) {
+      try { process.kill(this.daemonPid, 0); return true; } catch { return false; }
+    }
     return this.child != null;
   }
 
@@ -347,7 +368,10 @@ export class SidecarManager {
       if (stalePid > 1 && stalePid !== process.pid) {
         try {
           process.kill(stalePid, 'SIGKILL');
-          this.logger('info', `reaped prior sidecar (pid ${stalePid}) before respawn`);
+          // Safe from zombies only because the sidecar is daemonised: the
+          // process we signal is init's child, and init waits on it. Killing
+          // a process THIS renderer parented would leave it <defunct>.
+          this.logger('info', `stopped prior sidecar (pid ${stalePid}) before respawn`);
           await new Promise(r => setTimeout(r, 300));
         } catch { /* already gone, or not ours to kill */ }
       }
@@ -382,14 +406,64 @@ export class SidecarManager {
 
     this.logger('info', `spawning sidecar: ${bunPath} ${scriptPath} (cwd=${sidecarDir})`);
 
+    // ── Why the sidecar is DAEMONISED and not a child ────────────────────────
+    // The sidecar deliberately outlives a plugin/window reload so the conduit
+    // survives it. But a reload destroys the JS context, and with it the
+    // ChildProcess handle that is the only thing able to waitpid() the child.
+    // The next load then SIGKILLs the old pid and calls that a "reap" — it is
+    // not: killing a process you parented but cannot wait on leaves it
+    // <defunct> forever. Obsidian's renderer is long-lived (days), so one
+    // zombie accumulated per reload, unbounded.
+    //
+    // Double-fork instead: `sh` backgrounds the sidecar and exits immediately,
+    // so the sidecar is reparented to init, which reaps it. `sh` itself IS a
+    // real child, but it is short-lived and its handle outlives it, so Node
+    // reaps that normally. `echo $!` hands back the true sidecar pid, so we
+    // still know what to stop later without the sidecar having to report it.
+    const logPath = path.join(sidecarDir, 'sidecar.log');
+    const posix = process.platform !== 'win32';
+
     let child: ChildProcessWithoutNullStreams;
     try {
-      child = spawn(bunPath, [scriptPath], { cwd: sidecarDir, env, stdio: 'pipe' });
+      child = posix
+        ? spawn('sh', ['-c', '"$0" "$1" >>"$2" 2>&1 & echo $!', bunPath, scriptPath, logPath],
+            { cwd: sidecarDir, env, stdio: 'pipe' })
+        // Windows has no zombie reaping to worry about; keep the direct spawn.
+        : spawn(bunPath, [scriptPath], { cwd: sidecarDir, env, stdio: 'pipe' });
     } catch (err) {
       this.logger('error', `failed to spawn sidecar: ${err instanceof Error ? err.message : String(err)}`);
       this.scheduleRestart();
       return;
     }
+
+    if (posix) {
+      // Stdout carries one line: the backgrounded sidecar's pid.
+      let pidOut = '';
+      child.stdout?.on('data', (chunk: Buffer) => {
+        pidOut += chunk.toString();
+        const pid = parseInt(pidOut.trim(), 10);
+        if (Number.isFinite(pid) && pid > 1 && this.daemonPid === null) {
+          this.daemonPid = pid;
+          try { fs.writeFileSync(path.join(sidecarDir, 'sidecar.pid'), String(pid)); } catch { /* best effort */ }
+          this.logger('info', `sidecar daemonised (pid ${pid}, reparented to init) — logging to ${logPath}`);
+          this.startLivenessPoll();
+        }
+      });
+      child.stderr?.on('data', (chunk: Buffer) => this.logger('warn', chunk.toString().trimEnd()));
+      child.on('error', (err) => this.logger('error', `sidecar launcher error: ${err.message}`));
+      // `sh` exits immediately; that is success, not a crash. Only treat it as
+      // a failure if it never handed back a pid.
+      child.on('exit', (code) => {
+        if (this.stopped) return;
+        if (this.daemonPid === null) {
+          this.logger('error', `sidecar launcher exited (code=${code}) without reporting a pid — retrying`);
+          this.scheduleRestart();
+        }
+      });
+      setTimeout(() => { if (!this.stopped && this.daemonPid !== null) this.restartAttempt = 0; }, 60_000);
+      return;
+    }
+
     this.child = child;
     try { fs.writeFileSync(path.join(sidecarDir, 'sidecar.pid'), String(child.pid)); } catch { /* best effort */ }
 
@@ -415,6 +489,33 @@ export class SidecarManager {
       this.logger('error', `sidecar process error: ${err.message}`);
     });
     setTimeout(() => { if (this.child === child && !this.stopped) this.restartAttempt = 0; }, 60_000);
+  }
+
+  /**
+   * Supervision for the daemonised sidecar. A reparented process fires no
+   * 'exit' event here, so liveness is probed directly: signal 0 tests for
+   * existence without delivering anything. If it has gone and we did not ask
+   * it to, restart on the same backoff the child path used.
+   */
+  private startLivenessPoll(): void {
+    if (this.livenessTimer) clearInterval(this.livenessTimer);
+    this.livenessTimer = setInterval(() => {
+      if (this.stopped || this.daemonPid === null) return;
+      let alive = true;
+      try { process.kill(this.daemonPid, 0); } catch { alive = false; }
+      if (alive) return;
+      this.logger('warn', `sidecar (pid ${this.daemonPid}) is gone — restarting`);
+      this.daemonPid = null;
+      this.stopLivenessPoll();
+      this.scheduleRestart();
+    }, 5000);
+  }
+
+  private stopLivenessPoll(): void {
+    if (this.livenessTimer) {
+      clearInterval(this.livenessTimer);
+      this.livenessTimer = null;
+    }
   }
 
   private scheduleRestart(): void {
