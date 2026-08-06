@@ -136,3 +136,46 @@ describe('learningOutcomeSentence', () => {
     expect(learningOutcomeSentence(null)).toContain('Nothing was recorded');
   });
 });
+
+describe('hollow passes are named, not narrated as success', () => {
+  const hollowGreen = (): Record<string, unknown> => ({
+    status: 'completed',
+    reached: true,
+    poolShapes: [], poolProvenance: [], steps: [],
+    walkLog: ['[goal-host-vessel] goal-reach(/run-goal) attempt 1/1: REACHED (declarative)'],
+    currentStep: '',
+    learning: { alphaBetaDelta: [], gapsFiled: [], oracleLabelWritten: false },
+  });
+
+  test('a REACHED gate over an empty pool is reported as a hollow pass', () => {
+    const chain = verdictDerivation(hollowGreen(), {});
+    const therefore = chain.find((s) => s.label === 'Therefore')!;
+    expect(therefore.text).toContain('hollow pass');
+    // Must NOT claim the gate verified anything — there was nothing to verify.
+    expect(therefore.text).not.toContain('found everything the goal declared it needed');
+    // And it must read as a problem, not a success.
+    expect(therefore.tone).toBe('bad');
+  });
+
+  test('a genuine reach with produced output still reads as a success', () => {
+    const chain = verdictDerivation({
+      status: 'completed', reached: true,
+      poolShapes: ['fileEditResult'], poolProvenance: [{ shape: 'fileEditResult', chars: 10 }],
+      steps: [{ index: 0 }],
+      walkLog: ['[goal-host-vessel] goal-reach(/run-goal) attempt 1/1: REACHED (declarative)'],
+      currentStep: '',
+    }, {});
+    const therefore = chain.find((s) => s.label === 'Therefore')!;
+    expect(therefore.tone).toBe('ok');
+    expect(therefore.text).toContain('found everything');
+  });
+
+  test('a reach with no gate decision AND no output is also called hollow', () => {
+    const chain = verdictDerivation({
+      status: 'completed', reached: true, poolShapes: [], steps: [], walkLog: [], currentStep: '',
+    }, {});
+    const therefore = chain.find((s) => s.label === 'Therefore')!;
+    expect(therefore.text).toContain('hollow pass');
+    expect(therefore.tone).toBe('bad');
+  });
+});

@@ -551,8 +551,18 @@ export function resolvedBySentence(v: ResolutionVerdict, body: Record<string, un
         : ` The goal named a source file, so it was routed to the drafter; ${editSteps} walk step${editSteps === 1 ? '' : 's'} were also recorded for this dispatch.`;
       return `A direct code edit.${routing}${tail}`;
     }
-    case 'learned_pathway':
-      return 'Reuse of a pathway this substrate had already learned — a composition, or a command it had run successfully for a goal like this one, re-aligned to the current inputs rather than re-derived. This is the outcome the learning loop exists to produce.';
+    case 'learned_pathway': {
+      const base = 'Reuse of a pathway this substrate had already learned — it reached on its first attempt with a template it already knew, rather than deriving one.';
+      // The label is earned by "reached first try with a known template", which
+      // a run that executed nothing can also satisfy. Say so rather than
+      // presenting an empty run as the learning loop working.
+      const nothing = steps === 0
+        && !(typeof body.answerBody === 'string' && body.answerBody.trim())
+        && (Array.isArray(body.poolShapes) ? body.poolShapes.length : 0) === 0;
+      return nothing
+        ? `${base} Note that this run recorded no steps and produced nothing, so "reuse" here means only that the gate passed it first time — not that a pathway did any work.`
+        : base;
+    }
     case 'satisfier':
       return steps === 0
         ? 'Answered directly. A connected vessel already produces the shape this goal needed, so it was resolved in place — nothing was selected and nothing executed. There is no decision to inspect because no decision was needed.'
@@ -773,6 +783,17 @@ export function verdictDerivation(
       text: `${modePhrase}.${missPhrase}${attemptPhrase}`,
       tone: gate.outcome === 'REACHED' ? 'ok' : 'warn',
     });
+    const producedNothing = !answer && prov.length === 0 && pool.length === 0;
+    if (gate.outcome === 'REACHED' && producedNothing) {
+      // A pass over an empty pool is the substrate's own known failure mode.
+      // Narrating it as success is how a hollow green survives review.
+      out.push({
+        label: 'Therefore',
+        text: 'The gate returned REACHED — but nothing ran and nothing was produced, so there was no output for it to have checked. This is a hollow pass: the verdict says done over an empty result. Treat it as suspect, and if you agree it is wrong, your grade below is what corrects it.',
+        tone: 'bad',
+      });
+      return out;
+    }
     out.push({
       label: 'Therefore',
       text: gate.outcome === 'REACHED'
@@ -794,12 +815,14 @@ export function verdictDerivation(
   const reason = typeof body.goalReachReason === 'string' ? body.goalReachReason : '';
   out.push({
     label: 'Therefore',
-    text: reached === true
+    text: reached === true && !answer && prov.length === 0 && pool.length === 0
+      ? `The verdict is reached, but nothing ran and nothing was produced — a hollow pass over an empty result${reason ? `. The recorded reason was: ${reason}.` : ', with no gate decision recorded to explain it.'}`
+      : reached === true
       ? `The verdict is reached${reason ? ` — ${reason}.` : ', though no explicit gate decision was recorded for it.'}`
       : reached === false
         ? `The verdict is not reached${reason ? ` — ${reason}.` : ', but no gate decision was recorded explaining which rule failed. That missing record is itself worth flagging.'}`
         : 'No verdict was recorded for this walk at all — it settled without the reach gate ever running.',
-    tone: reached === true ? 'ok' : 'bad',
+    tone: reached === true && (answer || prov.length > 0 || pool.length > 0) ? 'ok' : 'bad',
   });
   return out;
 }
