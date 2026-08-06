@@ -444,9 +444,15 @@ export function failureMeaningSentence(
 // is told, and it decides what the rest of the view shows.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// These are goal-host's OWN five values (its WalkTier union) plus 'unknown'.
+// They must match exactly: a value the panel does not know is a value it
+// silently relabels. `command_reuse` is deliberately NOT a member — goal-host
+// classifies a reused command as `learned_pathway`, and inventing a sixth name
+// here is what caused a stated learned_pathway run to be relabelled "derived
+// from scratch".
 export type ResolutionPath =
   | 'feature_compose'
-  | 'command_reuse'
+  | 'learned_pathway'
   | 'satisfier'
   | 'fresh_derivation'
   | 'universal_tool_fallback'
@@ -473,7 +479,7 @@ export function resolutionPath(
 ): ResolutionVerdict {
   const stated = typeof body.executionPath === 'string' ? body.executionPath : '';
   const VALID: ResolutionPath[] = [
-    'feature_compose', 'command_reuse', 'satisfier', 'fresh_derivation', 'universal_tool_fallback',
+    'feature_compose', 'learned_pathway', 'satisfier', 'fresh_derivation', 'universal_tool_fallback',
   ];
   if (VALID.includes(stated as ResolutionPath)) {
     return { path: stated as ResolutionPath, basis: 'stated', evidence: 'classified by goal-host' };
@@ -491,14 +497,20 @@ export function resolutionPath(
   if (exec.startsWith('universal-tool-fallback:') || tid === 'universal-tool-fallback') {
     return { path: 'universal_tool_fallback', basis: 'inferred', evidence: 'the execution id names the tool-loop floor' };
   }
-  if (tid.startsWith('satisfier:')) {
-    return { path: 'satisfier', basis: 'inferred', evidence: 'the selected template is a satisfier resolve' };
-  }
-  if (steps.length > 0 && steps.every((s) => sourcesOf(s) === 'satisfier')) {
+  // A walk that merely ENDS on a satisfier is still a walk: its earlier steps
+  // were deliberated and that deliberation is the evidence. Only a run whose
+  // every step was a direct resolve (or which took no steps at all) is a
+  // satisfier — otherwise a multi-step Thompson walk would be relabelled and
+  // lose its entire decision tree.
+  const allSatisfier = steps.length > 0 && steps.every((s) => sourcesOf(s) === 'satisfier');
+  if (allSatisfier) {
     return { path: 'satisfier', basis: 'inferred', evidence: 'every step was a direct vessel resolve' };
   }
   if (steps.length > 0) {
     return { path: 'fresh_derivation', basis: 'inferred', evidence: `${steps.length} walk step${steps.length === 1 ? '' : 's'} were selected` };
+  }
+  if (tid.startsWith('satisfier:')) {
+    return { path: 'satisfier', basis: 'inferred', evidence: 'the selected template is a satisfier resolve and no walk steps were recorded' };
   }
   const tier = String(body.walkTier ?? '');
   if (VALID.includes(tier as ResolutionPath)) {
@@ -533,12 +545,18 @@ export function resolvedBySentence(v: ResolutionVerdict, body: Record<string, un
         : outcome
           ? ' The edit was drafted but refused before landing.'
           : '';
-      return `A direct code edit. The goal named a source file, so it was routed straight to the drafter — it never entered the shape-graph walk, which is why there are no walk steps to show.${tail}`;
+      const editSteps = Array.isArray(body.steps) ? (body.steps as unknown[]).length : 0;
+      const routing = editSteps === 0
+        ? ' It was routed straight to the drafter before any walk, which is why there are no walk steps to show.'
+        : ` The goal named a source file, so it was routed to the drafter; ${editSteps} walk step${editSteps === 1 ? '' : 's'} were also recorded for this dispatch.`;
+      return `A direct code edit.${routing}${tail}`;
     }
-    case 'command_reuse':
-      return 'Reuse of a command this substrate had already run successfully for a goal like this one, re-aligned to the current inputs rather than re-derived.';
+    case 'learned_pathway':
+      return 'Reuse of a pathway this substrate had already learned — a composition, or a command it had run successfully for a goal like this one, re-aligned to the current inputs rather than re-derived. This is the outcome the learning loop exists to produce.';
     case 'satisfier':
-      return 'Answered directly. A connected vessel already produces the shape this goal needed, so it was resolved in place — nothing was selected and nothing executed. There is no decision to inspect because no decision was needed.';
+      return steps === 0
+        ? 'Answered directly. A connected vessel already produces the shape this goal needed, so it was resolved in place — nothing was selected and nothing executed. There is no decision to inspect because no decision was needed.'
+        : `Answered directly. Every one of the ${steps} recorded step${steps === 1 ? '' : 's'} was a connected vessel resolving a shape it already produces, so no activity had to be chosen between rivals.`;
     case 'fresh_derivation':
       return `Derived from scratch. No learned pathway covered this goal, so the walk chained backwards over the shape graph, choosing each step by its learned odds${steps ? ` — ${steps} step${steps === 1 ? '' : 's'}, all shown below with the rivals each one beat` : ''}.`;
     case 'universal_tool_fallback':
@@ -552,7 +570,7 @@ export function resolvedBySentence(v: ResolutionVerdict, body: Record<string, un
 export function resolvedByLabel(path: ResolutionPath): string {
   return ({
     feature_compose: 'direct code edit',
-    command_reuse: 'reused a known command',
+    learned_pathway: 'reused a learned pathway',
     satisfier: 'answered directly',
     fresh_derivation: 'derived from scratch',
     universal_tool_fallback: 'tool loop (floor)',

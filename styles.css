@@ -2026,7 +2026,7 @@ body {
 .sub-resolvedby.is-satisfier              { border-left-color: var(--sub-ok); }
 .sub-resolvedby.is-fresh-derivation       { border-left-color: var(--sub-accent); }
 .sub-resolvedby.is-universal-tool-fallback{ border-left-color: var(--sub-warn); }
-.sub-resolvedby.is-command-reuse          { border-left-color: var(--sub-concept); }
+.sub-resolvedby.is-learned-pathway        { border-left-color: var(--sub-concept); }
 .sub-resolvedby.is-unknown                { border-left-color: var(--sub-fail); }
 
 .sub-resolvedby-head {

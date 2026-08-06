@@ -62,6 +62,16 @@ describe('resolutionPath', () => {
     expect(v.evidence).toContain('2 walk steps');
   });
 
+  test('recognises goal-host\'s learned_pathway instead of relabelling it', () => {
+    // Regression: the panel's vocabulary omitted learned_pathway entirely, so a
+    // run goal-host had explicitly classified fell through to inference and was
+    // confidently reported as "derived from scratch" — the exact opposite claim.
+    const v = resolutionPath({ executionPath: 'learned_pathway', steps: [{}, {}] });
+    expect(v.path).toBe('learned_pathway');
+    expect(v.basis).toBe('stated');
+    expect(resolvedByLabel(v.path)).toContain('learned');
+  });
+
   test('an unattributable run says so instead of guessing', () => {
     const v = resolutionPath({ steps: [], poolShapes: [] });
     expect(v.path).toBe('unknown');
@@ -89,13 +99,33 @@ describe('featureComposeOutcome', () => {
 });
 
 describe('resolvedBySentence', () => {
-  test('a direct edit names its commit and says why there are no walk steps', () => {
+  test('a direct edit names its commit and explains the absence of walk steps', () => {
     const s = resolvedBySentence(
       { path: 'feature_compose', basis: 'stated', evidence: '' },
       { executionId: 'feature_compose:3611665cd8523d6a01d5ddf1b43e90c3a81a6a7a' },
     );
-    expect(s).toContain('never entered the shape-graph walk');
+    expect(s).toContain('before any walk');
     expect(s).toContain('3611665cd8');
+  });
+
+  test('a direct edit does NOT claim there were no walk steps when there were', () => {
+    // The prose used to assert "it never entered the shape-graph walk" flatly.
+    // If steps exist that is a false statement made to the reader's face.
+    const s = resolvedBySentence(
+      { path: 'feature_compose', basis: 'stated', evidence: '' },
+      { executionId: 'feature_compose:rejected:aa:1', steps: [{}, {}] },
+    );
+    expect(s).not.toContain('no walk steps');
+    expect(s).toContain('2 walk steps were also recorded');
+  });
+
+  test('a satisfier with recorded steps does not claim nothing executed', () => {
+    const s = resolvedBySentence(
+      { path: 'satisfier', basis: 'stated', evidence: '' },
+      { steps: [{}] },
+    );
+    expect(s).not.toContain('nothing executed');
+    expect(s).toContain('1 recorded step');
   });
 
   test('a satisfier explains that no decision existed to inspect', () => {
@@ -110,7 +140,7 @@ describe('resolvedBySentence', () => {
   });
 
   test('every path has a label', () => {
-    for (const p of ['feature_compose', 'command_reuse', 'satisfier', 'fresh_derivation', 'universal_tool_fallback', 'unknown'] as const) {
+    for (const p of ['feature_compose', 'learned_pathway', 'satisfier', 'fresh_derivation', 'universal_tool_fallback', 'unknown'] as const) {
       expect(resolvedByLabel(p).length).toBeGreaterThan(0);
     }
   });

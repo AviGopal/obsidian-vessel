@@ -2125,7 +2125,14 @@ export class GoalDispatchView extends ItemView {
     // on it rather than rendered uniformly, which is what used to put a
     // "decision tree" under a resolve that never executed a step.
     const resolution = resolutionPath(body, d);
-    this.renderResolvedBy(detail, resolution, body);
+    // A dispatch still in flight has not resolved yet, so "how was this
+    // resolved" has no answer — reporting it as `unrecorded` would flag every
+    // running row as a defect. Show it once the run settles, or earlier if the
+    // path is already determinable.
+    const isRunning = String(body.status ?? d.status ?? '') === 'running';
+    if (!isRunning || resolution.path !== 'unknown') {
+      this.renderResolvedBy(detail, resolution, body, isRunning);
+    }
 
     // 1b. Self-explanation — the four human questions in plain language, above
     // the technical decision tree: why THIS was chosen, what it means if it
@@ -2839,10 +2846,11 @@ export class GoalDispatchView extends ItemView {
     parent: HTMLElement,
     resolution: { path: ResolutionPath; basis: 'stated' | 'inferred'; evidence: string },
     body: Record<string, unknown>,
+    isRunning = false,
   ): void {
     const wrap = parent.createDiv(`sub-resolvedby is-${resolution.path.replace(/_/g, '-')}`);
     const head = wrap.createDiv('sub-resolvedby-head');
-    head.createSpan({ cls: 'sub-resolvedby-label', text: 'Resolved by' });
+    head.createSpan({ cls: 'sub-resolvedby-label', text: isRunning ? 'Resolving by' : 'Resolved by' });
     head.createSpan({ cls: 'sub-resolvedby-name', text: resolvedByLabel(resolution.path) });
     if (resolution.basis === 'inferred') {
       // Never present a guess as a fact: an unattributed run is a finding.
@@ -2881,7 +2889,9 @@ export class GoalDispatchView extends ItemView {
     if (reason) wrap.createDiv({ cls: 'sub-pathbody-text', text: reason });
     wrap.createDiv({
       cls: 'sub-pathbody-note',
-      text: 'The diff itself is not carried on the dispatch record, so it cannot be shown here — read the commit to see what changed.',
+      text: outcome?.landed
+        ? 'The diff itself is not carried on the dispatch record, so it cannot be shown here — read the commit to see what changed.'
+        : 'The diff is not carried on the dispatch record, and nothing was committed, so there is no artefact to read: what the drafter proposed was not retained anywhere.',
     });
   }
 
@@ -2903,14 +2913,21 @@ export class GoalDispatchView extends ItemView {
       const chips = wrap.createDiv('sub-fleet-chips');
       for (const sh of named) chips.createSpan({ cls: 'sub-chip sub-chip--ok', text: sh, attr: { title: sh } });
     }
-    const rationale = steps
-      .map((s) => String((s as { rationale?: unknown }).rationale ?? ''))
-      .find((r) => r.length > 0);
-    wrap.createDiv({
-      cls: 'sub-pathbody-text',
-      text: rationale
-        || 'A connected vessel already produces this shape, so it was resolved in place. No activity was selected and no step executed.',
-    });
+    // Show EVERY recorded resolve, not just the first. Gating the decision tree
+    // off for this path must not silently drop evidence that does exist — a
+    // satisfier run is usually a single resolve, but if it ever carries several
+    // the reader still sees all of them.
+    const rationales = steps
+      .map((s) => String((s as { rationale?: unknown }).rationale ?? '').trim())
+      .filter((r) => r.length > 0);
+    if (rationales.length > 0) {
+      for (const r of rationales) wrap.createDiv({ cls: 'sub-pathbody-text', text: r });
+    } else {
+      wrap.createDiv({
+        cls: 'sub-pathbody-text',
+        text: 'A connected vessel already produces this shape, so it was resolved in place. No activity was selected and no step executed.',
+      });
+    }
     wrap.createDiv({
       cls: 'sub-pathbody-note',
       text: 'Which vessel served the resolve is not recorded, so on a federated fleet you cannot tell a local answer from a peer’s from here.',
