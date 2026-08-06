@@ -1805,9 +1805,15 @@ body {
    sections overflow the non-scrolling root — reading as feed lines "cascading"
    on top of each other. Bound the tree so it scrolls within its own box and the
    feed keeps its space. */
+/* The fleet SECTION now carries the bound and the scroll (see the
+   reachability rules at the end of this file), so the detail must not scroll
+   too: nesting a scroll region inside a scroll region is what makes the wheel
+   land in whichever box happens to be under the pointer, and it is a large
+   part of why reading an expanded walk felt like the page was fighting back.
+   One scroll region per surface. */
 .sub-fleet-detail {
-  max-height: 42vh;
-  overflow-y: auto;
+  max-height: none;
+  overflow-y: visible;
 }
 /* Block-markdown answers must TOP-align, not baseline: a multi-block markdown
    answer in a baseline-aligned flex row under-computes its cross-size and
@@ -1868,3 +1874,139 @@ body {
 .sub-grade-notes--need { border-color: var(--color-red); }
 .sub-grade-btns { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .sub-verdict-confirm { font-size: var(--font-ui-smaller); color: var(--text-muted); }
+
+/* ── Verdict derivation, learning outcome, provenance ───────────────────────
+   The audit surface: how a walk got from "what was asked for" to "reached /
+   not reached". These read as prose, so they are set at reading width and
+   left-labelled rather than tabulated — a human is meant to read them, not
+   scan them. The tone modifiers mark the link where the verdict was actually
+   decided, so the eye lands on the deciding step rather than the last one. */
+.sub-derivation {
+  margin: var(--sub-space-2) 0;
+  padding: var(--sub-space-2) var(--sub-space-3);
+  border: 1px solid var(--sub-border);
+  border-radius: var(--sub-radius-m);
+  background: var(--sub-bg-alt);
+}
+.sub-derivation-header {
+  font-size: var(--sub-font-s);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--sub-text-muted);
+  margin-bottom: var(--sub-space-2);
+}
+.sub-derivation-row {
+  display: grid;
+  grid-template-columns: minmax(88px, 108px) 1fr;
+  gap: var(--sub-space-2);
+  align-items: baseline;
+  padding: 3px 0 3px var(--sub-space-2);
+  border-left: 2px solid transparent;
+}
+.sub-derivation-row.is-ok   { border-left-color: var(--sub-ok); }
+.sub-derivation-row.is-warn { border-left-color: var(--sub-warn); }
+.sub-derivation-row.is-bad  { border-left-color: var(--sub-fail); }
+.sub-derivation-label {
+  font-size: var(--sub-font-s);
+  font-weight: 600;
+  color: var(--sub-text-muted);
+}
+.sub-derivation-text {
+  font-size: var(--sub-font-m);
+  line-height: 1.55;
+  color: var(--sub-text);
+  max-width: 78ch;
+  overflow-wrap: anywhere;
+}
+
+.sub-learning-outcome {
+  display: grid;
+  grid-template-columns: minmax(88px, 108px) 1fr;
+  gap: var(--sub-space-2);
+  align-items: baseline;
+  margin: var(--sub-space-2) 0;
+  padding: var(--sub-space-2) var(--sub-space-3);
+  border-radius: var(--sub-radius-m);
+  background: var(--sub-bg-hover);
+}
+.sub-learning-outcome-text {
+  font-size: var(--sub-font-m);
+  line-height: 1.55;
+  max-width: 78ch;
+}
+
+.sub-grade-why {
+  font-size: var(--sub-font-s);
+  line-height: 1.5;
+  color: var(--sub-text-muted);
+  max-width: 78ch;
+  margin-bottom: var(--sub-space-2);
+}
+
+.sub-provenance {
+  font-size: var(--sub-font-s);
+  line-height: 1.5;
+  color: var(--sub-text-muted);
+  font-style: italic;
+  margin-bottom: var(--sub-space-2);
+  max-width: 78ch;
+}
+.sub-provenance--missing { color: var(--sub-warn); font-style: normal; }
+
+/* ── Reachability: bound the shrink-0 growers ───────────────────────────────
+   The panel root is a fixed-height flex column with no overflow of its own, so
+   any shrink-0 section that grows without bound pushes every later section
+   (group, gaps, projects, inspect, and the event feed) off the bottom with no
+   way to scroll to them. .sub-fleet-detail was bounded for this reason; the
+   fleet and completed lists that CONTAIN it were not, so a few in-flight
+   dispatches still buried half the panel. Bound them the same way. */
+.sub-fleet     { max-height: 56vh; overflow-y: auto; overscroll-behavior: contain; }
+.sub-completed { max-height: 26vh; overflow-y: auto; overscroll-behavior: contain; }
+
+/* ── Held-open + frozen rows ────────────────────────────────────────────────
+   Two states that exist so the board stops moving under the reader:
+   `is-held`   — a settled dispatch kept on the board because it is open. The
+                 verdict only exists once a run finishes, so dropping the row
+                 at that moment removes the evidence exactly when it becomes
+                 readable.
+   `is-frozen` — the row the pointer is inside. Live rows rebuild each poll to
+                 advance their step tree; while someone is reading one we stop,
+                 and say we stopped, rather than yanking the DOM out from under
+                 them. */
+.sub-group-head.is-held {
+  color: var(--sub-text-muted);
+  font-style: italic;
+}
+.sub-runner-dot.is-held { background: var(--sub-text-faint); }
+
+[data-dispatch-key].is-frozen { position: relative; }
+[data-dispatch-key].is-frozen::after {
+  content: 'paused while you read';
+  position: absolute;
+  top: 2px;
+  right: 6px;
+  font-size: var(--sub-font-s);
+  color: var(--sub-text-faint);
+  background: var(--sub-bg);
+  border: 1px solid var(--sub-border);
+  border-radius: var(--sub-radius-s);
+  padding: 0 6px;
+  pointer-events: none;
+  opacity: 0.85;
+}
+
+/* Filter over finished runs — the only way to reach a specific settled
+   dispatch once there are more of them than the list renders. */
+.sub-completed-filter {
+  width: 100%;
+  box-sizing: border-box;
+  margin: var(--sub-space-1) 0 var(--sub-space-2);
+  padding: var(--sub-space-1) var(--sub-space-2);
+  font-size: var(--sub-font-s);
+  background: var(--sub-bg);
+  border: 1px solid var(--sub-border);
+  border-radius: var(--sub-radius-s);
+  color: var(--sub-text);
+}
+.sub-completed-filter:focus { outline: none; border-color: var(--sub-accent); }

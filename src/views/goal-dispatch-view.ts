@@ -67,7 +67,7 @@ import { GoalNoteManager } from '../goals/goal-note-manager';
 import type { PendingSolicitation } from '../solicitations/solicitation-manager';
 import type { UiFeedbackKind } from '../feedback/ui-feedback-store';
 import { sidecarResolveBody, sidecarHttpAuto } from '../sidecar-manager';
-import { posteriorSentence, shadowSentence, poolDeltaSentence, reachCaption, vesselsCaption, peersCaption, gapsCaption, runnersCaption, asOfNote, runningNarrative, whyChosenSentence, failureMeaningSentence, dispositionSentence } from './panel-narrative';
+import { posteriorSentence, shadowSentence, poolDeltaSentence, reachCaption, vesselsCaption, peersCaption, gapsCaption, runnersCaption, asOfNote, runningNarrative, whyChosenSentence, failureMeaningSentence, dispositionSentence, verdictDerivation, learningOutcomeSentence, dispatchLabel, dedupeMembers, distinctVessels } from './panel-narrative';
 import { cachedPulseVerdict, refreshPulseVerdict, cachedNextSelection, requestNextSelection } from './panel-aggregates';
 import { selectPresentationArm, peekPresentationArm } from '../presentation/presentation-policy';
 import { attentionGrader } from '../presentation/attention-grader';
@@ -415,6 +415,8 @@ export class GoalDispatchView extends ItemView {
   private completedEl: HTMLElement | null = null;
   private completedDispatches: Array<Record<string, unknown>> = [];
   private completedExpanded = false;
+  /** Free-text filter over finished runs — see renderCompleted. */
+  private completedFilter = '';
   private fleetTimer: number | null = null;
   // All-runner running view: fleet feed members (per-substrate dispatch lists),
   // refreshed at most every ~25s inside the 7s fleet tick.
@@ -430,6 +432,14 @@ export class GoalDispatchView extends ItemView {
   // Dispatch rows the user has expanded — persisted across the 7s fleet
   // re-render so a running walk's live "why" trail stays open and refreshes.
   private expandedDispatches = new Set<string>();
+  /**
+   * The dispatch row the pointer is currently inside. A running row is rebuilt
+   * on every poll so its step tree can advance, but that teardown destroys the
+   * DOM the human is reading — losing scroll position inside the detail, any
+   * text selection, and the hit target under the cursor. While the pointer is
+   * in a row we stop rebuilding it and say so, and resume when they leave.
+   */
+  private hoveredDispatchId: string | null = null;
   // Running dispatches we've auto-expanded once so their live decision tree
   // (selection + shape flow) is visible as the walk proceeds without a click.
   // Membership also records an explicit user-collapse, so we never re-expand
@@ -1236,7 +1246,9 @@ export class GoalDispatchView extends ItemView {
       }
     }
 
-    this.groupCache = { feedOk: !!feed, members, gaps, boredom, rhythms, supplemented };
+    // One substrate seen by several routes is one member, not several — decide
+    // that by shared dispatch ids, before anything counts or renders them.
+    this.groupCache = { feedOk: !!feed, members: dedupeMembers(members as never) as typeof members, gaps, boredom, rhythms, supplemented };
     this.drawGroupFeed(el, this.groupCache);
   }
 
@@ -1297,7 +1309,7 @@ export class GoalDispatchView extends ItemView {
         const dot = running ? '●' : d.reached === true ? '✓' : d.reached === false ? '✗' : '○';
         const statusCls = running ? 'is-running' : d.reached === true ? 'is-reached' : 'is-not-reached';
         row.createSpan({ cls: `sub-fleet-status ${statusCls}`, text: dot });
-        const goal = typeof d.goal === 'string' ? d.goal : '(no goal)';
+        const goal = dispatchLabel(d as { goal?: unknown });
         row.createSpan({
           cls: 'sub-fleet-goal',
           text: goal.length > 54 ? goal.slice(0, 54) + '…' : goal,
@@ -1594,16 +1606,21 @@ export class GoalDispatchView extends ItemView {
       });
     }
     if (vessels.length) {
-      addTile('vessels', String(vessels.length), vesselsCaption(vessels.length), {
-        tooltip: vessels.map((v) => String(v['vesselId'] ?? '')).join(', '),
+      // Count vessels, not advertisements — the same process is listed once per
+      // route it can be reached by (see distinctVessels).
+      const ids = vessels.map((v) => String(v['vesselId'] ?? '')).filter(Boolean);
+      const dv = distinctVessels(ids);
+      addTile('vessels', String(dv.total), vesselsCaption(dv.total, dv.byHome), {
+        tooltip: `${ids.length} advertisements resolve to ${dv.total} distinct vessels: ${ids.join(', ')}`,
       });
     }
     if (members.length) {
       // Count PEER substrates (exclude this substrate's own 'local' member) so
       // the tile does not count self as a peer — the caption describes each
       // peer's role (resolver hub) and vessel count from the fleet feed.
-      const peerCount = members.filter((m) => String(m['substrate'] ?? '') !== 'local').length;
-      addTile('peers', String(peerCount), peersCaption(members as Array<{ substrate?: string; role?: string; vesselCount?: number | null; reachable?: boolean }>), {
+      const canonical = dedupeMembers(members as never);
+      const peerCount = canonical.filter((m) => String(m['substrate'] ?? '') !== 'local').length;
+      addTile('peers', String(peerCount), peersCaption(canonical as Array<{ substrate?: string; role?: string; vesselCount?: number | null; reachable?: boolean }>), {
         tooltip: 'Peer substrates reachable across the federation relay (resolver/relay hubs this spoke federates to).',
       });
     }
@@ -1723,7 +1740,7 @@ export class GoalDispatchView extends ItemView {
     const statusCls = running ? 'is-running' : d.reached === true ? 'is-reached' : 'is-not-reached';
     const started = typeof d.startedAt === 'number' ? d.startedAt : 0;
     const elapsed = started ? fmtRel(Date.now() - started) : '';
-    const goal = typeof d.goal === 'string' ? d.goal : '(no goal)';
+    const goal = dispatchLabel(d as { goal?: unknown });
     const goalSnippet = goal.length > 60 ? goal.slice(0, 60) + '…' : goal;
     row.createSpan({ cls: `sub-fleet-status ${statusCls}`, text: dot });
     row.createSpan({ cls: 'sub-fleet-goal', text: goalSnippet, attr: { title: goal } });
@@ -1789,7 +1806,21 @@ export class GoalDispatchView extends ItemView {
     const running = memberRunning.length > 0
       ? memberRunning.sort((a, b) => String(a.__home ?? '').localeCompare(String(b.__home ?? '')))
       : localRunning;
-    this.completedDispatches = dispatches.filter((d) => d.status !== 'running');
+    // Rows the human has open stay on the board after they settle. A dispatch
+    // becomes READABLE at the moment it finishes — that is when the verdict and
+    // the evidence exist — but that is also the moment it used to drop out of
+    // the fleet and reappear, unfindable, inside a collapsed pile of look-alike
+    // rows. Anything opened (by the reader, or auto-opened while running) is
+    // held here until they close it, which is what the row click already does.
+    const heldIds = new Set(this.expandedDispatches);
+    const held = dispatches.filter(
+      (d) => d.status !== 'running' && heldIds.has(String(d.dispatchId ?? d.id ?? '')),
+    ).map((d) => ({ ...d, __home: '__held' } as Record<string, unknown>));
+    const board = [...running, ...held];
+    // Held rows live in exactly one place — don't also list them as completed.
+    this.completedDispatches = dispatches.filter(
+      (d) => d.status !== 'running' && !heldIds.has(String(d.dispatchId ?? d.id ?? '')),
+    );
     let header = el.querySelector(':scope > .sub-section-header') as HTMLElement | null;
     if (!header) {
       el.empty();
@@ -1805,7 +1836,7 @@ export class GoalDispatchView extends ItemView {
     const seen = new Set<string>();
     const seenHeads = new Set<string>();
     let lastHome: string | null = null;
-    for (const d of running) {
+    for (const d of board) {
       const key = String(d.dispatchId ?? d.id ?? '');
       seen.add(key);
       // Runner group head whenever the home substrate changes (rows are
@@ -1816,14 +1847,18 @@ export class GoalDispatchView extends ItemView {
         seenHeads.add(home);
         let head = el.querySelector(`:scope > [data-runner-head="${CSS.escape(home)}"]`) as HTMLElement | null;
         if (!head) {
-          head = el.createDiv({ cls: 'sub-group-head' });
+          head = el.createDiv({ cls: `sub-group-head${home === '__held' ? ' is-held' : ''}` });
           head.dataset.runnerHead = home;
-          head.createSpan({ cls: 'sub-runner-dot is-goalhost' });
-          head.createSpan({ text: home && home !== 'local' ? `goal-host · ${home}` : 'goal-host' });
+          head.createSpan({ cls: `sub-runner-dot ${home === '__held' ? 'is-held' : 'is-goalhost'}` });
+          head.createSpan({
+            text: home === '__held'
+              ? 'Finished — kept open for you to read (click a row to release it)'
+              : home && home !== 'local' ? `goal-host · ${home}` : 'goal-host',
+          });
           head.createSpan({ cls: 'sub-group-n' });
         }
         const n = head.querySelector('.sub-group-n') as HTMLElement | null;
-        if (n) n.setText(String(running.filter((r) => String(r.__home ?? '') === home).length));
+        if (n) n.setText(String(board.filter((r) => String(r.__home ?? '') === home).length));
         el.appendChild(head);
       }
       const rowSnap = JSON.stringify(d);
@@ -1835,18 +1870,36 @@ export class GoalDispatchView extends ItemView {
         el.appendChild(wrap);
         continue;
       }
+      // Never tear down the row the pointer is inside. Rebuilding it mid-read
+      // is what makes the board feel like it moves under the reader: the detail
+      // scroll jumps back, a selection is lost, and whatever they were about to
+      // click has gone. Freeze it, mark it frozen so the pause is legible, and
+      // let the next poll after they leave catch it up.
+      if (wrap && this.hoveredDispatchId === key) {
+        wrap.addClass('is-frozen');
+        el.appendChild(wrap);
+        continue;
+      }
       if (!wrap) {
         wrap = el.createDiv();
         wrap.dataset.dispatchKey = key;
+        wrap.addEventListener('mouseenter', () => { this.hoveredDispatchId = key; });
+        wrap.addEventListener('mouseleave', () => {
+          if (this.hoveredDispatchId === key) this.hoveredDispatchId = null;
+          wrap?.removeClass('is-frozen');
+        });
       }
+      wrap.removeClass('is-frozen');
       wrap.dataset.rowSnap = rowSnap;
       wrap.empty();
       el.appendChild(wrap);
-      this.renderFleetRow(wrap, d, true);
+      this.renderFleetRow(wrap, d, d.status === 'running');
     }
     for (const stale of Array.from(el.querySelectorAll(':scope > [data-dispatch-key]'))) {
       const k = (stale as HTMLElement).dataset.dispatchKey ?? '';
-      if (!seen.has(k)) stale.remove();
+      // An open row is never reaped, even once goal-host has pruned it from the
+      // active list — the reader closes it, nothing else does.
+      if (!seen.has(k) && !this.expandedDispatches.has(k)) stale.remove();
     }
     for (const staleHead of Array.from(el.querySelectorAll(':scope > [data-runner-head]'))) {
       const k = (staleHead as HTMLElement).dataset.runnerHead ?? '';
@@ -1872,27 +1925,86 @@ export class GoalDispatchView extends ItemView {
   private renderCompleted(): void {
     const el = this.completedEl;
     if (!el) return;
-    const completedSnap = JSON.stringify({ done: this.completedDispatches, expanded: this.completedExpanded });
+    const completedSnap = JSON.stringify({ done: this.completedDispatches, expanded: this.completedExpanded, q: this.completedFilter });
     if (this.lastRenderedSnapshot.get('completed') === completedSnap) return;
     this.lastRenderedSnapshot.set('completed', completedSnap);
-    el.empty();
     const done = this.completedDispatches;
-    if (done.length === 0) return;
+    if (done.length === 0) { el.empty(); return; }
     const reached = done.filter((d) => d.reached === true).length;
-    const header = el.createDiv({
-      cls: 'sub-section-header is-toggle',
-      text: `${this.completedExpanded ? '▾' : '▸'} ${done.length} completed (${reached} reached)`,
-    });
-    header.addEventListener('click', () => {
-      this.completedExpanded = !this.completedExpanded;
-      this.renderCompleted();
-    });
-    this.makeToggleAccessible(header, this.completedExpanded, () => {
-      this.completedExpanded = !this.completedExpanded;
-      this.renderCompleted();
-    });
-    if (this.completedExpanded) {
-      for (const d of done.slice(0, 10)) this.renderFleetRow(el, d, false);
+
+    // The header and the filter box PERSIST across re-renders; only the row
+    // list is rebuilt. Recreating the whole section every poll destroyed the
+    // filter input mid-keystroke — you would click it, a poll would fire, and
+    // your focus (and anything typed since) was gone. Nothing the human is
+    // typing into may be torn down by a background refresh.
+    let header = el.querySelector(':scope > .sub-section-header') as HTMLElement | null;
+    if (!header) {
+      el.empty();
+      header = el.createDiv({ cls: 'sub-section-header is-toggle' });
+      const toggle = (): void => {
+        this.completedExpanded = !this.completedExpanded;
+        this.renderCompleted();
+      };
+      header.addEventListener('click', toggle);
+      this.makeToggleAccessible(header, this.completedExpanded, toggle);
+    }
+    header.setText(`${this.completedExpanded ? '▾' : '▸'} ${done.length} completed (${reached} reached)`);
+    header.setAttribute('aria-expanded', String(this.completedExpanded));
+
+    if (!this.completedExpanded) {
+      el.querySelector(':scope > .sub-completed-filter')?.remove();
+      el.querySelector(':scope > .sub-completed-rows')?.remove();
+      return;
+    }
+
+    // Finding a specific finished run was the hard part: a hundred settled
+    // dispatches, most of them look-alikes, rendered ten at a time with no way
+    // to reach the other ninety. Filter over the whole set — by goal text, by
+    // the activity that ran, by verdict ("not reached"), or by execution id —
+    // and say honestly how many the list is showing out of how many matched.
+    const q = this.completedFilter.trim().toLowerCase();
+    const matches = q
+      ? done.filter((d) => {
+          const verdict = d.reached === true ? 'reached' : d.reached === false ? 'not reached' : 'unknown';
+          return [
+            dispatchLabel(d as { goal?: unknown }),
+            String(d.selectedTemplateId ?? ''),
+            String(d.executionId ?? ''),
+            String(d.dispatchId ?? ''),
+            String(d.status ?? ''),
+            verdict,
+          ].join(' ').toLowerCase().includes(q);
+        })
+      : done;
+
+    let search = el.querySelector(':scope > .sub-completed-filter') as HTMLInputElement | null;
+    if (!search) {
+      search = el.createEl('input', {
+        cls: 'sub-completed-filter',
+        attr: { type: 'text', placeholder: 'Filter finished runs — goal, activity, "not reached", execution id…' },
+      }) as HTMLInputElement;
+      search.value = this.completedFilter;
+      search.addEventListener('input', () => {
+        this.completedFilter = search!.value;
+        this.renderCompleted();
+      });
+      search.addEventListener('click', (ev) => ev.stopPropagation());
+    }
+
+    let rows = el.querySelector(':scope > .sub-completed-rows') as HTMLElement | null;
+    if (!rows) rows = el.createDiv('sub-completed-rows');
+    rows.empty();
+
+    const LIMIT = 25;
+    for (const d of matches.slice(0, LIMIT)) this.renderFleetRow(rows, d, false);
+    if (matches.length === 0) {
+      rows.createDiv({ cls: 'sub-fleet-empty', text: `Nothing matches “${this.completedFilter}”.` });
+    } else if (matches.length > LIMIT) {
+      // Never let a truncated list read as the whole list.
+      rows.createDiv({
+        cls: 'sub-fleet-note',
+        text: `Showing ${LIMIT} of ${matches.length} matching runs — narrow the filter to see the rest.`,
+      });
     }
   }
 
@@ -1941,13 +2053,24 @@ export class GoalDispatchView extends ItemView {
     const dispatchId = String(d.dispatchId ?? '');
     const j = await this.goalHostResolve({ type: 'goalWalkState', dispatchId });
     let body = ((j?.body ?? {}) as Record<string, unknown>);
-    // Fallback to replicated trace store for settled rows when walkState resolve fails
-    if (j === null && String(d.status) !== 'running') {
-      const t1 = await this.goalHostResolve({ type: 'activityExecutionTrace', executionId: dispatchId });
-      const t2 = await this.goalHostResolve({ type: 'executionTrace', id: dispatchId });
+    // Fallback to the replicated trace store for settled rows when the walkState
+    // resolve fails. The trace store is keyed by EXECUTION id, not dispatch id —
+    // keying it by dispatchId (as this fallback originally did) can only ever
+    // return "Execution trace not found", so the fallback could never fire and
+    // the row still claimed it had loaded from the archive.
+    const execForArchive = typeof d.executionId === 'string' && !d.executionId.startsWith('interrupted:')
+      ? d.executionId : '';
+    let archiveHit = false;
+    if (j === null && execForArchive && String(d.status) !== 'running') {
+      const t1 = await this.goalHostResolve({ type: 'activityExecutionTrace', executionId: execForArchive });
+      const t2 = await this.goalHostResolve({ type: 'executionTrace', id: execForArchive });
       const traceFromArchive = t1?.body ?? t2?.body;
-      if (traceFromArchive && typeof traceFromArchive === 'object') {
+      // A not-found answer is an object too — only adopt a body that actually
+      // carries walk content, so a miss never masquerades as a hit.
+      if (traceFromArchive && typeof traceFromArchive === 'object' && !Array.isArray(traceFromArchive)
+          && (traceFromArchive as Record<string, unknown>).success !== false) {
         body = traceFromArchive as Record<string, unknown>;
+        archiveHit = true;
       }
     }
     // Stop the decision tree rebuilding every 7s on an UNCHANGED SETTLED walk (the
@@ -1976,10 +2099,21 @@ export class GoalDispatchView extends ItemView {
     existing?.remove();
     const detail = row.createDiv('sub-fleet-detail');
     
-    // Mark detail as sourced from trace archive when fallback was used
-    const isFromArchive = j === null && String(d.status) !== 'running';
-    if (isFromArchive) {
-      detail.createDiv('trace-archive-marker').setText('(from trace archive)');
+    // Say where this detail came from — but only claim the archive when the
+    // archive actually answered. When the live walk record is gone AND the
+    // archive missed, that absence is the honest thing to report: the panel is
+    // showing an empty row because the record is unrecoverable, not because the
+    // walk did nothing.
+    if (archiveHit) {
+      detail.createDiv({
+        cls: 'sub-provenance',
+        text: 'Reconstructed from the trace archive — the live walk record for this dispatch has already been pruned.',
+      });
+    } else if (j === null && String(d.status) !== 'running') {
+      detail.createDiv({
+        cls: 'sub-provenance sub-provenance--missing',
+        text: 'The walk record for this dispatch could not be retrieved, and the trace archive had no copy either. Nothing below is available for this row — this is a missing record, not an empty walk.',
+      });
     }
 
     // 1. Reached-led headline (status demoted; failed-but-reached explained).
@@ -2013,9 +2147,16 @@ export class GoalDispatchView extends ItemView {
       this.renderWalkFallback(detail, body);
     }
 
+    // 3b. Verdict derivation — the audit chain from "what was asked for" to
+    // "therefore reached / not reached". This is the block a human grades the
+    // grader FROM, so it renders for every settled walk, including (especially)
+    // the ones that produced nothing: an empty walk still has a why.
+    const derivStatus = String(body.status ?? d.status ?? '');
+    if (derivStatus !== 'running') this.renderVerdictDerivation(detail, body, d);
+
     // 4. Learning consequence line (terminal only, when present).
     const learning = (body.learning ?? null) as WalkLearning | null;
-    if (learning && typeof learning === 'object') this.renderLearningLine(detail, learning);
+    if (derivStatus !== 'running') this.renderLearningLine(detail, learning);
     // 4b. "What it should run next" — the next-selection aggregator's judged
     // sentence for settled executions (dispatched once per execution, cached).
     const settledStatus = String(body.status ?? d.status ?? '');
@@ -2080,8 +2221,15 @@ export class GoalDispatchView extends ItemView {
   private renderGradePanel(parent: HTMLElement, executionId: string, body: Record<string, unknown>, d: Record<string, unknown>): void {
     const prov = Array.isArray(body.poolProvenance) ? body.poolProvenance : [];
     const answerBody = typeof body.answerBody === 'string' ? body.answerBody.trim() : '';
-    // Nothing produced to grade from → no grade surface (avoids grading a thin row).
-    if (prov.length === 0 && !answerBody) return;
+    // A row with no produced content used to be refused a grade surface, on the
+    // theory that there was nothing to judge. That was backwards: an empty
+    // hollow row is exactly where a human verdict carries the most ground truth,
+    // because the automatic grader had nothing to grade either and the run
+    // taught the loop nothing. submitVerdict already supports these rows (it
+    // falls back to the executionId when no template is bound). So the surface
+    // renders for every settled row; when there is no produced content we say so
+    // and tell the human what their verdict actually corrects.
+    const thin = prov.length === 0 && !answerBody;
     const graderReached = (d.reached ?? body.reached ?? null) as boolean | null;
     const humanGraded = body.humanGraded === true;
     const reason = typeof body.goalReachReason === 'string' ? body.goalReachReason : '';
@@ -2089,8 +2237,14 @@ export class GoalDispatchView extends ItemView {
 
     const reachCard = wrap.createDiv('sub-grade-card sub-grade-reach');
     const rTxt = graderReached === true ? 'yes' : graderReached === false ? 'no' : 'unknown';
-    reachCard.createDiv({ cls: 'sub-grade-head', text: `Reach — the grader said reached = ${rTxt}` });
+    reachCard.createDiv({ cls: 'sub-grade-head', text: `Your verdict — the grader said reached = ${rTxt}` });
     if (reason) reachCard.createDiv({ cls: 'sub-grade-reason', text: `because: ${reason}` });
+    reachCard.createDiv({
+      cls: 'sub-grade-why',
+      text: thin
+        ? 'This run produced nothing, so the automatic grader had no content to judge and the learning loop recorded no lesson from it. Your verdict is the only ground truth this execution will ever carry: it writes an oracle label the future grader is measured against, and it corrects record.reached.'
+        : 'Judge the verdict against the evidence above, not against the status. Your answer writes an oracle label that the automatic grader is later scored on, and corrects record.reached for this execution.',
+    });
     if (humanGraded) {
       const hn = typeof body.humanReachNotes === 'string' && body.humanReachNotes ? `: “${body.humanReachNotes}”` : '';
       reachCard.createDiv({ cls: 'sub-grade-human', text: `✓ you graded this${hn}` });
@@ -2661,7 +2815,37 @@ export class GoalDispatchView extends ItemView {
    * written, gap filed: <id>". Gap ids wikilink only when a note exists
    * (materialize-or-omit — never a dead link).
    */
-  private renderLearningLine(parent: HTMLElement, learning: WalkLearning): void {
+  /**
+   * "How this verdict was reached" — the ordered audit chain (asked for → ran →
+   * produced → judged by → therefore). Rendered for every settled walk so that a
+   * human can see WHY the verdict landed the way it did without reading a trace,
+   * and can disagree with a specific link rather than the bare pass/fail.
+   */
+  private renderVerdictDerivation(parent: HTMLElement, body: Record<string, unknown>, d: Record<string, unknown>): void {
+    const chain = verdictDerivation(body, d);
+    if (chain.length === 0) return;
+    const wrap = parent.createDiv('sub-derivation');
+    wrap.createDiv({
+      cls: 'sub-derivation-header',
+      text: '⟐ How this verdict was reached',
+    });
+    for (const step of chain) {
+      const row = wrap.createDiv(`sub-derivation-row${step.tone ? ` is-${step.tone}` : ''}`);
+      row.createSpan({ cls: 'sub-derivation-label', text: step.label });
+      row.createSpan({ cls: 'sub-derivation-text', text: step.text });
+    }
+  }
+
+  private renderLearningLine(parent: HTMLElement, learning: WalkLearning | null): void {
+    // Always speak, even when nothing was learned: a run that moved no
+    // posterior and filed no gap is invisible to the learning loop, and that
+    // silence is the single most useful thing to show an operator who is
+    // deciding whether their feedback is needed here.
+    const outcome = learningOutcomeSentence(learning);
+    const taught = parent.createDiv('sub-learning-outcome');
+    taught.createSpan({ cls: 'sub-learning-label', text: 'What the system learned' });
+    taught.createSpan({ cls: 'sub-learning-outcome-text', text: outcome });
+    if (!learning || typeof learning !== 'object') return;
     const parts: string[] = [];
     const delta = learning.alphaBetaDelta;
     if (Array.isArray(delta)) {

@@ -81,9 +81,168 @@ export function reachCaption(reached: number, settled: number): string {
   return `${reached} of the last ${settled} goal${settled === 1 ? '' : 's'} actually reached what ${settled === 1 ? 'it' : 'they'} set out to do.`;
 }
 
-/** Vessels tile caption. */
-export function vesselsCaption(count: number): string {
-  return count > 0 ? 'all advertising into discovery' : 'none visible in discovery right now';
+/**
+ * Distinct vessels behind a registry listing, and where they live.
+ *
+ * The registry lists an ADVERTISEMENT, not a vessel, so the same process is
+ * listed once per route it can be reached by: bare (resolved directly here),
+ * again under this substrate's relay id, and again via the hub. Summing those
+ * reports three times as many vessels as exist, and the total changes with the
+ * route the panel resolved through — the number moves when the network moves,
+ * which is exactly what it must not do. Identity is `name@home`, with a bare
+ * name treated as living here.
+ */
+export function distinctVessels(
+  vesselIds: string[],
+  selfHomeLabel = 'here',
+): { total: number; byHome: Array<{ home: string; count: number }> } {
+  // Group advertisements by vessel NAME first.
+  const homesByName = new Map<string, Set<string>>();
+  const bareNames = new Set<string>();
+  for (const raw of vesselIds) {
+    const id = String(raw || '').trim();
+    if (!id) continue;
+    const at = id.indexOf('@');
+    if (at < 0) { bareNames.add(id); continue; }
+    const name = id.slice(0, at);
+    const home = id.slice(at + 1);
+    if (!home) { bareNames.add(name); continue; }
+    if (!homesByName.has(name)) homesByName.set(name, new Set());
+    homesByName.get(name)!.add(home);
+  }
+  // A bare advertisement is the SAME vessel as one of the homed ones — it is
+  // this substrate resolving the vessel directly instead of through the relay.
+  // We cannot tell which home it is without a self-id we do not reliably have,
+  // and we do not need to: if the name is advertised from any home, the bare
+  // listing is a duplicate route to one of them, not an extra vessel. Only a
+  // name that appears bare and nowhere else is a vessel we know solely from
+  // here.
+  const counts = new Map<string, number>();
+  let total = 0;
+  for (const [, homes] of homesByName) {
+    for (const h of homes) counts.set(h, (counts.get(h) ?? 0) + 1);
+    total += homes.size;
+  }
+  const bareOnly = [...bareNames].filter((n) => !homesByName.has(n));
+  if (bareOnly.length > 0) {
+    counts.set(selfHomeLabel, (counts.get(selfHomeLabel) ?? 0) + bareOnly.length);
+    total += bareOnly.length;
+  }
+  return {
+    total,
+    byHome: [...counts.entries()]
+      .map(([home, count]) => ({ home, count }))
+      .sort((a, b) => b.count - a.count || a.home.localeCompare(b.home)),
+  };
+}
+
+/** Vessels tile caption — says where they are, not just how many. */
+export function vesselsCaption(count: number, byHome?: Array<{ home: string; count: number }>): string {
+  if (count <= 0) return 'none visible in discovery right now';
+  if (!byHome || byHome.length === 0) return 'all advertising into discovery';
+  // Naming the split is what makes the number the same fact from any route.
+  const parts = byHome.map((h) => `${h.count} ${h.home === 'here' ? 'here' : `on ${h.home}`}`);
+  return `distinct vessels advertising into discovery — ${parts.join(' · ')}`;
+}
+
+export interface FleetMember {
+  substrate?: string;
+  role?: string;
+  vesselCount?: number | null;
+  reachable?: boolean;
+  dispatches?: unknown;
+  [k: string]: unknown;
+}
+
+/**
+ * Collapse federation members that are the same substrate seen by more than one
+ * route.
+ *
+ * The feed identifies a member by whatever name the route happened to carry, so
+ * one substrate can arrive three times — once as `local` (resolved directly),
+ * once as its relay id (`spoke-…`, the same box seen through the hub), and once
+ * as a bare `host:port` (a peer known only by address). Counting those as three
+ * peers is wrong everywhere, and wrong differently depending on which network
+ * the panel is on.
+ *
+ * Identity is decided by EVIDENCE, not by name: two members reporting the same
+ * dispatch id are the same substrate, because a dispatch id is minted once by
+ * the goal-host that owns it. That test holds regardless of how the deployment
+ * is named or addressed. Names are only used afterwards, to choose the label a
+ * human will recognise.
+ */
+export function dedupeMembers(members: FleetMember[]): FleetMember[] {
+  const list = members.filter((m) => m && typeof m === 'object');
+  const idsOf = (m: FleetMember): Set<string> => new Set(
+    (Array.isArray(m.dispatches) ? m.dispatches : [])
+      .map((x) => String((x as Record<string, unknown>)?.dispatchId ?? ''))
+      .filter(Boolean),
+  );
+  const groups: Array<{ members: FleetMember[]; ids: Set<string> }> = [];
+  for (const m of list) {
+    const ids = idsOf(m);
+    const hit = groups.find((g) => [...ids].some((i) => g.ids.has(i)));
+    if (hit && ids.size > 0) {
+      hit.members.push(m);
+      ids.forEach((i) => hit.ids.add(i));
+    } else {
+      groups.push({ members: [m], ids });
+    }
+  }
+  // Prefer a name a human can place: never a bare address, and never the
+  // opaque relay id when a friendlier name for the same box exists.
+  const isAddr = (s: string): boolean => /:\d+$/.test(s) || /^\d+\.\d+\.\d+\.\d+/.test(s);
+  const collapsed = groups.map((g) => {
+    const names = g.members.map((m) => String(m.substrate ?? '')).filter(Boolean);
+    const preferred = names.find((n) => n === 'local')
+      ?? names.find((n) => !isAddr(n) && !/^spoke-/.test(n))
+      ?? names.find((n) => !isAddr(n))
+      ?? names[0] ?? 'unknown';
+    const merged: FleetMember = { ...g.members[0] };
+    merged.substrate = preferred;
+    merged.role = g.members.map((m) => m.role).find((r) => typeof r === 'string' && r) as string | undefined;
+    merged.vesselCount = g.members
+      .map((m) => (typeof m.vesselCount === 'number' ? m.vesselCount : null))
+      .reduce<number | null>((a, b) => (b !== null && (a === null || b > a) ? b : a), null);
+    merged.reachable = g.members.some((m) => m.reachable !== false);
+    // Keep every distinct dispatch across the routes this member was seen on.
+    const byId = new Map<string, unknown>();
+    for (const m of g.members) {
+      for (const x of (Array.isArray(m.dispatches) ? m.dispatches : [])) {
+        byId.set(String((x as Record<string, unknown>)?.dispatchId ?? Math.random()), x);
+      }
+    }
+    merged.dispatches = [...byId.values()];
+    // Record the other names so the UI can show that this is one box, not many.
+    merged.aliases = names.filter((n) => n !== preferred);
+    return merged;
+  });
+
+  // Second pass: a member known ONLY by an address, reporting no work of its
+  // own, is a routing entry rather than a distinct peer — it is how we reach
+  // some substrate, not another substrate. Fold it into the named member that
+  // fills the same role (that is the box it addresses), keeping whatever facts
+  // it carried. Without this, one hub reached by name and by address counts as
+  // two peers, and the count changes with the network the panel sits on.
+  const addressOnly = collapsed.filter(
+    (m) => isAddr(String(m.substrate ?? '')) && (m.dispatches as unknown[]).length === 0,
+  );
+  if (addressOnly.length === 0) return collapsed;
+  const named = collapsed.filter((m) => !addressOnly.includes(m));
+  for (const addr of addressOnly) {
+    const host = named.find((m) => m.role && m.role === addr.role)
+      ?? named.find((m) => String(m.substrate ?? '') !== 'local');
+    if (!host) continue;
+    host.role = host.role ?? addr.role;
+    if (typeof addr.vesselCount === 'number' && (host.vesselCount ?? 0) < addr.vesselCount) {
+      host.vesselCount = addr.vesselCount;
+    }
+    host.aliases = [...(Array.isArray(host.aliases) ? host.aliases : []), String(addr.substrate ?? '')];
+  }
+  // Any address-only member with nowhere to fold into is still shown, but the
+  // caption must not read its address as if it were a name.
+  return [...named, ...addressOnly.filter((a) => !named.some((n) =>
+    (Array.isArray(n.aliases) ? n.aliases : []).includes(String(a.substrate ?? ''))))];
 }
 
 /** Peers tile caption from federation member names: "this substrate plus syzygy-hub across the relay". */
@@ -92,10 +251,17 @@ export function peersCaption(
 ): string {
   const others = members.filter((m) => m && m.substrate && m.substrate !== 'local');
   if (others.length === 0) return 'no peer substrates on the relay';
+  const isAddr = (s: string): boolean => /:\d+$/.test(s) || /^\d+\.\d+\.\d+\.\d+/.test(s);
   const parts = others.map((m) => {
-    const bits: string[] = [String(m.substrate)];
+    const name = String(m.substrate);
+    // An address is where a peer is, not who it is. Say so, rather than
+    // printing a host:port where a reader expects a substrate name.
+    const bits: string[] = [isAddr(name) ? `an unnamed substrate at ${name}` : name];
     if (m.role === 'resolver-hub') bits.push('resolver hub');
-    if (typeof m.vesselCount === 'number') bits.push(`${m.vesselCount} vessels`);
+    // Deliberately NOT the peer's vessel count: that number is a count of
+    // advertisements, and printing it beside the vessels tile — which counts
+    // distinct vessels — puts two different numbers for "how many vessels" on
+    // screen at once. The tile owns that question.
     if (m.reachable === false) bits.push('unreachable');
     return bits.join(' · ');
   });
@@ -265,6 +431,232 @@ export function failureMeaningSentence(
   return goalReachReason
     ? `What this means: ${goalReachReason}`
     : 'What this means: the goal was not reached; no specific reason was recorded.';
+}
+
+/**
+ * A human-distinguishable label for a dispatch row.
+ *
+ * Many dispatches arrive with no goal text at all, and a list of rows that all
+ * read "(no goal)" is unusable — you cannot find the run you were just looking
+ * at, and you cannot tell two of them apart to decide which to open. Fall back
+ * to what IS known about the row (the activity it ran as, and why it was
+ * picked) and say explicitly that the goal text is the part that is missing,
+ * since a dispatch arriving without one is itself a defect worth seeing.
+ */
+export function dispatchLabel(d: {
+  goal?: unknown; selectedTemplateId?: unknown; trigger?: unknown; executionId?: unknown;
+}): string {
+  const goal = typeof d.goal === 'string' ? d.goal.trim() : '';
+  if (goal) return goal;
+  const tid = typeof d.selectedTemplateId === 'string' && d.selectedTemplateId ? d.selectedTemplateId : '';
+  const trg = typeof d.trigger === 'string' && d.trigger ? d.trigger : '';
+  const exec = typeof d.executionId === 'string' && d.executionId ? d.executionId : '';
+  const bits = [tid, trg].filter(Boolean).join(' · ');
+  if (bits) return `${bits} — dispatched with no goal text`;
+  if (exec) return `${exec} — dispatched with no goal text`;
+  return 'dispatched with no goal text';
+}
+
+/**
+ * What this run taught the system, in plain language — including the case where
+ * it taught nothing. A run that moved no posterior, filed no gap and wrote no
+ * oracle label is invisible to the learning loop, and that is exactly the fact
+ * an operator needs surfaced: silence here means the execution was spent
+ * without being converted into anything the substrate can reuse.
+ */
+export function learningOutcomeSentence(
+  learning: { alphaBetaDelta?: unknown; oracleLabelWritten?: unknown; gapsFiled?: unknown } | null,
+): string {
+  if (!learning || typeof learning !== 'object') {
+    return 'Nothing was recorded about what this run taught the system — the learning fields are absent, so it cannot be credited or penalised.';
+  }
+  const deltas = Array.isArray(learning.alphaBetaDelta) ? learning.alphaBetaDelta.length : 0;
+  const gaps = Array.isArray(learning.gapsFiled) ? learning.gapsFiled.length : 0;
+  const oracle = learning.oracleLabelWritten === true;
+  if (deltas === 0 && gaps === 0 && !oracle) {
+    return 'This run taught the system nothing: no selection posterior moved, no gap was filed, and no oracle label was written. The work was spent without being converted into anything reusable — if you think the verdict is wrong, your grade below is the only signal that will correct it.';
+  }
+  const bits: string[] = [];
+  if (deltas > 0) bits.push(`updated the odds on ${deltas} pick${deltas === 1 ? '' : 's'}`);
+  if (gaps > 0) bits.push(`filed ${gaps} gap${gaps === 1 ? '' : 's'} for the backlog`);
+  if (oracle) bits.push('wrote an oracle label for future grading');
+  return `This run ${bits.join(', ')}.`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Verdict derivation — the chain a human needs to audit a reach verdict:
+// what was asked for → what ran → what it produced → what the gate required →
+// which rule fired → therefore reached / not reached. Every link is read back
+// out of the walk record; nothing here is inferred by an LLM. When a link is
+// genuinely absent the step says so, because "nothing was recorded here" is
+// itself the finding a human most needs to see.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface VerdictStep {
+  /** Short ordinal label, e.g. "Asked for". */
+  label: string;
+  /** Plain-language prose for this link in the chain. */
+  text: string;
+  /** Rendering tone — 'bad' marks the link where the verdict was decided. */
+  tone?: 'ok' | 'warn' | 'bad';
+}
+
+/**
+ * Parse the reach-gate line goal-host writes as the terminal walk decision, e.g.
+ *   "goal-reach(/run-goal) attempt 1/1: HOLLOW (declarative): declarative: missing activityTemplate,learningSummary"
+ * Returns the gate's own verdict tokens so the panel can explain the rule that
+ * fired rather than echoing the machine string at the human.
+ */
+export function parseReachGate(
+  walkLog: string[],
+  currentStep: string,
+): { outcome: string; mode: string; missing: string[]; attempt: string } | null {
+  const candidates = [currentStep, ...[...walkLog].reverse()].filter((s): s is string => typeof s === 'string' && !!s);
+  for (const raw of candidates) {
+    if (!/goal-reach/i.test(raw)) continue;
+    const outcome = (raw.match(/:\s*(HOLLOW|REACHED|NOT[_ ]REACHED|WRONG|EMPTY)\b/i)?.[1] ?? '').toUpperCase();
+    if (!outcome) continue;
+    const mode = raw.match(/\((declarative|imperative|judged|deterministic)\)/i)?.[1]?.toLowerCase() ?? '';
+    const missing = (raw.match(/missing\s+([A-Za-z0-9_,\s]+)/i)?.[1] ?? '')
+      .split(',').map((s) => s.trim()).filter(Boolean);
+    const attempt = raw.match(/attempt\s+(\d+\/\d+)/i)?.[1] ?? '';
+    return { outcome, mode, missing, attempt };
+  }
+  return null;
+}
+
+/**
+ * The full audit chain for a settled walk, as ordered plain-language steps.
+ * Rendered as the "How this verdict was reached" block — the surface a human
+ * grades the grader from.
+ */
+export function verdictDerivation(
+  body: Record<string, unknown>,
+  d: Record<string, unknown>,
+): VerdictStep[] {
+  const walkLog = Array.isArray(body.walkLog) ? (body.walkLog as unknown[]).map(String) : [];
+  const currentStep = typeof body.currentStep === 'string' ? body.currentStep : '';
+  const steps = Array.isArray(body.steps) ? (body.steps as unknown[]) : [];
+  const pool = Array.isArray(body.poolShapes) ? (body.poolShapes as unknown[]).map(String) : [];
+  const prov = Array.isArray(body.poolProvenance) ? (body.poolProvenance as unknown[]) : [];
+  const pending = Array.isArray(body.pendingTargets) ? (body.pendingTargets as unknown[]).map(String) : [];
+  const reached = (body.reached ?? d.reached) as boolean | null | undefined;
+  const answer = typeof body.answerBody === 'string' ? body.answerBody.trim() : '';
+  const out: VerdictStep[] = [];
+
+  // 1. What the walk understood the goal to require. Prefer the walk's own
+  // recorded inference; fall back to the shapes the reach gate went on to
+  // demand, which is the same requirement observed one step later.
+  const gateEarly = parseReachGate(walkLog, currentStep);
+  const inf = parseInference(walkLog);
+  if (inf && inf.shapes.length) {
+    const conf = typeof inf.confidence === 'number'
+      ? ` It was ${inf.confidence >= 0.95 ? 'confident' : inf.confidence >= 0.7 ? 'fairly sure' : 'only ' + Math.round(inf.confidence * 100) + '% sure'} of that reading.`
+      : '';
+    out.push({
+      label: 'Asked for',
+      text: `To count as done, this goal had to produce «${inf.shapes.join('», «')}».${conf}`,
+    });
+  } else if (gateEarly && gateEarly.missing.length) {
+    out.push({
+      label: 'Asked for',
+      text: `The walk never logged how it read this goal, but the reach gate went on to require «${gateEarly.missing.join('», «')}» — so that is what it was being held to.`,
+      tone: 'warn',
+    });
+  } else {
+    out.push({
+      label: 'Asked for',
+      text: 'The walk never recorded what shapes this goal needed to produce, so there was no explicit target to aim at.',
+      tone: 'warn',
+    });
+  }
+
+  // 2. What actually ran.
+  if (steps.length > 0) {
+    out.push({
+      label: 'Ran',
+      text: `It took ${steps.length} step${steps.length === 1 ? '' : 's'} — each one listed in the decision tree below, with the rivals it beat and why.`,
+    });
+  } else {
+    out.push({
+      label: 'Ran',
+      text: 'It took no steps at all. Nothing was selected and nothing executed — so there was never any work for the gate to judge.',
+      tone: 'bad',
+    });
+  }
+
+  // 3. What it produced.
+  if (answer) {
+    out.push({ label: 'Produced', text: `A written answer of ${answer.length} characters, shown above.`, tone: 'ok' });
+  } else if (prov.length > 0 || pool.length > 0) {
+    const n = Math.max(pool.length, prov.length);
+    const named = pool.length ? ` (${pool.join(', ')})` : '';
+    // Say plainly when the pool holds more shapes than the ledger can show the
+    // content of — otherwise the count and the list disagree on screen.
+    const gap = pool.length > prov.length && prov.length > 0
+      ? ` Content was captured for ${prov.length} of them.`
+      : prov.length === 0 ? ' No content was captured for them, so there is nothing to read back.' : '';
+    out.push({
+      label: 'Produced',
+      text: `${n} shape${n === 1 ? '' : 's'} landed in the pool${named}.${gap} What they actually contain is in the evidence ledger — judge the verdict against that, not against the status.`,
+      tone: 'ok',
+    });
+  } else {
+    out.push({
+      label: 'Produced',
+      text: 'Nothing. The shape pool ended empty — no output was ever created for this goal.',
+      tone: 'bad',
+    });
+  }
+
+  // 4. The rule that decided it.
+  const gate = parseReachGate(walkLog, currentStep);
+  if (gate) {
+    const modePhrase = gate.mode === 'declarative'
+      ? 'a declarative check — it compares what landed in the pool against the shapes the goal declared it needed, with no LLM judgement involved'
+      : gate.mode === 'judged'
+        ? 'an LLM judge reading the output against the goal'
+        : gate.mode ? `a ${gate.mode} check` : 'the reach gate';
+    const missPhrase = gate.missing.length
+      ? ` It required «${gate.missing.join('», «')}», and ${gate.missing.length === 1 ? 'that shape was never produced' : 'none of those shapes were produced'}.`
+      : '';
+    const attemptPhrase = gate.attempt && gate.attempt !== '1/1'
+      ? ` This was attempt ${gate.attempt}.`
+      : gate.attempt === '1/1' ? ' It got a single attempt — no retry was configured.' : '';
+    out.push({
+      label: 'Judged by',
+      text: `${modePhrase}.${missPhrase}${attemptPhrase}`,
+      tone: gate.outcome === 'REACHED' ? 'ok' : 'warn',
+    });
+    out.push({
+      label: 'Therefore',
+      text: gate.outcome === 'REACHED'
+        ? 'The gate found everything the goal declared it needed, so the verdict is reached.'
+        : `The gate returned ${gate.outcome}, which means the required shapes were absent or empty. That is why the verdict is not reached — the gate refused to call an empty result done.`,
+      tone: gate.outcome === 'REACHED' ? 'ok' : 'bad',
+    });
+    return out;
+  }
+
+  // 4b. No gate line — say so rather than implying one ran.
+  if (pending.length) {
+    out.push({
+      label: 'Still missing',
+      text: `«${pending.join('», «')}» were still outstanding when the walk stopped.`,
+      tone: 'warn',
+    });
+  }
+  const reason = typeof body.goalReachReason === 'string' ? body.goalReachReason : '';
+  out.push({
+    label: 'Therefore',
+    text: reached === true
+      ? `The verdict is reached${reason ? ` — ${reason}.` : ', though no explicit gate decision was recorded for it.'}`
+      : reached === false
+        ? `The verdict is not reached${reason ? ` — ${reason}.` : ', but no gate decision was recorded explaining which rule failed. That missing record is itself worth flagging.'}`
+        : 'No verdict was recorded for this walk at all — it settled without the reach gate ever running.',
+    tone: reached === true ? 'ok' : 'bad',
+  });
+  return out;
 }
 
 /** WHAT-NEXT: the disposition — what the system did / will do after a non-reach. gaps are ids to link. */
