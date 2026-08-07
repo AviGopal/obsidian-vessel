@@ -77,6 +77,30 @@ export class UiFeedbackStore {
  * Gap id key: `ui-feedback-<region>-<kind>` (stable per region+kind so
  * repeat complaints upsert rather than flood).
  */
+/**
+ * Which source file renders a given feedback surface.
+ *
+ * A ui-feedback gap carried `surface` + `region` but no EDIT SITE, and an edit goal is
+ * only routable when something names a repos/<vessel>/src file. Measured on the live
+ * gap store: 42% of open gaps carry an edit_site and 0% of ui_legibility gaps did, so
+ * every interface complaint — human-reported here, and substrate-detected through the
+ * identically-keyed ui_legibility_scan path — arrived unroutable. One sat open for
+ * eight hours with nothing having attempted it.
+ *
+ * The mapping is static and checkable: the panel is one view class, and `region` is the
+ * literal CSS class string the renderer passes to createDiv, so the localizer can find
+ * the exact line by grepping the named file for the region. gap-to-feature reads
+ * `classification_metadata.edit_site` first (its `metadata_edit_site` method), ahead of
+ * its grep and LLM fallbacks — so naming the file here skips the guessing entirely.
+ *
+ * Surfaces with no single owning file are omitted rather than guessed: an absent
+ * edit_site leaves the existing localizer fallbacks in play, whereas a WRONG one would
+ * aim the drafter confidently at the wrong file.
+ */
+const SURFACE_SOURCE: Partial<Record<UiFeedbackSurface, string>> = {
+  panel: 'repos/obsidian-vessel/src/views/goal-dispatch-view.ts',
+};
+
 export async function forwardUiFeedbackToGapStore(
   fb: UiFeedback,
 ): Promise<ForwardResult> {
@@ -100,6 +124,11 @@ export async function forwardUiFeedbackToGapStore(
             kind: fb.kind,
             prose: fb.prose ?? null,
             vessel_id: fb.vessel_id,
+            // Names the file that renders this surface so the gap is ROUTABLE as an
+            // edit goal. Omitted when the surface has no single owning file — the
+            // localizer's grep/LLM fallbacks then still apply, and a wrong edit_site
+            // would be worse than none.
+            ...(SURFACE_SOURCE[fb.surface] ? { edit_site: SURFACE_SOURCE[fb.surface] } : {}),
           },
         },
   };
