@@ -1301,14 +1301,6 @@ export class GoalDispatchView extends ItemView {
         text: `${reachable ? '●' : '○'} ${name}${reachable ? '' : ' (unreachable)'}`,
       });
       const dispatches = arr(m.dispatches);
-      for (const d of dispatches) {
-        // sub-fleet-elapsed: [narrowed] UI feedback (hard_to_understand) on the
-        // surface: the elapsed column keeps counting after a run has finished.
-        // Ensure the time displayed for 'elapsed' is fixed if 'finished_at' is present.
-        if (d.finished_at && d.started_at) {
-          d.elapsed_ms = new Date(d.finished_at as string).getTime() - new Date(d.started_at as string).getTime();
-        }
-      }
       if (dispatches.length === 0 && reachable) {
         el.createDiv({ cls: 'sub-fleet-empty', text: 'idle — no dispatches reported' });
       }
