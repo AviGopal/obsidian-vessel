@@ -1318,7 +1318,7 @@ export class GoalDispatchView extends ItemView {
         });
         row.createSpan({ cls: 'sub-chip', text: name, attr: { title: `substrate: ${name}` } });
         const started = typeof d.startedAt === 'number' ? d.startedAt : 0;
-        if (started && !m.ended) row.createSpan({ cls: 'sub-fleet-elapsed', text: fmtRel(Date.now() - started) });
+        if (started) row.createSpan({ cls: 'sub-fleet-elapsed', text: fmtRel(Date.now() - started) });
       }
     }
 
