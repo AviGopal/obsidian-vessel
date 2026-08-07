@@ -1749,7 +1749,7 @@ export class GoalDispatchView extends ItemView {
         if (tid) {
           row.createSpan({ cls: 'sub-chip sub-chip--sel sub-fleet-activity', text: shortId(tid), attr: { title: 'activity: ' + tid } });
         }
-    row.createSpan({ cls: 'sub-fleet-elapsed', text: running ? elapsed : '0s' });
+    row.createSpan({ cls: 'sub-fleet-elapsed', text: elapsed });
     // Reached-led verdict pill for settled rows; narrative line + runner
     // accent for running rows (mockup parity).
     if (!running) {
