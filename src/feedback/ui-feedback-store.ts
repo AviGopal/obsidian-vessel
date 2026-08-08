@@ -120,7 +120,7 @@ export async function forwardUiFeedbackToGapStore(
           status: 'open',
           classification_metadata: {
             surface: fb.surface,
-            region: fb.region,
+            region: fb.surface,
             kind: fb.kind,
             prose: fb.prose ?? null,
             vessel_id: fb.vessel_id,
