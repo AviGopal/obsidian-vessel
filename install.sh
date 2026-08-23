@@ -8,7 +8,7 @@
 #   ./install.sh                                          # fully interactive
 #   ./install.sh --vault ~/vaults/mine \
 #       --discovery https://<discovery-endpoint> --api-key <api-key>
-#   ./install.sh --vault ~/vaults/new --local            # local substrate (:18100)
+#   ./install.sh --vault ~/vaults/new --local            # local substrate (:18100, or 18100+PORT_OFFSET)
 #
 # Point-and-go: the plugin's whole network surface is two values —
 #   { discoveryVesselEndpoint, apiKey }.
@@ -37,7 +37,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ID="obsidian-vessel"
 RELEASE_REPO="AviGopal/obsidian-vessel"
-LOCAL_DISCOVERY="http://localhost:18100"
+# --local's port is 18100 + PORT_OFFSET, not a hardcoded 18100. A fleet brought
+# up with `make up PORT_OFFSET=5000` serves discovery on :23100, so a bare
+# --local pointed the plugin at nothing (or, worse, at a DIFFERENT fleet that
+# happens to hold the default port).
+LOCAL_DISCOVERY="http://localhost:$(( 18100 + ${PORT_OFFSET:-0} ))"
 
 VAULT="" DISCOVERY_URL="" API_KEY="" RELAY="" FEDERATION=1 ASSUME_YES=0
 while [ $# -gt 0 ]; do
@@ -49,7 +53,9 @@ while [ $# -gt 0 ]; do
     --local)     DISCOVERY_URL="$LOCAL_DISCOVERY"; shift ;;
     --no-federation) FEDERATION=0; shift ;;
     -y|--yes)    ASSUME_YES=1; shift ;;
-    -h|--help)   grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    # Skip line 1: the shebang starts with '#', so the comment-harvest printed it
+    # as "!/usr/bin/env bash" — the first line of every --help.
+    -h|--help)   tail -n +2 "$0" | grep '^#' | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "ERROR: unknown flag: $1 (see --help)" >&2; exit 1 ;;
   esac
 done
