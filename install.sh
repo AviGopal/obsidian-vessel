@@ -146,12 +146,37 @@ if [ -z "$BOOTSTRAP" ]; then
   echo "      curl -s $DISCOVERY_URL/health )." >&2
   die "discovery /bootstrap unreachable."
 fi
-if ! echo "$BOOTSTRAP" | jq -e '.relay_multiaddrs? // .identity_endpoint? // .discovery_endpoint?' >/dev/null 2>&1; then
+# SHAPE, then CONTENT. The check here was
+#   jq -e '.relay_multiaddrs? // .identity_endpoint? // .discovery_endpoint?'
+# which passes on a body where all three are EMPTY: jq's `//` falls back only on
+# null or false, and an empty array is neither — so `{"relay_multiaddrs":[]}`
+# returned `[]`, jq -e exited 0, and the installer printed "point-and-go OK"
+# against a substrate advertising no anchors at all. That is precisely the
+# false positive the substrate's own join docs exist to prevent, reproduced
+# inside the tool those docs tell the reader to trust.
+if ! echo "$BOOTSTRAP" | jq -e 'has("relay_multiaddrs") and has("identity_endpoint")' >/dev/null 2>&1; then
   die "$DISCOVERY_URL/bootstrap did not return the expected point-and-go body {relay_multiaddrs, identity_endpoint, discovery_endpoint, prefer_transport}. Is this actually a discovery endpoint?"
 fi
+IDENTITY_PREVIEW="$(echo "$BOOTSTRAP" | jq -r '.identity_endpoint // empty' 2>/dev/null || true)"
 RELAY_PREVIEW="$(echo "$BOOTSTRAP" | jq -r '.relay_multiaddrs[0] // empty' 2>/dev/null || true)"
-echo "[check] point-and-go OK — the sidecar will fetch relay + identity anchors from /bootstrap at start."
-[ -n "$RELAY_PREVIEW" ] && echo "[check]   relay anchor (preview, resolved live at start): $RELAY_PREVIEW"
+
+# identity_endpoint is what the sidecar MUST have; without it there is nothing to
+# authenticate against and the plugin cannot work at all.
+[ -n "$IDENTITY_PREVIEW" ] || die "$DISCOVERY_URL/bootstrap answered, but advertises NO identity_endpoint. The plugin has nothing to authenticate against. This substrate is not ready to be joined."
+
+if [ -n "$RELAY_PREVIEW" ]; then
+  echo "[check] point-and-go OK — identity anchor $IDENTITY_PREVIEW, relay advertised."
+  echo "[check]   relay anchor (preview, resolved live at start): $RELAY_PREVIEW"
+else
+  # Empty relay_multiaddrs is the "reachable but not a hub" case: the endpoint
+  # answers, identity works, and p2p federation has nothing to dial. Report it
+  # rather than calling the whole check OK.
+  echo "[check] identity anchor OK ($IDENTITY_PREVIEW)."
+  echo "[check] WARNING: relay_multiaddrs is EMPTY — this substrate advertises no relay," >&2
+  echo "[check]   so it is not acting as a federation hub. The plugin will install and" >&2
+  echo "[check]   authenticate, but p2p transport has nothing to reserve a circuit against." >&2
+  echo "[check]   If you expected a hub, deploy the relay there first, or pass --relay." >&2
+fi
 
 # ── 5. Plugin artifacts (local checkout preferred, GitHub release fallback) ──
 if [ -f "$SCRIPT_DIR/main.js" ] && [ -f "$SCRIPT_DIR/manifest.json" ]; then
